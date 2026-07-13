@@ -44,6 +44,7 @@
         </div>
         <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
         <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
+        <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
       </div>
       <ul id="song-list" class="song-list"></ul>
     </section>
@@ -67,6 +68,14 @@
            #kv fills the freed middle only in body.video-mode. -->
       <video id="kv" class="kv" muted playsinline></video>
       <audio id="kva" class="kva"></audio>
+
+      <!-- YOUTUBE karaoke (BYOC): the official YouTube IFrame player. Must be a
+           `credentialless` iframe so the cross-origin-isolated (COEP) page is allowed to
+           embed YouTube, which ships no CORP/COEP — see src/js/youtube.js. Fills the middle
+           only in body.youtube-mode. -->
+      <iframe id="ytplayer" class="ytplayer" credentialless
+              allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+              allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
 
       <canvas id="pitch-guide" class="pitch-guide"></canvas>
 
@@ -276,6 +285,31 @@
           </select>
         </label>
         <div class="hint sub">Auto-tune bends your voice to the note. "Melody guide" snaps to the song's own melody (needs a song playing).</div>
+      </section>
+
+      <section>
+        <h4>YouTube search <em class="muted">(BYOC · Chromium)</em></h4>
+        <label class="row toggle">
+          <span>Enabled <em class="muted">(also the 🌐 pill)</em></span>
+          <input id="set-youtube" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Query YouTube when local has <em id="set-youtube-threshold-val">&lt; 2 local hits</em></span>
+          <input id="set-youtube-threshold" type="range" min="1" max="11" step="1" value="2" />
+        </label>
+        <label class="row">
+          <span>Debounce <em id="set-youtube-debounce-val">3.0 s</em></span>
+          <input id="set-youtube-debounce" type="range" min="500" max="10000" step="250" value="3000" />
+        </label>
+        <label class="row">
+          <span>Max results <em id="set-youtube-max-val">20</em></span>
+          <input id="set-youtube-max" type="range" min="5" max="40" step="5" value="20" />
+        </label>
+        <label class="row">
+          <span>Append keyword</span>
+          <input id="set-youtube-keyword" type="text" class="set-text" placeholder="karaoke" />
+        </label>
+        <div class="hint sub">Searches append YouTube results for <code>"&lt;your search&gt; <em>keyword</em>"</code> when the local library comes up short. Live metadata only; playback is the official YouTube embed.</div>
       </section>
 
       <section>

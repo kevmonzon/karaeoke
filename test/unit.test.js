@@ -172,6 +172,32 @@ test("Catalog.load: a missing/invalid video catalog is non-fatal", async () => {
   assert.equal(c.getById("midi:5").id, "midi:5");
 });
 
+// --- Catalog.makeYoutubeRecord + addExternal --------------------------------
+test("Catalog.makeYoutubeRecord: builds a tagged youtube record from a search item", () => {
+  const rec = Catalog.makeYoutubeRecord({ videoId: "abc123", title: "Song (Karaoke)", channelTitle: "Some Channel" });
+  assert.equal(rec.kind, "youtube");
+  assert.equal(rec.id, "youtube:abc123");
+  assert.equal(rec.videoId, "abc123");
+  assert.equal(rec.name, "Song (Karaoke)");
+  assert.equal(rec.artistName, "Some Channel");
+  assert.equal(rec.code, "");            // no dial code → excluded from numeric search / byCode
+  assert.equal(rec.type, "YOUTUBE");
+});
+
+test("Catalog.makeYoutubeRecord: returns null without a videoId", () => {
+  assert.equal(Catalog.makeYoutubeRecord({ title: "no id" }), null);
+  assert.equal(Catalog.makeYoutubeRecord(null), null);
+});
+
+test("Catalog.addExternal: resolvable by id, but NOT in the browse list", () => {
+  const c = new Catalog();
+  const rec = Catalog.makeYoutubeRecord({ videoId: "xyz", title: "T", channelTitle: "C" });
+  c.addExternal(rec);
+  assert.equal(c.getById("youtube:xyz"), rec); // favorites/recent/queue can resolve it
+  assert.equal(c.songs.length, 0);             // …but it never pollutes the default song list
+  assert.equal(c.search("").length, 0);        // and it isn't returned by search
+});
+
 // ---------------------------------------------------------------------------
 // A minimal, valid Standard MIDI File: format 0, 1 track, division 480, with a
 // tempo, a lyric ("la"), and a C4 note.

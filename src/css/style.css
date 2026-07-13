@@ -97,6 +97,21 @@ body.video-mode .lyrics-wrap { display: none; }
 /* Key transpose is inert for video (no note data) — dim the control. */
 body.video-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
 
+/* YOUTUBE karaoke (BYOC): the official YouTube embed fills the freed middle only in
+   youtube-mode — same footprint as the VIDEO picture. */
+.ytplayer {
+  display: none; flex: 1; min-height: 0; width: 100%; border: 0;
+  background: #000; border-radius: 12px; margin-bottom: 6px;
+  pointer-events: none; /* the app drives playback — block YT's hover controls/branding clicks */
+}
+body.youtube-mode .ytplayer { display: block; }
+/* MIDI-only surfaces are meaningless for a baked-in YouTube video — hide them (mirrors
+   video-mode; the `.guide-on` selector out-specifies `body.guide-on .pitch-guide`). */
+body.youtube-mode .pitch-guide,
+body.youtube-mode.guide-on .pitch-guide,
+body.youtube-mode .lyrics-wrap { display: none; }
+body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
+
 /* Library */
 .search-row { display: flex; gap: 8px; padding: 12px; align-items: center; }
 .search-box { position: relative; flex: 1; display: flex; }
@@ -117,6 +132,13 @@ body.video-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; 
 .pill-btn { border: 1px solid var(--line); cursor: pointer; }
 .pill-btn:hover { color: var(--ink); border-color: var(--accent-2); }
 .pill-btn.active { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
+.pill-btn:disabled { opacity: .4; cursor: not-allowed; } /* e.g. 🌐 YouTube on a non-Chromium browser */
+/* text input in the ⚙ panel (e.g. YouTube append-keyword) */
+.set-text {
+  width: 130px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: 13px; outline: none;
+}
+.set-text:focus { border-color: var(--accent); }
 /* icon-only pills (★ favorites · ⟲ recent): square, centered glyph */
 .pill-btn.icon { padding: 4px; width: 30px; height: 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; }
 

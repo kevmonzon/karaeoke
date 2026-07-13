@@ -14,6 +14,7 @@
 import { Catalog } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
+import { YouTubeEngine } from "./youtube.js";
 import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
 import { Settings } from "./settings.js";
 import { BackgroundVideo } from "./bgv.js";
@@ -28,13 +29,13 @@ const $ = (id) => document.getElementById(id);
 const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
-let lyrics, bgv, mic, pitchGuide, video; // created at boot (need the DOM)
+let lyrics, bgv, mic, pitchGuide, video, youtube; // created at boot (need the DOM)
 let lib, settingsUI;              // UI modules (created at boot)
 
 // --- mutable player state ---------------------------------------------------
 let queue = [];
 let current = null;
-let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO)
+let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
 let recent = []; // recently-played song ids, most-recent first
 let userPaused = false;   // true only when the user paused (the auto-advance exception)
@@ -61,6 +62,10 @@ async function boot() {
   mic = new MicEngine(audio, settings);
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
   video = new VideoEngine($("kv"), $("kva")); // VIDEO-song playback (picture + offset audio)
+  youtube = new YouTubeEngine($("ytplayer")); // YOUTUBE-song playback (credentialless iframe)
+  youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
+  youtube.onEnded = () => { if (media === youtube) endOfSong(); };   // unload on end → no suggested-videos screen
+  youtube.onError = (code) => onYoutubeError(code);                  // embed-blocked/unavailable → skip + remember
 
   lib = createLibraryUI({
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
@@ -79,6 +84,9 @@ async function boot() {
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
+    loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
+    loadBlockedYoutube(); // hide videos that previously failed to embed
+    if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
     loadFavorites(); // restore starred songs (resolved by id) before the first render
     lib.renderList(catalog.search(""));
     loadSession(); // restore queue + recently-played (no auto-play)
@@ -128,6 +136,7 @@ function applyAudioSettings() {
     audio.applyTranspose(settings.get("audio.key"));
   }
   if (video) { video.setVolume(vol); video.setTempo(tempo); }
+  if (youtube) { youtube.setVolume(vol); youtube.setTempo(tempo); }
 }
 
 function onSettingChanged(path) {
@@ -149,6 +158,11 @@ function onSettingChanged(path) {
     updateKeyDisplay();
   }
   if (path === "*" || path === "bt.enabled") applyBluetoothMode(path === "bt.enabled");
+  if (path === "*" || path === "youtube.enabled") {
+    updateYoutubeToggle();
+    // reflect the new state in the current search (append or drop YouTube rows)
+    if (path === "youtube.enabled" && !recentMode && !favoritesMode) runSearch($("search").value);
+  }
   if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
   if (path === "*") settingsUI.syncSettingsUI();
 }
@@ -267,6 +281,7 @@ function advanceQueue() {
   else {
     media.stop();            // nothing more queued → halt the active engine
     if (media === video) { video.unload(); document.body.classList.remove("video-mode"); }
+    if (media === youtube) { youtube.unload(); document.body.classList.remove("youtube-mode"); }
     current = null; autoAdvancing = false; lib.setNowPlaying(null);
     setPlayIcon();
   }
@@ -288,6 +303,7 @@ function saveSession() {
   try {
     localStorage.setItem(SESSION_KEY, JSON.stringify({ queue: queue.map((s) => s.id), recent }));
   } catch (_) {}
+  saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
   let data;
@@ -328,6 +344,7 @@ function loadFavorites() {
 }
 function saveFavorites() {
   try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites])); } catch (_) {}
+  saveYoutubeCache(); // a starred YouTube song must keep its pointer so it resolves on reload
 }
 function isFavorite(song) { return !!song && favorites.has(song.id); }
 function toggleFavorite(song) {
@@ -347,6 +364,178 @@ function showFavorites() {
   const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
   lib.renderList(songs);
   setStatus(songs.length ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}` : "no favorites yet — tap ☆ on a song");
+}
+
+// ---------------------------------------------------------------------------
+// YouTube search (BYOC): live results append to the song list while you search; a 🌐 pill
+// toggles it. YouTube records are transient (not part of the browse catalog), so we keep a
+// small POINTER cache (metadata only — videoId/title/channel, never content) so favorited /
+// queued / recently-played YouTube songs still resolve by id after a reload. Persisted in a
+// third localStorage key, independent of settings + session. Chromium-only (needs the
+// credentialless iframe — see src/js/youtube.js); self-disables where unsupported.
+// ---------------------------------------------------------------------------
+const YOUTUBE_KEY = "karaeoke.youtube.v1";
+const youtubeCache = new Map(); // id → YouTube record (favorites/recent/queue resolution)
+let ytSearchTimer = null;       // the (long) debounce before actually querying YouTube
+
+/** True only when the user opted in AND the browser supports credentialless iframes. */
+function youtubeOn() { return settings.get("youtube.enabled") && YouTubeEngine.supported; }
+
+/** Register a YouTube record so catalog.getById() resolves it — WITHOUT adding it to the
+ *  browse list. Used for live results and before persisting favorites/queue/recent. */
+function registerYoutube(rec) {
+  if (!rec || rec.kind !== "youtube") return rec;
+  youtubeCache.set(rec.id, rec);
+  catalog.addExternal(rec);
+  return rec;
+}
+function loadYoutubeCache() {
+  let data;
+  try { data = JSON.parse(localStorage.getItem(YOUTUBE_KEY) || "null"); } catch (_) {}
+  if (data && typeof data === "object") {
+    for (const rec of Object.values(data)) {
+      if (rec && rec.id && rec.kind === "youtube") registerYoutube(rec);
+    }
+  }
+}
+/** Persist only the YouTube records still referenced by a favorite / the queue / recent. */
+function saveYoutubeCache() {
+  const keep = new Set([...favorites, ...queue.map((s) => s.id), ...recent]);
+  const obj = {};
+  for (const id of keep) {
+    const rec = youtubeCache.get(id);
+    if (rec && rec.kind === "youtube") obj[id] = rec;
+  }
+  try { localStorage.setItem(YOUTUBE_KEY, JSON.stringify(obj)); } catch (_) {}
+}
+
+// A persistent blocklist of YouTube videoIds that failed to embed (owner-disabled / removed /
+// private). We hide them from future search results and skip past them, so a dead video never
+// shows up again. Stored as a plain id array, independent of the pointer cache above.
+const YOUTUBE_BLOCKED_KEY = "karaeoke.youtube.blocked.v1";
+const blockedYoutube = new Set();
+
+function loadBlockedYoutube() {
+  try {
+    const a = JSON.parse(localStorage.getItem(YOUTUBE_BLOCKED_KEY) || "[]");
+    if (Array.isArray(a)) a.forEach((id) => id && blockedYoutube.add(id));
+  } catch (_) {}
+}
+function blockYoutube(videoId) {
+  if (!videoId || blockedYoutube.has(videoId)) return;
+  blockedYoutube.add(videoId);
+  try { localStorage.setItem(YOUTUBE_BLOCKED_KEY, JSON.stringify([...blockedYoutube])); } catch (_) {}
+  reportBlockedToServer([videoId]); // share it so every user's results omit it too
+}
+
+/** Push un-embeddable videoIds to the server's shared blocklist (fire-and-forget). The server
+ *  filters them from /api/youtube-search for everyone, so nobody hits the dead video again. */
+function reportBlockedToServer(ids) {
+  if (!ids || !ids.length) return;
+  const url = settings.get("youtube.blockUrl") || "/api/youtube-block";
+  try {
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+                 body: JSON.stringify({ videoIds: ids }) }).catch(() => {});
+  } catch (_) {}
+}
+
+/** POST the query to serve.py's keyless-scrape proxy → transient YouTube records.
+ *  The configured keyword (default "karaoke") is appended so YouTube filters to karaoke
+ *  versions server-side — e.g. "tetoris" → "tetoris karaoke". */
+async function youtubeSearch(query) {
+  const url = settings.get("youtube.searchUrl") || "/api/youtube-search";
+  const keyword = (settings.get("youtube.keyword") || "").trim();
+  const q = keyword ? `${query} ${keyword}` : query;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ q }),
+  });
+  const data = await res.json();
+  return ((data && data.items) || [])
+    .map((it) => Catalog.makeYoutubeRecord(it))
+    .filter((r) => r && !blockedYoutube.has(r.videoId)); // hide videos that already failed to embed
+}
+
+// A YouTube video failed to play. Codes: 2 = bad id, 5 = HTML5 error (may be transient),
+// 100 = removed/private, 101/150 = embedding disabled by the owner. The permanent ones get
+// remembered (blocklist → hidden from future results); then we skip to the next result.
+function onYoutubeError(code) {
+  if (media !== youtube || !current) return;
+  const permanent = code === 101 || code === 150 || code === 100 || code === 2;
+  if (permanent) blockYoutube(current.videoId);
+  const why = (code === 101 || code === 150) ? "embedding disabled by owner" : `unavailable (${code})`;
+  setStatus(`"${current.name}" ${why} — skipping…`);
+  const next = nextYoutubeInList(current);
+  if (next) return playNow(next);      // walk to the next result the user was browsing
+  if (queue.length) return advanceQueue();
+  youtube.unload();                    // nothing to fall back to → clear the stage
+  document.body.classList.remove("youtube-mode");
+  clearStage();
+  current = null;
+  setPlayIcon();
+}
+
+/** The next kind:"youtube" record after `song` in the currently-rendered list, skipping any
+ *  already blocked. null if there isn't one. */
+function nextYoutubeInList(song) {
+  const list = (lib.getList && lib.getList()) || [];
+  const i = list.findIndex((s) => s.id === song.id);
+  if (i < 0) return null;
+  for (let j = i + 1; j < list.length; j++) {
+    const s = list[j];
+    if (s.kind === "youtube" && !blockedYoutube.has(s.videoId)) return s;
+  }
+  return null;
+}
+
+/** Render local matches for `query`, optionally appending the given YouTube records. */
+function renderSearchResults(query, ytRecords) {
+  const local = catalog.search(query);
+  lib.renderList(ytRecords && ytRecords.length ? [...local, ...ytRecords] : local);
+}
+
+/** After a long idle, query YouTube — but only when enabled and the local list came up
+ *  short (< autoThreshold hits). Appends the results if the query is still the active one. */
+function scheduleYoutubeSearch(query) {
+  clearTimeout(ytSearchTimer);
+  if (!youtubeOn() || !query.trim()) return;
+  ytSearchTimer = setTimeout(async () => {
+    const threshold = settings.get("youtube.autoThreshold") || 2;
+    // 11 = the ⚙ slider's max = "always" → skip the local-count gate and always query YouTube.
+    if (threshold < 11 && catalog.search(query, threshold).length >= threshold) return; // local already covers it
+    let recs = [];
+    try { recs = await youtubeSearch(query); } catch (_) { recs = []; }
+    recs.forEach(registerYoutube);
+    if ($("search").value !== query || recentMode || favoritesMode) return; // query moved on
+    renderSearchResults(query, recs);
+  }, settings.get("youtube.debounceMs") || 3000);
+}
+
+/** Re-render the plain search view: instant local results + a scheduled YouTube append. */
+function runSearch(query) {
+  renderSearchResults(query, null);
+  scheduleYoutubeSearch(query);
+}
+
+/** Reflect the 🌐 pill's on/off/unsupported state. */
+function updateYoutubeToggle() {
+  const b = $("btn-youtube");
+  if (b) {
+    const supported = YouTubeEngine.supported;
+    b.classList.toggle("active", youtubeOn());
+    b.disabled = !supported;
+    b.title = !supported
+      ? "YouTube search needs a Chromium-based browser (credentialless iframes)"
+      : (settings.get("youtube.enabled")
+          ? "YouTube search ON — searches also query YouTube"
+          : "Search YouTube for karaoke videos");
+  }
+  // keep the ⚙ checkbox in step when the pill is what changed the value
+  const chk = $("set-youtube");
+  if (chk) chk.checked = settings.get("youtube.enabled");
+  // preload the YT IFrame API while enabled so the first play can autoplay (no activation loss)
+  if (youtubeOn() && youtube) youtube.warm();
 }
 
 // ---------------------------------------------------------------------------
@@ -375,6 +564,7 @@ async function ensureEngine() {
 // songs take the existing SpessaSynth path.
 async function playNow(song) {
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
+  if (song.kind === "youtube") return playYoutube(song);
   if (song.kind === "video") return playVideo(song);
   return playMidi(song);
 }
@@ -398,6 +588,8 @@ function hideMidiSurfaces() {
 // offset feature moves the audio (handled inside VideoEngine).
 async function playVideo(song) {
   audio.pause();            // silence the synth if a MIDI song was playing
+  youtube.unload();         // stop any YouTube video that was playing
+  document.body.classList.remove("youtube-mode");
   media = video;
   current = song;
   userPaused = false;
@@ -422,11 +614,43 @@ async function playVideo(song) {
   setPlayIcon();
 }
 
+// YOUTUBE song (BYOC): no synth/soundfont, no lyric parsing — the official YouTube IFrame
+// player fills the stage. Mirrors playVideo. Offset/key/guide/auto-tune don't apply (the
+// lyrics are baked into the video), so the MIDI-only surfaces stay hidden.
+async function playYoutube(song) {
+  audio.pause();            // silence the synth if a MIDI song was playing
+  video.unload();           // …and any video
+  document.body.classList.remove("video-mode");
+  media = youtube;
+  current = song;
+  userPaused = false;
+  autoAdvancing = false;
+  document.body.classList.add("youtube-mode");
+  hideMidiSurfaces();
+  registerYoutube(song);   // keep it resolvable for favorites/recent/queue across reloads
+  lib.setNowPlaying(song);
+  pushRecent(song);
+  $("np-title").textContent = song.name || "(untitled)";
+  $("np-artist").textContent = song.artistName || "";
+  $("np-code").textContent = "";        // YouTube songs have no dial code
+  $("lyric-badge").textContent = "youtube";
+
+  youtube.setVolume(settings.get("audio.volume"));
+  youtube.setTempo(settings.get("audio.tempo"));
+  youtube.load(song.videoId);
+  bgv.onSongStart();
+  setStatus(`Now playing: ${song.name}`);
+  await youtube.play();
+  setPlayIcon();
+}
+
 // MIDI song: the original SpessaSynth path.
 async function playMidi(song) {
   if (!(await ensureEngine())) return;
   video.unload();          // stop any video that was playing
+  youtube.unload();        // …and any YouTube video
   document.body.classList.remove("video-mode");
+  document.body.classList.remove("youtube-mode");
   media = audio;
   current = song;
   userPaused = false;
@@ -489,6 +713,15 @@ async function playMidi(song) {
 // rAF loop — lyric sync, pitch guide + scoring, auto-tune, seek bar, end-of-song
 // ---------------------------------------------------------------------------
 let endGuard = false;
+// End the current song: clear the stage (which also unloads the video / YouTube player, so
+// YouTube never gets to paint its suggested-videos end screen) then advance the queue. Guarded
+// so the rAF end-detection and YouTube's ENDED event can't both fire it.
+function endOfSong() {
+  if (endGuard) return;
+  endGuard = true;
+  clearStage();
+  setTimeout(() => { endGuard = false; advanceQueue(); }, 700);
+}
 function tick() {
   if (current && media) {
     const isMidi = media === audio;
@@ -550,11 +783,7 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
-      if (!media.paused && t >= d - 0.15 && !endGuard) {
-        endGuard = true;
-        clearStage(); // clear the screen before the next song
-        setTimeout(() => { endGuard = false; advanceQueue(); }, 700);
-      }
+      if (!media.paused && t >= d - 0.15) endOfSong();
     }
   } else {
     if (mic.autotuneActive) mic.clearAutotune(); // release correction when nothing is playing
@@ -581,12 +810,15 @@ function wireUI() {
     if (recentMode) setRecentMode(false);       // typing leaves the Recent view
     if (favoritesMode) setFavoritesMode(false); // …and the Favorites view
     toggleClear();
+    const q = search.value;
     clearTimeout(deb);
-    deb = setTimeout(() => lib.renderList(catalog.search(search.value)), 120);
+    deb = setTimeout(() => renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
+    scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
   clearBtn.onclick = () => {
     search.value = "";
     toggleClear();
+    clearTimeout(ytSearchTimer);
     if (recentMode) setRecentMode(false);
     if (favoritesMode) setFavoritesMode(false);
     lib.renderList(catalog.search(""));
@@ -595,12 +827,19 @@ function wireUI() {
   $("btn-recent").onclick = () => {
     setRecentMode(!recentMode);
     if (recentMode) showRecent();
-    else lib.renderList(catalog.search(search.value)); // back to the (search) list
+    else runSearch(search.value); // back to the (search) list
   };
   $("btn-favorites").onclick = () => {
     setFavoritesMode(!favoritesMode);
     if (favoritesMode) showFavorites();
-    else lib.renderList(catalog.search(search.value)); // back to the (search) list
+    else runSearch(search.value); // back to the (search) list
+  };
+  $("btn-youtube").onclick = () => {
+    if (!YouTubeEngine.supported) {
+      setStatus("YouTube search needs a Chromium-based browser (credentialless iframes).");
+      return;
+    }
+    settings.set("youtube.enabled", !settings.get("youtube.enabled")); // onSettingChanged repaints + re-runs
   };
 
   // collapsible panels
@@ -631,6 +870,7 @@ function wireUI() {
     clearTimeout(playDelayTimer); // cancel a pending (title-card) start
     media.stop();
     if (media === video) { video.unload(); document.body.classList.remove("video-mode"); }
+    if (media === youtube) { youtube.unload(); document.body.classList.remove("youtube-mode"); }
     clearStage();          // stopping clears the lyrics screen
     current = null;
     userPaused = false;    // stop is not a pause → the queue may auto-advance
@@ -675,6 +915,7 @@ function wireUI() {
   $("tempo-val").textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
   $("volume").value = settings.get("audio.volume");
   $("key-val").textContent = fmtKey(settings.get("audio.key"));
+  updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
 }
 
 function setKey(semi) {
@@ -731,7 +972,9 @@ function clearStage() {
   $("time-cur").textContent = "0:00"; $("time-dur").textContent = "0:00";
   $("title-card").classList.remove("show");
   document.body.classList.remove("video-mode"); // leave the clean video stage
+  document.body.classList.remove("youtube-mode");
   if (video) video.unload();
+  if (youtube) youtube.unload();
   if (lib) lib.setNowPlaying(null);
 }
 

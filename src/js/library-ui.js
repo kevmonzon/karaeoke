@@ -14,6 +14,18 @@ const $ = (id) => document.getElementById(id);
 const ROW_H = 46;        // must match `.song { height }` in style.css
 const OVERSCAN = 5;      // extra rows above/below the viewport
 
+// Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube.
+const KIND_ICON = {
+  video:   { glyph: "🎞️", cls: "vid", title: "Video" },
+  youtube: { glyph: "🌐", cls: "yt",  title: "YouTube" },
+  midi:    { glyph: "🎤", cls: "kar", title: "MIDI" },
+};
+const kindIcon = (kind) => KIND_ICON[kind] || KIND_ICON.midi;
+const kindSpan = (s) => {
+  const k = kindIcon(s.kind);
+  return `<span class="kind ${k.cls}" title="${k.title}">${k.glyph}</span>`;
+};
+
 /**
  * @param {object} cb
  * @param {(song)=>void}  cb.onPlay             play a song now (double-click / row)
@@ -38,13 +50,12 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
 
   function makeRow(s, i) {
     const li = document.createElement("li");
-    const isVideo = s.kind === "video";
     li.className = "song" +
       (selectedSong && s.id === selectedSong.id ? " selected" : "") +
       (nowPlaying && s.id === nowPlaying.id ? " playing" : "");
     li.style.top = `${i * ROW_H}px`;
     li.innerHTML =
-      `<span class="kind ${isVideo ? "vid" : "kar"}" title="${isVideo ? "Video" : "MIDI"}">${isVideo ? "🎞️" : "🎤"}</span>` +
+      kindSpan(s) +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
     li.querySelector(".title").textContent = s.name || "(untitled)";
     li.querySelector(".artist").textContent = s.artistName || "";
@@ -101,9 +112,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     q.innerHTML = "";
     queue.forEach((s, i) => {
       const li = document.createElement("li");
-      const isVideo = s.kind === "video";
-      li.innerHTML = `<span class="code">${s.code}</span> <span class="qt"></span>` +
-        `<span class="kind ${isVideo ? "vid" : "kar"}" title="${isVideo ? "Video" : "MIDI"}">${isVideo ? "🎞️" : "🎤"}</span>`;
+      li.innerHTML = `<span class="code">${s.code}</span> <span class="qt"></span>` + kindSpan(s);
       li.querySelector(".qt").textContent = `${s.name} — ${s.artistName}`;
       const rm = document.createElement("button");
       rm.textContent = "✕"; rm.className = "add";
@@ -118,6 +127,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     renderList,
     renderQueue,
     getSelectedSong: () => selectedSong,
+    getList: () => songs, // the currently-rendered list (used to skip to the next result)
     setNowPlaying,
     refresh: renderWindow, // re-render the visible window (e.g. after un-collapsing)
   };

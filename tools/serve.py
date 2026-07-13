@@ -39,6 +39,8 @@ import subprocess
 import socketserver
 import sys
 import threading
+import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 
@@ -58,6 +60,9 @@ VIDEOS_DIR = os.path.join(DATA_DIR, "videos")        # karaoke VIDEO songs (para
 DOWNLOADS_DIR = os.path.join(DATA_DIR, "kar_raw")  # compressed-MIDI song payloads
 CATALOG_PATH = os.path.join(DATA_DIR, "catalog.json")
 VIDEO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-video.json")
+# Shared blocklist of YouTube videoIds that can't be embedded (owner-disabled / removed). Clients
+# report them via POST /api/youtube-block; /api/youtube-search filters them out for EVERY user.
+YOUTUBE_BLOCKLIST_PATH = os.path.join(DATA_DIR, "youtube-blocklist.json")
 VIDEO_EXTS = (".mp4", ".webm", ".ogg", ".mov")
 
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
@@ -83,6 +88,14 @@ SOUNDFONT_URL = (
 SOUNDFONT_PATH = os.path.join(DATA_DIR, "soundfont.sf2")
 
 USER_AGENT = "karaeoke-offline-setup/1.0"
+
+# A browser-like UA for the /api/youtube-search scrape. YouTube serves stripped-down /
+# consent-wall HTML to non-browser agents (our setup UA gets degraded markup that lacks
+# ytInitialData), so the search endpoint impersonates a desktop Chrome.
+YT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +217,122 @@ def build_bgv_manifest() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Shared YouTube embed blocklist — reported by clients, filtered for everyone
+# ---------------------------------------------------------------------------
+_yt_blocklist: set[str] = set()
+_yt_blocklist_lock = threading.Lock()
+_YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")  # a YouTube video id
+YT_BLOCKLIST_MAX = 100_000                       # sanity cap so the file can't grow unbounded
+
+
+def _load_yt_blocklist() -> None:
+    global _yt_blocklist
+    try:
+        with open(YOUTUBE_BLOCKLIST_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if isinstance(data, list):
+            _yt_blocklist = {x for x in data if isinstance(x, str) and _YT_ID_RE.match(x)}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        _yt_blocklist = set()
+
+
+def _save_yt_blocklist() -> None:
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        tmp = YOUTUBE_BLOCKLIST_PATH + ".part"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(sorted(_yt_blocklist), fh)
+        os.replace(tmp, YOUTUBE_BLOCKLIST_PATH)
+    except OSError as exc:  # noqa: BLE001
+        print(f"  ! could not write youtube-blocklist.json: {exc}", file=sys.stderr)
+
+
+def _add_yt_blocked(ids) -> int:
+    """Add valid videoIds to the shared blocklist (persisting on change). Returns the new total."""
+    with _yt_blocklist_lock:
+        changed = False
+        for vid in ids or []:
+            if len(_yt_blocklist) >= YT_BLOCKLIST_MAX:
+                break
+            if isinstance(vid, str) and _YT_ID_RE.match(vid) and vid not in _yt_blocklist:
+                _yt_blocklist.add(vid)
+                changed = True
+        if changed:
+            _save_yt_blocklist()
+        return len(_yt_blocklist)
+
+
+# ---------------------------------------------------------------------------
+# Keyless YouTube search (server-side scrape) — powers /api/youtube-search
+# ---------------------------------------------------------------------------
+def _runs_text(obj) -> str:
+    """Text from a YouTube {runs:[{text}]} or {simpleText} node."""
+    if not isinstance(obj, dict):
+        return ""
+    if "simpleText" in obj:
+        return obj["simpleText"] or ""
+    runs = obj.get("runs")
+    if isinstance(runs, list):
+        return "".join(r.get("text", "") for r in runs if isinstance(r, dict))
+    return ""
+
+
+def _iter_video_renderers(node):
+    """Yield every videoRenderer dict anywhere in the parsed JSON, in document order.
+    Walking the whole tree is robust to YouTube reshuffling the container structure."""
+    if isinstance(node, dict):
+        vr = node.get("videoRenderer")
+        if isinstance(vr, dict):
+            yield vr
+        for v in node.values():
+            yield from _iter_video_renderers(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _iter_video_renderers(v)
+
+
+def _youtube_search(query: str, max_results: int = 20):
+    """Keyless server-side YouTube search: fetch the public results page and parse the
+    embedded ytInitialData JSON → [{videoId, title, channelTitle}]. Best-effort — any
+    failure raises and the caller returns an empty set. No API key, no quota. BYOC-clean:
+    live metadata only, nothing stored or redistributed (playback is the official embed)."""
+    url = "https://www.youtube.com/results?" + urllib.parse.urlencode(
+        {"search_query": query, "hl": "en", "gl": "US"}
+    )
+    req = urllib.request.Request(url, headers={
+        "User-Agent": YT_USER_AGENT,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": "CONSENT=YES+1",  # skip the EU consent interstitial so ytInitialData is present
+    })
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        html = resp.read().decode("utf-8", "replace")
+
+    m = (re.search(r"ytInitialData\s*=\s*(\{.*?\})\s*;\s*</script>", html, re.DOTALL)
+         or re.search(r'ytInitialData"\]\s*=\s*(\{.*?\})\s*;\s*</script>', html, re.DOTALL))
+    if not m:
+        return []
+    data = json.loads(m.group(1))
+
+    with _yt_blocklist_lock:
+        blocked = frozenset(_yt_blocklist)  # snapshot: exclude videos already known un-embeddable
+
+    out, seen = [], set()
+    for vr in _iter_video_renderers(data):
+        vid = vr.get("videoId")
+        if not vid or vid in seen or vid in blocked:
+            continue
+        title = _runs_text(vr.get("title"))
+        if not title:
+            continue
+        channel = _runs_text(vr.get("ownerText")) or _runs_text(vr.get("longBylineText"))
+        seen.add(vid)
+        out.append({"videoId": vid, "title": title, "channelTitle": channel})
+        if len(out) >= max_results:
+            break
+    return out
+
+
+# ---------------------------------------------------------------------------
 # HTTP server with cross-origin isolation + correct MIME types
 # ---------------------------------------------------------------------------
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -300,7 +429,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         # Enable SharedArrayBuffer (SpessaSynth worklet path)
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
-        self.send_header("Cross-Origin-Embedder-Policy", "require-corp")
+        # "credentialless" (not "require-corp") keeps crossOriginIsolated === true (so
+        # SpessaSynth's SharedArrayBuffer still works) WHILE letting the page embed the
+        # YouTube karaoke player in an <iframe credentialless> — YouTube ships no CORP/COEP,
+        # which require-corp would block outright. See src/js/youtube.js.
+        self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
         self.send_header("Cross-Origin-Resource-Policy", "same-origin")
         self.send_header("Cache-Control", "no-cache")
         # let the service worker (served from /src/) claim the whole-origin scope
@@ -340,6 +473,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
             return
+        if self.path.split("?")[0] == "/api/youtube-search":
+            # Keyless YouTube search proxy. Body: {"q": "<query>"} → {"ok", "items":[…]}.
+            # Errors are non-fatal (200 with empty items) so the UI just shows nothing.
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                query = (json.loads(raw or b"{}").get("q") or "").strip()
+                items = _youtube_search(query, 20) if query else []
+                self._send_json({"ok": True, "items": items})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "items": [], "error": str(exc)[:200]})
+            return
+        if self.path.split("?")[0] == "/api/youtube-block":
+            # Client reports videoIds that can't be embedded → shared blocklist (filtered for all).
+            # Body: {"videoIds":[...]} or {"videoId":"..."} → {"ok", "count": total}.
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                raw = self.rfile.read(length) if length else b"{}"
+                payload = json.loads(raw or b"{}")
+                ids = payload.get("videoIds")
+                if not isinstance(ids, list):
+                    ids = [payload.get("videoId")] if payload.get("videoId") else []
+                self._send_json({"ok": True, "count": _add_yt_blocked(ids)})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "error": str(exc)[:200]})
+            return
         self.send_error(404)
 
     def log_message(self, fmt, *args):
@@ -373,6 +532,7 @@ def main() -> int:
         setup()
 
     build_bgv_manifest()  # always refresh so drop-in videos are picked up
+    _load_yt_blocklist()  # shared YouTube embed blocklist (filtered from search results)
 
     os.chdir(SRC)  # the app (src/) IS the web root — served at "/"; data URLs route to DATA_DIR
     handler = functools.partial(Handler, directory=SRC)

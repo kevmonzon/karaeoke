@@ -37,7 +37,7 @@ export const DEFAULT_CONFIG = {
 
     // Concatenate N consecutive source lines into one display line (1–4).
     // Higher = longer lines and fewer, less-distracting line changes.
-    mergeLines: 1,
+    mergeLines: 2,
 
     // Width of the lyric block as a percentage of the stage (50–100).
     lineWidthPct: 90,
@@ -91,11 +91,29 @@ export const DEFAULT_CONFIG = {
   // Collapsible panels (toggled from the top bar; true = shown). Persisted.
   ui: { library: true, queue: true, playback: true },
 
+  // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
+  // the song list while you search. OFF by default — opt in with the 🌐 pill in the search
+  // row (the app stays fully offline until then). BYOC-clean: results are live metadata only,
+  // playback is the official YouTube embed, favorites store just a pointer (never content).
+  // Chromium-only (needs the credentialless-iframe escape hatch under the app's cross-origin
+  // isolation — see src/js/youtube.js); the feature self-disables on browsers without it.
+  youtube: {
+    enabled: false,                    // master toggle (mirrors the 🌐 search-row pill)
+    searchUrl: "/api/youtube-search",  // server-side keyless-scrape proxy (serve.py)
+    blockUrl:  "/api/youtube-block",   // report un-embeddable videoIds → shared server blocklist
+    autoThreshold: 2,                  // only query YouTube when the local search has < this many hits
+    debounceMs: 3000,                  // wait this long after typing stops before querying
+    maxResults: 20,                    // cap on appended YouTube rows
+    // Appended to every YouTube query ("<your search> karaoke") so results are filtered to
+    // karaoke versions on YouTube's side. Blank to search the raw term. Editable in ⚙.
+    keyword: "karaoke",
+  },
+
   // Pitch guide — reads the guide melody from the MIDI and shows a scrolling
   // piano-roll of the notes to sing. Optionally overlays your live mic pitch and
   // a score. All parts are toggles.
   guide: {
-    enabled: false, // master toggle for the guide band
+    enabled: true, // master toggle for the guide band
     windowSec: 5, // seconds of melody visible across the band
     height: 150, // band height in px
     channel: -1, // -1 = auto-detect the melody channel; 0–15 = manual override

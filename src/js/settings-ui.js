@@ -17,7 +17,7 @@
 const $ = (id) => document.getElementById(id);
 const pct = (v) => `${Math.round(v * 100)}%`;
 
-// type: "range" (number) · "check" (boolean) · "select" (string)
+// type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
 const SETTINGS_SCHEMA = [
   // lyrics
@@ -68,6 +68,13 @@ const SETTINGS_SCHEMA = [
   { id: "set-autotune-mode", path: "mic.autotune.mode", type: "select" },
   { id: "set-autotune-key", path: "mic.autotune.key", type: "select" }, // keeps "auto" or "0".."11"
   { id: "set-autotune-scale", path: "mic.autotune.scale", type: "select" },
+  // youtube search (BYOC) — also toggled by the 🌐 search-row pill
+  { id: "set-youtube", path: "youtube.enabled", type: "check" },
+  // 11 = the slider max = "always" (query YouTube regardless of local hit count) — see app.js scheduleYoutubeSearch
+  { id: "set-youtube-threshold", path: "youtube.autoThreshold", type: "range", fmt: (v) => (+v >= 11 ? "always" : `< ${v} local hits`) },
+  { id: "set-youtube-debounce", path: "youtube.debounceMs", type: "range", fmt: (v) => `${(+v / 1000).toFixed(1)} s` },
+  { id: "set-youtube-max", path: "youtube.maxResults", type: "range", fmt: (v) => `${v}` },
+  { id: "set-youtube-keyword", path: "youtube.keyword", type: "text" },
 ];
 
 /**
@@ -84,13 +91,13 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
     if (el) el.textContent = c.fmt(v);
   };
   const readControl = (c, el) =>
-    c.type === "check" ? el.checked : c.type === "select" ? el.value : +el.value;
+    c.type === "check" ? el.checked : (c.type === "select" || c.type === "text") ? el.value : +el.value;
 
   function autoBind() {
     for (const c of SETTINGS_SCHEMA) {
       const el = $(c.id);
       if (!el) continue;
-      const evt = c.type === "check" || c.type === "select" ? "change" : "input";
+      const evt = (c.type === "check" || c.type === "select" || c.type === "text") ? "change" : "input";
       el.addEventListener(evt, () => {
         const val = readControl(c, el);
         settings.set(c.path, val);
@@ -105,7 +112,7 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
       if (!el) continue;
       const val = settings.get(c.path);
       if (c.type === "check") el.checked = val;
-      else if (c.type === "select") el.value = String(val);
+      else if (c.type === "select" || c.type === "text") el.value = String(val);
       else { el.value = val; label(c, val); }
     }
   }

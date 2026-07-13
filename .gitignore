@@ -9,6 +9,8 @@
 # do NOT publish them. Both rebuild locally from data/kar_raw/ and data/videos/.
 /data/catalog.json
 /data/catalog-video.json
+# Runtime-accumulated shared blocklist of un-embeddable YouTube videoIds (deployment-specific).
+/data/youtube-blocklist.json
 /_memory
 /.vscode
 # Local-only tools/content that must never be published (e.g. the bulk downloader).

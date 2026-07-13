@@ -49,6 +49,17 @@ export class Catalog {
   getById(id) { return this.byId.get(String(id)); }
 
   /**
+   * Register a record (a live YouTube search result or a persisted YouTube favorite/recent)
+   * so getById() resolves it, WITHOUT adding it to the browse list (this.songs) — YouTube
+   * songs aren't part of the local library, they only appear while searching / in
+   * favorites / recent / queue. Idempotent. Returns the record.
+   */
+  addExternal(record) {
+    if (record && record.id) this.byId.set(record.id, record);
+    return record;
+  }
+
+  /**
    * Search by code (exact prefix) or title/artist/lang substring.
    * The list UI is virtualized, so the default cap is high (return all matches);
    * callers that only want the top hit pass `limit = 1`.
@@ -81,6 +92,27 @@ export class Catalog {
   static fileUrl(song) {
     if (!song || !song.file) return null;
     return "/" + song.file.split("/").map(encodeURIComponent).join("/");
+  }
+
+  /**
+   * Build a transient catalog record from a YouTube search item
+   * `{videoId, title, channelTitle}`. YouTube songs carry no dial `code` and no local
+   * `file` — identity is the `videoId` (`id = "youtube:<videoId>"`). Pure + testable.
+   * Returns null for an item without a videoId.
+   */
+  static makeYoutubeRecord(item) {
+    const videoId = item && item.videoId;
+    if (!videoId) return null;
+    return {
+      kind: "youtube",
+      id: `youtube:${videoId}`,
+      code: "",
+      videoId,
+      name: item.title || "(untitled)",
+      artistName: item.channelTitle || "",
+      langName: "YouTube",
+      type: "YOUTUBE",
+    };
   }
 }
 
