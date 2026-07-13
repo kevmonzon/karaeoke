@@ -22,6 +22,7 @@ import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
+import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -53,6 +54,8 @@ let scoreHit = 0, scoreVoiced = 0;
 // Boot
 // ---------------------------------------------------------------------------
 async function boot() {
+  purgeStaleCaches(); // drop the old service-worker cache; keep our asset cache
+
   lyrics = new LyricsEngine($("lyrics"), {
     lineCount: settings.get("lyrics.lineCount"),
     smooth: settings.get("lyrics.smooth"),
@@ -665,7 +668,7 @@ async function playMidi(song) {
   const url = Catalog.fileUrl(song);
   let buf;
   try {
-    const raw = await (await fetch(url)).arrayBuffer();
+    const raw = await cachedArrayBuffer(url); // cache-first via Cache Storage
     buf = toMidiBytes(raw); // song files may be raw-deflate compressed
   } catch (e) {
     setStatus(`Could not read file for #${song.code}: ${e.message}`);

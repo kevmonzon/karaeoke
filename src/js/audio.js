@@ -15,6 +15,7 @@
  */
 
 import { WorkletSynthesizer, Sequencer } from "spessasynth_lib";
+import { cachedArrayBuffer } from "./asset-cache.js";
 
 const PROCESSOR_URL = "./vendor/spessasynth_processor.min.js";
 const SOUNDFONT_URL = "/soundfont.sf2";  // served from DATA_DIR (see tools/serve.py routing)
@@ -60,7 +61,9 @@ export class AudioEngine {
     this.synth.connect(this.gain);
 
     onProgress("Loading SoundFont (~30 MB, first run only)…");
-    const sfBuf = await fetchBuffer(soundfontUrl, (frac) =>
+    // Cache-first via Cache Storage (asset-cache.js): downloaded once, then instant
+    // on every later load. No service worker — app code is never cached.
+    const sfBuf = await cachedArrayBuffer(soundfontUrl, (frac) =>
       onProgress("Loading SoundFont…", frac)
     );
     await this.synth.soundBankManager.addSoundBank(sfBuf, "main");
@@ -158,25 +161,3 @@ export class AudioEngine {
   get paused() { return this.seq ? this.seq.paused : true; }
 }
 
-/** fetch() an ArrayBuffer with optional progress (Content-Length based). */
-async function fetchBuffer(url, onProgress) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Fetch failed ${res.status} for ${url}`);
-  const total = +res.headers.get("content-length") || 0;
-  if (!res.body || !total) return await res.arrayBuffer();
-
-  const reader = res.body.getReader();
-  const chunks = [];
-  let received = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    received += value.length;
-    if (onProgress) onProgress(received / total);
-  }
-  const out = new Uint8Array(received);
-  let off = 0;
-  for (const c of chunks) { out.set(c, off); off += c.length; }
-  return out.buffer;
-}
