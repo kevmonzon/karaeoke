@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Ka-Rae-oke — Offline Karaoke</title>
+  <link rel="stylesheet" href="./css/style.css" />
+
+  <!-- pako (UMD) — song payloads may be raw-deflate-compressed MIDI; we inflate
+       them client-side before handing bytes to the synth. Exposes window.pako. -->
+  <script src="./vendor/pako.min.js"></script>
+
+  <!-- SpessaSynth is vendored under ./vendor/. The lib imports the core via the
+       bare specifier 'spessasynth_core', resolved by this import map. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "spessasynth_lib": "./vendor/spessasynth_lib.js",
+      "spessasynth_core": "./vendor/spessasynth_core.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Ka-<span>Rae</span>-oke <em>offline</em></div>
+    <div id="status" class="status">Loading…</div>
+    <div class="toggles">
+      <button id="toggle-lib" class="gear" title="Toggle song list">☰</button>
+      <button id="toggle-queue" class="gear" title="Toggle queue">▦</button>
+      <button id="toggle-playback" class="gear" title="Toggle playback controls">🎛</button>
+    </div>
+    <button id="btn-settings" class="gear" title="Settings">⚙</button>
+  </header>
+
+  <main class="layout">
+    <!-- LEFT: library -->
+    <section class="library">
+      <div class="search-row">
+        <div class="search-box">
+          <input id="search" type="text" inputmode="search"
+                 placeholder="Search by number, title, or artist…" autocomplete="off" />
+          <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
+        <button id="btn-recent" class="pill pill-btn" title="Recently played">Recent</button>
+      </div>
+      <ul id="song-list" class="song-list"></ul>
+    </section>
+
+    <!-- CENTER: stage -->
+    <section class="stage">
+      <video id="bgv" class="bgv" muted loop playsinline></video>
+
+      <div class="now-playing">
+        <span id="np-code" class="np-code">—</span>
+        <div class="np-meta">
+          <div id="np-title" class="np-title">Select a song to begin</div>
+          <div id="np-artist" class="np-artist"></div>
+        </div>
+        <span id="np-key" class="np-key"></span>
+        <span id="lyric-badge" class="badge"></span>
+      </div>
+
+      <!-- VIDEO karaoke: #kv is the picture (muted); #kva carries the sound, its
+           clock offset from the picture so the lyric-offset control moves the audio.
+           #kv fills the freed middle only in body.video-mode. -->
+      <video id="kv" class="kv" muted playsinline></video>
+      <audio id="kva" class="kva"></audio>
+
+      <canvas id="pitch-guide" class="pitch-guide"></canvas>
+
+      <!-- the title card overlays only the lyrics area, then fades to reveal it -->
+      <div class="lyrics-wrap">
+        <div id="lyrics" class="lyrics"></div>
+        <div id="title-card" class="title-card">
+          <div id="tc-code" class="tc-code"></div>
+          <div id="tc-title" class="tc-title"></div>
+          <div id="tc-artist" class="tc-artist"></div>
+          <div id="tc-key" class="tc-key"></div>
+        </div>
+      </div>
+
+      <div id="offset-toast" class="offset-toast"></div>
+
+      <div id="seek-track" class="seek-track"><div id="seekbar" class="seekbar"></div></div>
+      <div class="time"><span id="time-cur">0:00</span><span id="time-dur">0:00</span></div>
+
+      <div class="transport">
+        <button id="btn-restart" title="Restart">⏮</button>
+        <button id="btn-play" class="primary" title="Play/Pause (Space)">▶</button>
+        <button id="btn-stop" title="Stop">■</button>
+        <button id="btn-next" title="Next in queue">⏭</button>
+        <button id="btn-mic" class="mic-toggle" title="Microphone on/off">🎤</button>
+      </div>
+
+      <div class="controls">
+        <div class="ctl">
+          <label>Key <em id="key-name"></em></label>
+          <div class="stepper">
+            <button id="key-down">−</button>
+            <span id="key-val">0</span>
+            <button id="key-up">＋</button>
+          </div>
+        </div>
+        <div class="ctl">
+          <label>Tempo <span id="tempo-val">1.00×</span></label>
+          <input id="tempo" type="range" min="0.5" max="1.5" step="0.01" value="1" />
+        </div>
+        <div class="ctl">
+          <label>Volume</label>
+          <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
+        </div>
+      </div>
+    </section>
+
+    <!-- RIGHT: queue -->
+    <aside class="queue">
+      <h3>Queue <span id="queue-count" class="muted"></span></h3>
+      <ul id="queue-list" class="queue-list"></ul>
+      <p class="hint">Double-click a song to play now · ＋ to queue · Space to play/pause</p>
+    </aside>
+  </main>
+
+  <!-- settings drawer -->
+  <div id="settings-panel" class="settings-panel hidden">
+    <div class="settings-head">
+      <h3>Settings</h3>
+      <button id="settings-close" class="gear" title="Close">✕</button>
+    </div>
+    <div class="settings-body">
+      <section>
+        <h4>Lyrics</h4>
+        <label class="row">
+          <span>Offset <em id="set-offset-val">0 ms</em></span>
+          <input id="set-offset" type="range" min="-2000" max="2000" step="10" value="0" />
+        </label>
+        <div class="hint sub">Positive = lyrics lead the music · keys <kbd>[</kbd> <kbd>]</kbd> nudge ±50 ms · shifts the guide for MIDI, and the audio for video</div>
+        <label class="row toggle">
+          <span>Bluetooth mode <em class="muted">260 ms · mic off</em></span>
+          <input id="set-bt" type="checkbox" />
+        </label>
+        <label class="row toggle">
+          <span>Smooth wipe</span>
+          <input id="set-smooth" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Visible lines <em id="set-lines-val">4</em></span>
+          <input id="set-lines" type="range" min="2" max="8" step="1" value="4" />
+        </label>
+        <label class="row">
+          <span>Merge lines <em id="set-merge-val">1</em></span>
+          <input id="set-merge" type="range" min="1" max="4" step="1" value="1" />
+        </label>
+        <div class="hint sub">Concatenate N source lines into one — fewer, longer lines.</div>
+        <label class="row">
+          <span>Line width <em id="set-width-val">90%</em></span>
+          <input id="set-width" type="range" min="50" max="100" step="1" value="90" />
+        </label>
+        <label class="row">
+          <span>Font size <em id="set-font-val">1.00×</em></span>
+          <input id="set-font" type="range" min="0.6" max="1.8" step="0.05" value="1" />
+        </label>
+        <label class="row">
+          <span>Title card <em id="set-tc-val">3.0 s</em></span>
+          <input id="set-tc" type="range" min="0" max="6" step="0.5" value="3" />
+        </label>
+      </section>
+
+      <section>
+        <h4>Key detection</h4>
+        <label class="row toggle"><span>Auto-detect key</span><input id="set-key-auto" type="checkbox" /></label>
+        <label class="row toggle"><span>Show key by title</span><input id="set-key-badge" type="checkbox" /></label>
+        <div class="hint sub">Reads each song's key from the MIDI. Shown as current → transposed beside the title, and drives auto-tune's "Auto" key.</div>
+      </section>
+
+      <section>
+        <h4>Pitch guide</h4>
+        <label class="row toggle"><span>Show pitch guide</span><input id="set-guide" type="checkbox" /></label>
+        <div id="guide-info" class="hint sub"></div>
+        <label class="row">
+          <span>Look-ahead <em id="set-guide-win-val">5.0 s</em></span>
+          <input id="set-guide-win" type="range" min="2" max="10" step="0.5" value="5" />
+        </label>
+        <label class="row">
+          <span>Band height <em id="set-guide-h-val">150 px</em></span>
+          <input id="set-guide-h" type="range" min="90" max="300" step="10" value="150" />
+        </label>
+        <label class="row">
+          <span>Melody channel <em id="set-guide-ch-val">auto</em></span>
+          <input id="set-guide-ch" type="range" min="-1" max="15" step="1" value="-1" />
+        </label>
+        <label class="row toggle"><span>Overlay my pitch (mic)</span><input id="set-guide-mic" type="checkbox" /></label>
+        <label class="row toggle"><span>Soft pitch trail</span><input id="set-guide-trail" type="checkbox" /></label>
+        <label class="row toggle"><span>Scoring</span><input id="set-guide-score" type="checkbox" /></label>
+        <div class="hint sub">Reads the guide melody from the MIDI. Overlay + scoring need the mic on.</div>
+
+        <div class="sub-h">Guide vocal (melody)</div>
+        <label class="row"><span>Volume <em id="set-gv-vol-val">100%</em></span><input id="set-gv-vol" type="range" min="0" max="2" step="0.05" value="1" /></label>
+        <label class="row toggle"><span>Mute melody</span><input id="set-gv-mute" type="checkbox" /></label>
+        <label class="row toggle"><span>Solo melody (isolate)</span><input id="set-gv-solo" type="checkbox" /></label>
+        <div class="hint sub">Turn the melody up to learn a song, mute to perform, solo to isolate it.</div>
+      </section>
+
+      <section>
+        <h4>Background video</h4>
+        <label class="row toggle">
+          <span>Enabled <em id="set-bgv-note" class="muted"></em></span>
+          <input id="set-bgv" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Opacity <em id="set-bgv-op-val">45%</em></span>
+          <input id="set-bgv-op" type="range" min="0" max="1" step="0.05" value="0.45" />
+        </label>
+        <label class="row">
+          <span>Change per song</span>
+          <input id="set-bgv-perssong" type="checkbox" />
+        </label>
+        <div class="hint sub">Drop <code>.mp4</code>/<code>.webm</code> files in <code>src/assets/bgv/</code> and restart the server.</div>
+      </section>
+
+      <section>
+        <h4>Microphone &amp; voice</h4>
+        <button id="mic-enable" class="reset-btn mic-btn">🎤 Enable microphone</button>
+        <div id="mic-status" class="hint sub"></div>
+        <label class="row">
+          <span>Mic volume <em id="set-mic-vol-val">90%</em></span>
+          <input id="set-mic-vol" type="range" min="0" max="1.5" step="0.05" value="0.9" />
+        </label>
+
+        <div class="sub-h">Feedback &amp; noise</div>
+        <label class="row toggle"><span>Echo cancellation</span><input id="set-mic-aec" type="checkbox" /></label>
+        <label class="row toggle"><span>Noise suppression</span><input id="set-mic-ns" type="checkbox" /></label>
+        <label class="row toggle"><span>Auto gain</span><input id="set-mic-agc" type="checkbox" /></label>
+        <label class="row toggle"><span>High-pass (rumble cut)</span><input id="set-mic-hp" type="checkbox" /></label>
+        <label class="row toggle"><span>Noise gate</span><input id="set-mic-gate" type="checkbox" /></label>
+        <label class="row">
+          <span>Gate threshold <em id="set-mic-gate-val">−50 dB</em></span>
+          <input id="set-mic-gate-th" type="range" min="-70" max="-20" step="1" value="-50" />
+        </label>
+        <div class="hint sub">Best fix for feedback: use headphones. Echo-cancel + gate tame howl on speakers.</div>
+
+        <div class="sub-h">Effects</div>
+        <label class="row toggle"><span>Echo</span><input id="set-mic-echo" type="checkbox" /></label>
+        <label class="row"><span>Echo mix <em id="set-mic-echo-val">35%</em></span><input id="set-mic-echo-mix" type="range" min="0" max="1" step="0.05" value="0.35" /></label>
+        <label class="row toggle"><span>Reverb</span><input id="set-mic-reverb" type="checkbox" /></label>
+        <label class="row"><span>Reverb mix <em id="set-mic-reverb-val">30%</em></span><input id="set-mic-reverb-mix" type="range" min="0" max="1" step="0.05" value="0.3" /></label>
+        <label class="row toggle"><span>Chorus</span><input id="set-mic-chorus" type="checkbox" /></label>
+        <label class="row"><span>Chorus mix <em id="set-mic-chorus-val">40%</em></span><input id="set-mic-chorus-mix" type="range" min="0" max="1" step="0.05" value="0.4" /></label>
+        <label class="row toggle"><span>Pitch shift</span><input id="set-mic-pitch" type="checkbox" /></label>
+        <label class="row"><span>Pitch <em id="set-mic-pitch-val">0 st</em></span><input id="set-mic-pitch-semi" type="range" min="-12" max="12" step="1" value="0" /></label>
+
+        <div class="sub-h">Auto-tune</div>
+        <label class="row toggle"><span>Auto-tune</span><input id="set-autotune" type="checkbox" /></label>
+        <label class="row"><span>Strength <em id="set-autotune-str-val">100%</em></span><input id="set-autotune-str" type="range" min="0" max="1" step="0.05" value="1" /></label>
+        <label class="row toggle"><span>Snap to</span>
+          <select id="set-autotune-mode">
+            <option value="melody">Melody guide</option>
+            <option value="scale">Key / scale</option>
+            <option value="chromatic">Chromatic</option>
+          </select>
+        </label>
+        <label class="row toggle"><span>Key</span>
+          <select id="set-autotune-key">
+            <option value="auto">Auto (detected)</option>
+            <option value="0">C</option><option value="1">C♯</option><option value="2">D</option>
+            <option value="3">D♯</option><option value="4">E</option><option value="5">F</option>
+            <option value="6">F♯</option><option value="7">G</option><option value="8">G♯</option>
+            <option value="9">A</option><option value="10">A♯</option><option value="11">B</option>
+          </select>
+        </label>
+        <label class="row toggle"><span>Scale</span>
+          <select id="set-autotune-scale">
+            <option value="major">Major</option><option value="minor">Minor</option>
+            <option value="pentatonic">Pentatonic</option><option value="chromatic">Chromatic</option>
+          </select>
+        </label>
+        <div class="hint sub">Auto-tune bends your voice to the note. "Melody guide" snaps to the song's own melody (needs a song playing).</div>
+      </section>
+
+      <section>
+        <h4>Library</h4>
+        <div class="hint sub">Showing <em id="list-count">0</em> songs</div>
+        <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
+        <div id="rebuild-status" class="hint sub"></div>
+      </section>
+
+      <button id="settings-reset" class="reset-btn">Reset to defaults</button>
+      <p class="hint">Defaults live in <code>src/config.js</code>. Edit it, then Reset.</p>
+    </div>
+  </div>
+
+  <!-- engine/soundfont loading overlay -->
+  <div id="overlay" class="overlay hidden">
+    <div class="overlay-card">
+      <div class="spinner"></div>
+      <div id="overlay-msg">Starting…</div>
+      <div class="overlay-track"><div id="overlay-bar" class="overlay-bar"></div></div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/app.js"></script>
+  <script>
+    // Cache the app to the browser for fast/offline repeat loads (scope "/" via
+    // the Service-Worker-Allowed header from serve.py).
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js", { scope: "/" })
+          .catch((e) => console.warn("SW registration failed:", e));
+      });
+    }
+  </script>
+</body>
+</html>

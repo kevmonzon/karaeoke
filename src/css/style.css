@@ -1,0 +1,391 @@
+/* Ka-Rae-oke — offline karaoke styling */
+:root {
+  --bg: #0b0d14;
+  --panel: #141824;
+  --panel-2: #1b2030;
+  --ink: #eef2ff;
+  --muted: #8b93ab;
+  --accent: #ff3d81;
+  --accent-2: #37e0c8;
+  --sung: #ffd23f;
+  --unsung: #7b84a0;
+  --line: #262c3d;
+  --line-width: 90%;
+  --font-scale: 1;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: radial-gradient(1200px 600px at 70% -10%, #1a2036 0%, var(--bg) 55%);
+  color: var(--ink);
+  font: 15px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
+  display: flex; flex-direction: column;
+}
+
+/* Topbar */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 18px; border-bottom: 1px solid var(--line);
+  background: rgba(10,12,20,.6); backdrop-filter: blur(6px);
+}
+.brand { font-weight: 800; letter-spacing: .5px; font-size: 20px; }
+.brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
+.brand em { color: var(--muted); font-weight: 500; font-style: normal; font-size: 13px; letter-spacing: 1px; }
+.status { color: var(--muted); font-size: 13px; flex: 1; text-align: center; }
+.gear {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
+  width: 34px; height: 34px; border-radius: 9px; cursor: pointer; font-size: 16px;
+  line-height: 1; padding: 0; flex: none; vertical-align: middle;
+}
+.gear:hover { border-color: var(--accent-2); }
+.toggles { display: flex; align-items: center; gap: 6px; }
+#btn-settings { margin-left: 6px; } /* match the toggles' internal rhythm */
+.toggles .gear { font-size: 14px; opacity: .5; }
+.toggles .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
+
+/* Collapsible panels (topbar toggles) */
+body.lib-collapsed .layout { grid-template-columns: 0 1fr 260px; }
+body.queue-collapsed .layout { grid-template-columns: 340px 1fr 0; }
+body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
+body.lib-collapsed .library { display: none; }
+body.queue-collapsed .queue { display: none; }
+body.pb-collapsed .seek-track,
+body.pb-collapsed .time,
+body.pb-collapsed .transport,
+body.pb-collapsed .controls { display: none; }
+
+/* Layout */
+.layout {
+  flex: 1; display: grid; grid-template-columns: 340px 1fr 260px;
+  gap: 1px; background: var(--line); min-height: 0;
+}
+.library, .stage, .queue { background: var(--bg); min-height: 0; display: flex; flex-direction: column; }
+/* Pin each pane to its own column so hiding one (display:none, below) leaves an
+   EMPTY column instead of letting grid auto-placement shift the others left. */
+.library { grid-column: 1; }
+.stage   { grid-column: 2; }
+.queue   { grid-column: 3; }
+.stage { padding: 22px 26px; align-items: stretch; position: relative; overflow: hidden; }
+.queue { padding: 16px; }
+
+/* Background video layer */
+.bgv {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; z-index: 0; opacity: 0; pointer-events: none;
+  transition: opacity .6s ease; display: none;
+}
+.stage > *:not(.bgv) { position: relative; z-index: 1; }
+body.bgv-active .stage { background: #05060a; }
+body.bgv-active .lyrics .line { text-shadow: 0 2px 18px rgba(0,0,0,.85); }
+
+/* VIDEO karaoke: the picture fills the freed middle only in video-mode. #kva has
+   no layout (it's just the sound). */
+.kv {
+  display: none; flex: 1; min-height: 0; width: 100%;
+  object-fit: contain; background: #000; border-radius: 12px; margin-bottom: 6px;
+}
+.kva { display: none; }
+body.video-mode .kv { display: block; }
+/* MIDI-only surfaces have no meaning for a baked-in video — hide them. The
+   `.video-mode.guide-on` selector out-specifies `body.guide-on .pitch-guide` (block),
+   so a VIDEO song hides the pitch guide even while the guide toggle stays ON; leaving
+   video-mode restores it automatically. */
+body.video-mode .pitch-guide,
+body.video-mode.guide-on .pitch-guide,
+body.video-mode .lyrics-wrap { display: none; }
+/* Key transpose is inert for video (no note data) — dim the control. */
+body.video-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
+
+/* Library */
+.search-row { display: flex; gap: 8px; padding: 12px; align-items: center; }
+.search-box { position: relative; flex: 1; display: flex; }
+#search {
+  flex: 1; padding: 10px 30px 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: 14px; outline: none;
+}
+#search:focus { border-color: var(--accent); }
+.search-clear {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 20px; height: 20px; border: none; border-radius: 50%;
+  background: var(--panel-2); color: var(--muted); cursor: pointer;
+  font-size: 11px; line-height: 1; display: none; align-items: center; justify-content: center;
+}
+.search-clear.show { display: inline-flex; }
+.search-clear:hover { color: var(--ink); background: var(--accent); }
+.pill { background: var(--panel-2); color: var(--muted); border-radius: 20px; padding: 4px 10px; font-size: 12px; }
+.pill-btn { border: 1px solid var(--line); cursor: pointer; }
+.pill-btn:hover { color: var(--ink); border-color: var(--accent-2); }
+.pill-btn.active { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
+
+.song-list, .queue-list { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; }
+.song-list { position: relative; }               /* virtualized: rows are absolute */
+.vlist-spacer { position: relative; width: 100%; } /* holds the full scroll height */
+.song {
+  position: absolute; left: 8px; right: 8px; height: 46px; /* height must match ROW_H in library-ui.js */
+  display: grid; grid-template-columns: 54px 1fr auto auto; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+}
+.song.playing { border-color: var(--accent); background: rgba(255, 61, 129, .10); }
+.song.playing .code { color: var(--accent); }
+.song:hover { background: var(--panel); }
+.song.selected { background: var(--panel-2); border-color: var(--accent); }
+.song .code { color: var(--accent-2); font-variant-numeric: tabular-nums; font-weight: 700; }
+.song .meta { display: flex; flex-direction: column; min-width: 0; }
+.song .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button.add {
+  background: var(--panel-2); border: none; color: var(--ink); width: 26px; height: 26px;
+  border-radius: 8px; cursor: pointer; font-size: 14px; line-height: 1;
+}
+button.add:hover { background: var(--accent); }
+
+/* Stage / now playing */
+.now-playing { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.np-code { font-size: 26px; font-weight: 800; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+.np-meta { flex: 1; min-width: 0; }
+.np-title { font-size: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-artist { color: var(--muted); }
+.badge { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
+.badge:empty { display: none; }
+
+/* Source icon on each song row (and queue item): 🎤 MIDI · 🎞️ video. */
+.kind {
+  font-size: 15px; line-height: 1; text-align: center; user-select: none;
+}
+.queue-list .kind { margin-left: auto; }
+.np-key {
+  font-size: 12px; color: var(--accent-2); background: var(--panel-2);
+  border: 1px solid var(--line); padding: 4px 11px; border-radius: 20px;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.np-key:empty { display: none; }
+.np-key.uncertain { color: var(--muted); }
+.ctl label em { color: var(--accent-2); font-style: normal; }
+
+/* Pitch guide (scrolling piano-roll) */
+.pitch-guide {
+  display: none; width: 100%; height: var(--guide-height, 150px);
+  border-radius: 12px; background: rgba(8, 10, 18, .55);
+  border: 1px solid var(--line); margin-bottom: 6px; flex: 0 0 auto;
+}
+body.guide-on .pitch-guide { display: block; }
+
+/* Lyrics — a smooth-scrolling column of lines inside a masked viewport */
+.lyrics {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  min-height: 0; padding: 12px 20px; width: 100%;
+  font-size: calc(clamp(20px, 3.1vw, 38px) * var(--font-scale));
+}
+.lyric-view {
+  position: relative; width: 100%; overflow: hidden;
+  height: calc(var(--vis-lines, 4) * 1.68em);
+  max-height: 100%;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+}
+.lyric-scroll {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 0.3em;
+  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  will-change: transform;
+}
+.line {
+  max-width: var(--line-width);
+  line-height: 1.32; font-weight: 700; text-align: center;
+  transition: opacity .35s ease, transform .35s ease;
+}
+.line.placeholder { color: var(--muted); }
+.line.past     { opacity: .30; }
+.line.upcoming { opacity: .48; }
+.line.current  { opacity: 1; transform: scale(1.04); }
+
+/* Each syllable fills left→right via a hard-edged gradient clipped to the glyphs.
+   --fill (0–100%) is updated every frame on the current line only. */
+.syl {
+  --fill: 0%;
+  background-image: linear-gradient(90deg,
+    var(--sung) 0%, var(--sung) var(--fill),
+    var(--unsung) var(--fill), var(--unsung) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+.line.past .syl { --fill: 100%; }
+.line.current .syl { filter: drop-shadow(0 0 12px rgba(255, 210, 63, .3)); }
+
+/* Seek + time */
+.seek-track { height: 8px; background: var(--panel-2); border-radius: 20px; overflow: hidden; cursor: pointer; }
+.seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.time { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 6px 2px 14px; font-variant-numeric: tabular-nums; }
+
+/* Transport */
+.transport { display: flex; gap: 12px; justify-content: center; align-items: center; margin-bottom: 16px; }
+.transport button {
+  width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: 18px; cursor: pointer;
+}
+.transport button:hover { border-color: var(--accent-2); }
+.transport .primary { width: 66px; height: 66px; font-size: 22px; background: var(--accent); border: none; }
+.transport .primary:hover { filter: brightness(1.1); }
+
+/* Controls */
+.controls { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+.ctl { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.ctl label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.stepper button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-size: 15px; }
+.stepper span { min-width: 28px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+input[type=range] { width: 160px; accent-color: var(--accent); }
+
+/* Queue */
+.queue h3 { margin: 4px 6px 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+.muted { color: var(--muted); font-weight: 400; }
+.queue-list li { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; background: var(--panel); margin-bottom: 6px; }
+.queue-list .code { color: var(--accent-2); font-weight: 700; }
+.queue-list .qt { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+
+/* Overlay */
+.overlay { position: fixed; inset: 0; background: rgba(6,8,14,.82); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.overlay.hidden { display: none; }
+.overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 30px 40px; text-align: center; width: min(420px, 90vw); }
+.overlay-track { height: 6px; background: var(--panel-2); border-radius: 20px; margin-top: 16px; overflow: hidden; }
+.overlay-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
+.spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto 16px; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Title card — song title/artist/key over the LYRICS AREA, then fades to the lyrics */
+.lyrics-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+.title-card {
+  position: absolute; inset: 0; z-index: 3; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; padding: 20px;
+  background: rgba(8, 10, 18, .82); backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity .6s ease;
+}
+.title-card.show { opacity: 1; }
+.tc-code { color: var(--accent-2); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.tc-title { font-size: clamp(28px, 5vw, 58px); font-weight: 800; line-height: 1.1; max-width: 92%; }
+.tc-artist { font-size: clamp(16px, 2.6vw, 26px); color: var(--muted); }
+.tc-key { margin-top: 8px; color: var(--accent-2); font-size: 15px; }
+.tc-title:empty, .tc-artist:empty, .tc-key:empty { display: none; }
+
+/* Mic toggle in the transport row */
+.transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
+.transport .mic-toggle:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Bluetooth mode dims the mic controls */
+body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
+
+/* Offset toast */
+.offset-toast {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%) translateY(-8px);
+  background: rgba(10,12,20,.9); border: 1px solid var(--accent-2); color: var(--ink);
+  padding: 8px 16px; border-radius: 20px; font-size: 13px; font-variant-numeric: tabular-nums;
+  opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 5;
+}
+.offset-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Settings drawer */
+.settings-panel {
+  position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
+  background: var(--panel); border-left: 1px solid var(--line); z-index: 60;
+  display: flex; flex-direction: column; box-shadow: -18px 0 40px rgba(0,0,0,.4);
+  transition: transform .22s ease;
+}
+.settings-panel.hidden { transform: translateX(102%); }
+.settings-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.settings-head h3 { margin: 0; font-size: 16px; letter-spacing: 1px; text-transform: uppercase; }
+.settings-body { padding: 16px 18px; overflow-y: auto; }
+.settings-body section { margin-bottom: 22px; }
+.settings-body h4 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent-2); }
+.settings-body .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13px; }
+.settings-body .row span { display: flex; justify-content: space-between; color: var(--ink); }
+.settings-body .row em { color: var(--muted); font-style: normal; font-variant-numeric: tabular-nums; }
+.settings-body .row input[type=range] { width: 100%; accent-color: var(--accent); }
+.settings-body .row.toggle { flex-direction: row; align-items: center; justify-content: space-between; }
+.settings-body .row.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.settings-body select {
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 8px; padding: 5px 8px; font-size: 13px; cursor: pointer; min-width: 120px;
+}
+.settings-body select:focus { outline: none; border-color: var(--accent-2); }
+.hint.sub { margin: -6px 0 14px; font-size: 11px; }
+#rebuild-status { margin: 8px 0 0; } /* sits below the rebuild button, not crammed against it */
+#rebuild-status:empty { margin: 0; }
+.hint kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+.reset-btn { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; font-size: 13px; }
+.reset-btn:hover { background: var(--accent); color: #fff; }
+.sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 6px 0 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.mic-btn { border-color: var(--accent-2); color: var(--accent-2); margin-bottom: 8px; }
+.mic-btn:hover { background: var(--accent-2); color: #05060a; }
+.mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
+code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+/* Responsive — tablet: single column, library on top, queue hidden */
+@media (max-width: 900px) {
+  /* Short list on top, generous stage below — the stage (lyrics/guide) is the star
+     on mobile; the list stays scrollable (virtualized) so nothing is lost. */
+  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38vh) 1fr; }
+  /* single column stacks by rows — drop the desktop column pins so auto-placement
+     puts library on top and stage below. */
+  .library, .stage, .queue { grid-column: auto; }
+  .queue { display: none; }
+
+  /* Panel-collapse is a desktop idea; on one column only "hide the list for a
+     full-screen lyrics view" is useful. Keep the list toggle (☰), drop the other
+     two, and make sure a stale queue/playback collapse can't strand content. */
+  #toggle-queue, #toggle-playback { display: none; }
+  body.pb-collapsed .seek-track { display: block; }
+  body.pb-collapsed .time,
+  body.pb-collapsed .transport,
+  body.pb-collapsed .controls { display: flex; }
+  body.lib-collapsed .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  body.queue-collapsed .layout,
+  body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 1fr; }
+
+  .library { min-height: 0; }
+  .stage { padding: 14px; }
+  .controls { gap: 16px; }
+  .status { font-size: 12px; }
+  .settings-panel { width: min(380px, 96vw); }
+}
+
+/* Responsive — phone */
+@media (max-width: 560px) {
+  .topbar { padding: 10px 14px; gap: 10px; }
+  .brand { font-size: 17px; letter-spacing: 1px; }
+  /* Now-playing info already lives in the stage header — drop the status text so
+     the topbar is a clean brand ↔ (☰ ⚙) row instead of cramming four things. With
+     the flex:1 status gone, push the controls to the right (else space-between
+     floats the lone ☰ into the middle). */
+  .status { display: none; }
+  .toggles { margin-left: auto; }
+  /* Shorter list, bigger stage — lyrics get the room by default (list still scrolls). */
+  .layout { grid-template-rows: minmax(0, 32vh) 1fr; }
+  .stage { padding: 10px; }
+
+  /* Roomier touch targets */
+  .search-row { padding: 10px 8px; gap: 8px; }
+  #search { padding: 12px 34px 12px 12px; font-size: 15px; }
+  .search-clear { width: 24px; height: 24px; font-size: 12px; right: 8px; }
+  .search-row .pill-btn { padding: 9px 14px; }
+  button.add { width: 34px; height: 34px; font-size: 17px; }
+  .song { grid-template-columns: 46px 1fr auto auto; }
+
+  .now-playing { gap: 10px; }
+  .np-code { font-size: 20px; }
+  .np-title { font-size: 17px; }
+  .np-key { padding: 3px 8px; }
+  .transport { gap: 12px; margin-bottom: 12px; }
+  .transport button { width: 48px; height: 48px; font-size: 16px; }
+  .transport .primary { width: 60px; height: 60px; font-size: 20px; }
+  .controls { gap: 12px 20px; }
+  .ctl input[type=range] { width: 108px; }
+  input[type=range] { width: 128px; }
+  .settings-panel { width: 100vw; }
+  .pitch-guide { height: min(var(--guide-height, 150px), 22vh); }
+
+  /* When the list is hidden (☰), the stage becomes a full-screen lyrics view. */
+  body.lib-collapsed .layout { grid-template-rows: 1fr; }
+}

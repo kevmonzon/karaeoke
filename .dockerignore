@@ -1,0 +1,13 @@
+# Keep the build context (and image) lean: the app code is all that's baked in.
+# Data comes from the mounted /data volume at runtime, never from the image.
+data/
+_memory/
+.git/
+.gitignore
+.github/
+.vscode/
+__pycache__/
+*.pyc
+*.bak
+# Docs aren't needed at runtime.
+*.md

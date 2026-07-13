@@ -1,0 +1,19 @@
+# Ka-Rae-oke — run the offline karaoke player in a container.
+#
+#   docker compose up --build
+#   open http://localhost:8080/
+#
+# The ./data directory on the host is mounted at /data in the container, so your
+# song library (kar_raw/), videos/, soundfont, bgv/, and catalogs are supplied
+# by the volume — the image itself stays small and immutable.
+services:
+  karaeoke:
+    build: .
+    image: karaeoke
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      - KARAEOKE_DATA_DIR=/data
+    restart: unless-stopped

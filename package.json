@@ -1,0 +1,10 @@
+{
+  "name": "karaeoke-offline",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ka-Rae-oke — offline, client-side karaoke/videoke player (SpessaSynth MIDI + video); see README.md",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,20 @@
+# Data volume (mounted in Docker). The large/regenerable assets below live only in
+# the volume — soundfont is auto-refetched by first-run setup, catalog.json is rebuilt.
+/data/kar_raw
+/data/videos
+/data/bgv
+/data/soundfont.sf2
+/data/manifest.json
+# The catalogs are compilations of your own (possibly third-party/ripped) library —
+# do NOT publish them. Both rebuild locally from data/kar_raw/ and data/videos/.
+/data/catalog.json
+/data/catalog-video.json
+/_memory
+/.vscode
+# Local-only tools/content that must never be published (e.g. the bulk downloader).
+/private
+# Local dev/agent guide (CLAUDE.md) + any local Claude Code config — personal, kept
+# out of the repo. The whole .claude/ folder stays untracked.
+/.claude
+__pycache__/
+*.bak

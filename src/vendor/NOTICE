@@ -1,0 +1,30 @@
+Ka-Rae-oke bundles the following third-party components under src/vendor/.
+They are the property of their respective authors and are licensed separately
+from this project's own MIT-licensed code (see the repository-root LICENSE).
+
+-------------------------------------------------------------------------------
+SpessaSynth  —  spessasynth_lib.js, spessasynth_core.js, spessasynth_processor.min.js
+-------------------------------------------------------------------------------
+  Copyright (c) spessasus <spesekspesek@gmail.com>
+  Homepage : https://github.com/spessasus/SpessaSynth
+  Core pkg : https://github.com/spessasus/spessasynth_core  (spessasynth_core@4.0.18)
+  License  : Apache License 2.0  —  full text in ./spessasynth.LICENSE
+
+  These files are redistributed verbatim (unmodified) from the upstream build.
+
+-------------------------------------------------------------------------------
+pako  —  pako.min.js
+-------------------------------------------------------------------------------
+  Copyright (C) 2014-2017 by Vitaly Puzrin and Andrei Tuputcyn
+  Homepage : https://github.com/nodeca/pako
+  License  : MIT  —  full text in ./pako.LICENSE
+
+  Redistributed verbatim (unmodified) from the upstream build.
+
+-------------------------------------------------------------------------------
+Not third-party
+-------------------------------------------------------------------------------
+Everything under src/js/ (including js/worklets/ and js/workers/) is this
+project's own code, MIT-licensed. The GeneralUser GS SoundFont (fetched at
+first run, not committed) is by S. Christian Collins and is freely
+redistributable under its own terms — see https://schristiancollins.com.
