@@ -869,16 +869,6 @@ function wireUI() {
     userPaused = media.paused; // pausing here is a deliberate hold (no auto-advance)
     setPlayIcon();
   };
-  $("btn-stop").onclick = () => {
-    clearTimeout(playDelayTimer); // cancel a pending (title-card) start
-    media.stop();
-    if (media === video) { video.unload(); document.body.classList.remove("video-mode"); }
-    if (media === youtube) { youtube.unload(); document.body.classList.remove("youtube-mode"); }
-    clearStage();          // stopping clears the lyrics screen
-    current = null;
-    userPaused = false;    // stop is not a pause → the queue may auto-advance
-    setPlayIcon();
-  };
   $("btn-next").onclick = () => advanceQueue();
   $("btn-mic").onclick = async () => {
     if (settings.get("bt.enabled")) return; // mic disabled in Bluetooth mode
