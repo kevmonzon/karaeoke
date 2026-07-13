@@ -357,12 +357,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".ogv": "video/ogg",
     }
 
+    # Speak HTTP/1.1 so a reverse proxy / cloudflared can keep the origin connection
+    # alive instead of racing on a pooled socket we already closed — the classic cause
+    # of intermittent 502s behind a tunnel. Safe here because every response path sends
+    # an accurate Content-Length (static via send_head, 206/416 in _serve_range, JSON in
+    # _send_json), which HTTP/1.1 keep-alive requires.
+    protocol_version = "HTTP/1.1"
+    # Free a thread whose socket stalls (client/tunnel vanished mid-request). This is a
+    # PER-OPERATION timeout, so a healthy slow transfer is fine; only a truly stuck
+    # recv/send trips it. Kept ABOVE cloudflared's ~90 s origin keep-alive so the tunnel
+    # recycles idle connections first and we never close one it's about to reuse.
+    timeout = 120
+
     def do_GET(self):
         # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
         # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
-        if self.headers.get("Range") and self._serve_range():
-            return
-        super().do_GET()
+        try:
+            if self.headers.get("Range") and self._serve_range():
+                return
+            super().do_GET()
+        except (BrokenPipeError, ConnectionResetError):
+            # Client/tunnel hung up mid-transfer (e.g. an aborted 32 MB soundfont) — not
+            # our failure; drop the connection quietly instead of spewing a traceback.
+            self.close_connection = True
 
     def translate_path(self, path):
         # Route data URLs (songs, videos, bgv, catalogs, soundfont) to DATA_DIR; every
@@ -403,6 +420,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if start > end or start >= size:  # unsatisfiable
             self.send_response(416)
             self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")  # HTTP/1.1 keep-alive needs a length
             self.end_headers()
             return True
         length = end - start + 1
@@ -450,7 +468,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path.split("?")[0] == "/api/rebuild-catalog":
+        path = self.path.split("?", 1)[0]
+        # Read (and thus CONSUME) the whole request body once, up front. Under HTTP/1.1
+        # keep-alive an un-drained body would desync the next request on the socket, so
+        # every branch below — including the 404 — works from this drained buffer.
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b""
+
+        if path == "/api/rebuild-catalog":
             builder = os.path.join(HERE, "build-catalog.py")
             vbuilder = os.path.join(HERE, "build-video-catalog.py")
             try:
@@ -473,24 +498,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
             return
-        if self.path.split("?")[0] == "/api/youtube-search":
+        if path == "/api/youtube-search":
             # Keyless YouTube search proxy. Body: {"q": "<query>"} → {"ok", "items":[…]}.
             # Errors are non-fatal (200 with empty items) so the UI just shows nothing.
             try:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                raw = self.rfile.read(length) if length else b"{}"
                 query = (json.loads(raw or b"{}").get("q") or "").strip()
                 items = _youtube_search(query, 20) if query else []
                 self._send_json({"ok": True, "items": items})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "items": [], "error": str(exc)[:200]})
             return
-        if self.path.split("?")[0] == "/api/youtube-block":
+        if path == "/api/youtube-block":
             # Client reports videoIds that can't be embedded → shared blocklist (filtered for all).
             # Body: {"videoIds":[...]} or {"videoId":"..."} → {"ok", "count": total}.
             try:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                raw = self.rfile.read(length) if length else b"{}"
                 payload = json.loads(raw or b"{}")
                 ids = payload.get("videoIds")
                 if not isinstance(ids, list):
