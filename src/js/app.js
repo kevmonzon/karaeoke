@@ -41,6 +41,8 @@ let userPaused = false;   // true only when the user paused (the auto-advance ex
 let autoAdvancing = false; // guard so the idle auto-advance fires once
 let playDelayTimer = null; // delays music start until ~1s before the title card fades
 let recentMode = false;    // "Recent" view toggle
+let favoritesMode = false; // "Favorites" view toggle
+let favorites = new Set(); // starred song ids (persisted separately from the session)
 let lastParsed = null;
 let currentKey = null;
 let currentMelodyChannel = -1;
@@ -60,7 +62,10 @@ async function boot() {
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
   video = new VideoEngine($("kv"), $("kva")); // VIDEO-song playback (picture + offset audio)
 
-  lib = createLibraryUI({ onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue });
+  lib = createLibraryUI({
+    onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
+    onToggleFavorite: toggleFavorite, isFavorite,
+  });
   settingsUI = createSettingsUI({ settings, mic, onRebuild });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
 
@@ -74,6 +79,7 @@ async function boot() {
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
+    loadFavorites(); // restore starred songs (resolved by id) before the first render
     lib.renderList(catalog.search(""));
     loadSession(); // restore queue + recently-played (no auto-play)
   } catch (e) {
@@ -299,11 +305,48 @@ function pushRecent(song) {
 function setRecentMode(on) {
   recentMode = on;
   $("btn-recent").classList.toggle("active", on);
+  if (on && favoritesMode) setFavoritesMode(false); // the two library views are mutually exclusive
 }
 function showRecent() {
   const songs = recent.map((id) => catalog.getById(id)).filter(Boolean);
   lib.renderList(songs);
   setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
+}
+
+// ---------------------------------------------------------------------------
+// Favorites — starred songs, persisted separately from the session (localStorage).
+// Stored as an array of stable ids so KAR/VID are unambiguous (§5.10); old bare
+// codes resolve as MIDI via resolveSong (same back-compat as the queue/recent).
+// ---------------------------------------------------------------------------
+const FAVORITES_KEY = "karaeoke.favorites.v1";
+
+function loadFavorites() {
+  let data;
+  try { data = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "null"); } catch (_) {}
+  const ids = (Array.isArray(data) ? data : []).map(resolveSong).filter(Boolean).map((s) => s.id);
+  favorites = new Set(ids);
+}
+function saveFavorites() {
+  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites])); } catch (_) {}
+}
+function isFavorite(song) { return !!song && favorites.has(song.id); }
+function toggleFavorite(song) {
+  if (!song) return;
+  if (favorites.has(song.id)) favorites.delete(song.id);
+  else favorites.add(song.id);
+  saveFavorites();
+  if (favoritesMode) showFavorites();  // in the Favorites view, un-starring drops the row
+  else lib.refresh();                  // otherwise just repaint the star in place
+}
+function setFavoritesMode(on) {
+  favoritesMode = on;
+  $("btn-favorites").classList.toggle("active", on);
+  if (on && recentMode) setRecentMode(false); // the two library views are mutually exclusive
+}
+function showFavorites() {
+  const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
+  lib.renderList(songs);
+  setStatus(songs.length ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}` : "no favorites yet — tap ☆ on a song");
 }
 
 // ---------------------------------------------------------------------------
@@ -535,7 +578,8 @@ function wireUI() {
   const toggleClear = () => clearBtn.classList.toggle("show", !!search.value);
   let deb;
   search.oninput = () => {
-    if (recentMode) setRecentMode(false); // typing leaves the Recent view
+    if (recentMode) setRecentMode(false);       // typing leaves the Recent view
+    if (favoritesMode) setFavoritesMode(false); // …and the Favorites view
     toggleClear();
     clearTimeout(deb);
     deb = setTimeout(() => lib.renderList(catalog.search(search.value)), 120);
@@ -544,12 +588,18 @@ function wireUI() {
     search.value = "";
     toggleClear();
     if (recentMode) setRecentMode(false);
+    if (favoritesMode) setFavoritesMode(false);
     lib.renderList(catalog.search(""));
     search.focus();
   };
   $("btn-recent").onclick = () => {
     setRecentMode(!recentMode);
     if (recentMode) showRecent();
+    else lib.renderList(catalog.search(search.value)); // back to the (search) list
+  };
+  $("btn-favorites").onclick = () => {
+    setFavoritesMode(!favoritesMode);
+    if (favoritesMode) showFavorites();
     else lib.renderList(catalog.search(search.value)); // back to the (search) list
   };
 

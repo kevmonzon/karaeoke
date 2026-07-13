@@ -39,10 +39,11 @@
       <div class="search-row">
         <div class="search-box">
           <input id="search" type="text" inputmode="search"
-                 placeholder="Search by number, title, or artist…" autocomplete="off" />
+                 placeholder="Search by title or artist…" autocomplete="off" />
           <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
         </div>
-        <button id="btn-recent" class="pill pill-btn" title="Recently played">Recent</button>
+        <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
+        <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
       </div>
       <ul id="song-list" class="song-list"></ul>
     </section>

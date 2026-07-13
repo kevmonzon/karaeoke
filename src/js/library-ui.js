@@ -19,9 +19,11 @@ const OVERSCAN = 5;      // extra rows above/below the viewport
  * @param {(song)=>void}  cb.onPlay             play a song now (double-click / row)
  * @param {(song)=>void}  cb.onQueue            add a song to the queue (＋)
  * @param {(index)=>void} cb.onRemoveFromQueue  remove queue item at index (✕)
+ * @param {(song)=>void}  cb.onToggleFavorite   star / un-star a song (★)
+ * @param {(song)=>boolean} cb.isFavorite       is this song currently starred?
  * @returns {{ renderList, renderQueue, getSelectedSong, setNowPlaying }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto)
   const spacer = document.createElement("div");
   spacer.className = "vlist-spacer";
@@ -42,11 +44,17 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue }) {
       (nowPlaying && s.id === nowPlaying.id ? " playing" : "");
     li.style.top = `${i * ROW_H}px`;
     li.innerHTML =
-      `<span class="code">${s.code}</span>` +
-      `<span class="meta"><span class="title"></span><span class="artist"></span></span>` +
-      `<span class="kind ${isVideo ? "vid" : "kar"}" title="${isVideo ? "Video" : "MIDI"}">${isVideo ? "🎞️" : "🎤"}</span>`;
+      `<span class="kind ${isVideo ? "vid" : "kar"}" title="${isVideo ? "Video" : "MIDI"}">${isVideo ? "🎞️" : "🎤"}</span>` +
+      `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
     li.querySelector(".title").textContent = s.name || "(untitled)";
     li.querySelector(".artist").textContent = s.artistName || "";
+    const fav = isFavorite && isFavorite(s);
+    const favBtn = document.createElement("button");
+    favBtn.className = "fav" + (fav ? " on" : "");
+    favBtn.textContent = fav ? "★" : "☆";
+    favBtn.title = fav ? "Remove from favorites" : "Add to favorites";
+    favBtn.onclick = (ev) => { ev.stopPropagation(); onToggleFavorite(s); };
+    li.appendChild(favBtn);
     const addBtn = document.createElement("button");
     addBtn.className = "add";
     addBtn.textContent = "＋";
