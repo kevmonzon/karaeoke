@@ -879,7 +879,6 @@ function wireUI() {
     userPaused = false;    // stop is not a pause → the queue may auto-advance
     setPlayIcon();
   };
-  $("btn-restart").onclick = () => media.restart();
   $("btn-next").onclick = () => advanceQueue();
   $("btn-mic").onclick = async () => {
     if (settings.get("bt.enabled")) return; // mic disabled in Bluetooth mode
