@@ -2,12 +2,13 @@
 
 # 🎤 Ka-Rae-oke
 
-### A 100% offline, client-side **karaoke / videoke** player
+### A client-side **karaoke / videoke** player
 
 Plays local **MIDI/KAR** songs through an in-browser SoundFont synth with
 **tick-synced, per-syllable lyrics** — plus a live **microphone with voice effects &
-auto-tune**, a **pitch guide**, **key detection**, **background video**, and drop-in
-**video karaoke**. No cloud, no accounts, no build step.
+auto-tune**, a **pitch guide**, **key detection**, **background video**, drop-in
+**video karaoke**, and optional **YouTube karaoke search**. No accounts, no build step;
+your local library plays offline after first-run setup.
 
 `MIDI → SpessaSynth (WASM) → speakers` · `lyrics parsed from the MIDI itself` · `runs in any modern browser`
 
@@ -43,9 +44,10 @@ auto-tune**, a **pitch guide**, **key detection**, **background video**, and dro
 | 🎯 | **Pitch guide** — a scrolling piano-roll of the melody to sing, with your live pitch overlaid + a score |
 | 🎼 | **Key detection** + **transpose**, **tempo**, **volume**, all persisted |
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files and they play full-stage alongside the MIDI songs |
+| 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
 | 🌄 | **Background video** layer behind the lyrics (or an animated gradient) |
-| 📚 | **17k+ song library** with instant search, virtualized list, queue, and recents |
-| 📴 | **Fully offline** after first-run setup (a service worker caches the app) |
+| 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
+| 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
 
 > **About:** *Ka-Rae-oke* is an independent, client-side karaoke player, reconstructed for
 > research/interoperability from a closed-source karaoke web app and reusing the same
@@ -59,8 +61,9 @@ auto-tune**, a **pitch guide**, **key detection**, **background video**, and dro
 - **Python 3.8+** — the only runtime dependency (standard library only; no `pip install`).
 - **A modern desktop browser** — Chromium (Chrome/Edge/Brave) or Firefox. Needs
   AudioWorklet + `SharedArrayBuffer` support (all current browsers qualify).
-- **Network access on the first run only** — to download the synth engine and a SoundFont
-  (~31 MB, one time). After that it's fully offline.
+- **Network access** — required on the **first run** (to download the synth engine and a
+  ~31 MB SoundFont, one time) and for the optional **YouTube search**. Your local MIDI &
+  video songs play offline after setup.
 - **A microphone** (optional) — only for the singing/mic features.
 
 > 💡 **No build step, no Node, no framework** for running the app. (Node is only needed if
@@ -128,7 +131,8 @@ songs by dropping them in `./data/kar_raw` (or `./data/videos`) on the host and 
 the catalog. Override the data location with the **`KARAEOKE_DATA_DIR`** env var.
 
 > On first boot the container fills any missing pieces into `/data` (the soundfont download
-> needs network once) — pre-populate `./data/soundfont.sf2` for a fully-offline image.
+> needs network once) — pre-populate `./data/soundfont.sf2` so the container needs no
+> network at boot.
 
 ---
 
@@ -190,11 +194,12 @@ compilation of your own library, not something the repo distributes.
 ### Find & queue songs
 - **Search** by number, title, or artist in the top-left box. **Enter** plays the top hit.
 - **Click** a song to select it, **double-click** to play now, **＋** to add to the **queue**.
-- The **☆ Recent** button toggles a recently-played view; click again for the full list.
-- The queue auto-advances between songs (MIDI and video alike). Remove queued items with **✕**.
+- **★** stars a song; the **★ Favorites** and **⟲ Recent** pills toggle those filtered views.
+- The **🌐** pill in the search row turns on **YouTube search** (see below; off by default).
+- The queue auto-advances between songs (MIDI, video, and YouTube alike). Remove queued items with **✕**.
 
 ### Playback controls (bottom strip)
-- **Play/Pause** (or **Space**), **Stop**, **Restart**, **Next**.
+- **Play/Pause** (or **Space**) and **Next**.
 - **Seek bar** — click/drag to scrub.
 - **Key ±** — transpose in semitones (the resulting key is named next to it).
 - **Tempo** — 0.5×–1.5× playback rate.
@@ -229,6 +234,16 @@ seeking, queue, tempo, volume, and the mic all work. Because a karaoke video has
 **baked into the picture**, the **lyric offset shifts the video's audio** (not the picture)
 so you can line the sound up to the on-screen words.
 
+### 🌐 YouTube karaoke (BYOC)
+Off by default (the app is offline-first). Flip the **🌐** pill in the search row (or ⚙ →
+**YouTube search**) to turn it on. Then, **only when your local library comes up short**, a
+search also queries YouTube — appending a "karaoke" keyword — and the hits append to the list
+marked **🌐**. Selecting one plays the **official YouTube embed** full-stage, with working
+transport / seek / queue / tempo / volume and the mic; YouTube songs are favoritable and show
+up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` pointer.
+**Chromium-only** (it needs a `credentialless` iframe; the pill is dimmed elsewhere) and it
+**needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
+
 ### 🌄 Background video, title card, Bluetooth mode
 - **Background video** (⚙ → Background video): drop clips in `data/bgv/` (restart to
   detect) or list them in `config.js`. No clips → animated gradient.
@@ -257,6 +272,7 @@ defaults** in the panel to adopt them.
 | **Key** | auto-detect, show key badge |
 | **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
+| **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Title card** | seconds shown (0 = off) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |
@@ -320,8 +336,8 @@ karaoke-clone/
     ├── index.html            ← shell + import map + settings panel
     ├── config.js             ← DEFAULT_CONFIG (editable defaults)
     ├── css/style.css
-    ├── sw.js                 ← service worker (offline caching)
-    ├── js/                   ← app modules (app, catalog, audio, lyrics, mic, melody, video, …)
+    ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
+    ├── js/                   ← app modules (app, catalog, audio, video, youtube, lyrics, mic, melody, asset-cache, …)
     └── vendor/               ← SpessaSynth engine + pako (committed)
 ```
 
@@ -340,14 +356,14 @@ karaoke-clone/
 | Symptom | Fix |
 |---|---|
 | **Blank page / "SharedArrayBuffer is not defined"** | You opened `index.html` as a `file://`. Launch via `python tools/serve.py` instead. |
-| **No sound when a MIDI song plays** | The first play loads the 31 MB soundfont — wait a few seconds. If still silent, check `src/assets/soundfont.sf2` exists (re-run setup) and that your OS volume/output is right. |
+| **No sound when a MIDI song plays** | The first play loads the 31 MB soundfont — wait a few seconds. If still silent, check `data/soundfont.sf2` exists (re-run setup) and that your OS volume/output is right. |
 | **"Invalid MIDI Header! Expected 'MThd'…"** | A song file isn't valid MIDI. The app handles compressed MIDI automatically; a truly corrupt file should be removed from `kar_raw/`. |
 | **Search is empty / song missing** | Rebuild the catalog (⚙ → Library → Rebuild, or `python tools/build-catalog.py`). |
 | **Video won't seek / stops** | Seeking needs HTTP Range (206) — always serve via `tools/serve.py`, not another static server. |
 | **Mic won't enable** | It needs a click (browser gesture) + a secure context. Use `http://localhost` / `127.0.0.1` (not a LAN IP). Grant the browser permission when prompted. |
 | **Feedback/howling on speakers** | Use **headphones**. Otherwise keep Echo-cancellation + Noise-gate on and lower mic volume. |
 | **Port 8080 in use** | `python tools/serve.py --port 9000`. |
-| **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `src/assets/soundfont.sf2`. |
+| **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `data/soundfont.sf2`. |
 | **Run the tests** | `npm test` (or `node --test`) — covers the pure functions. Needs Node.js. |
 
 ---
@@ -363,14 +379,17 @@ catalog.json + catalog-video.json ──► one merged, searchable list
         │                                                     └─► parse lyrics from the same bytes
    ── VIDEO ─►  fetch /videos/<file> (HTTP Range 206) ──► <video> picture + offset-shifted audio
         │
+   ── YOUTUBE ► official YouTube IFrame embed in a credentialless iframe (Chromium; online)
+        │
    requestAnimationFrame loop: lyric sync · pitch guide · auto-tune · seek bar · queue advance
 ```
 
-Everything is **same-origin and offline** after setup. The server (`tools/serve.py`) sends
-the cross-origin-isolation headers the synth needs, serves HTTP Range requests so video
-seeking works, and exposes one endpoint — `POST /api/rebuild-catalog` — behind the ⚙ rebuild
-button. For deeper detail, the module reference and gotchas are documented inline in the
-`src/js/` source.
+Local **MIDI/video** playback is **same-origin and works offline** after setup; the optional
+**YouTube search** is the one online, cross-origin feature. The server (`tools/serve.py`) sends
+the cross-origin-isolation headers the synth needs, serves HTTP Range requests so video seeking
+works, and exposes a few endpoints — `POST /api/rebuild-catalog` (⚙ rebuild button) plus
+`/api/youtube-search` and `/api/youtube-block` (the keyless YouTube search). For deeper detail,
+the module reference and gotchas are documented inline in the `src/js/` source.
 
 ---
 
