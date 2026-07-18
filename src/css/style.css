@@ -30,7 +30,6 @@ body {
 }
 .brand { font-weight: 800; letter-spacing: .5px; font-size: 20px; }
 .brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
-.brand em { color: var(--muted); font-weight: 500; font-style: normal; font-size: 13px; letter-spacing: 1px; }
 .status { color: var(--muted); font-size: 13px; flex: 1; text-align: center; }
 .gear {
   display: inline-flex; align-items: center; justify-content: center;
