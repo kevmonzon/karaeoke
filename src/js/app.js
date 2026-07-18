@@ -283,9 +283,8 @@ function advanceQueue() {
   if (next) playNow(next);
   else {
     media.stop();            // nothing more queued → halt the active engine
-    if (media === video) { video.unload(); document.body.classList.remove("video-mode"); }
-    if (media === youtube) { youtube.unload(); document.body.classList.remove("youtube-mode"); }
-    current = null; autoAdvancing = false; lib.setNowPlaying(null);
+    current = null; autoAdvancing = false;
+    clearStage();            // blank the lyrics + reset the seek bar/time once playback ends
     setPlayIcon();
   }
 }
@@ -726,6 +725,7 @@ function endOfSong() {
   setTimeout(() => { endGuard = false; advanceQueue(); }, 700);
 }
 function tick() {
+  setPlayIcon(); // keep the transport button mirroring the real play/pause state every frame
   if (current && media) {
     const isMidi = media === audio;
     const t = media.currentTime;   // active-engine playback time
@@ -786,7 +786,12 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
-      if (!media.paused && t >= d - 0.15) endOfSong();
+      // MIDI: the sequencer stalls at the end (paused stays false, clock plateaus
+      // short of duration) so rely on its `ended` flag; video reaches duration
+      // cleanly; YouTube ends via its own onEnded callback. The `!media.paused`
+      // guard is essential: seq.play() clears `isFinished`, so an unpaused song can
+      // never show a stale end flag left over from the previous song's title-card hold.
+      if (!media.paused && ((isMidi && audio.ended) || t >= d - 0.15)) endOfSong();
     }
   } else {
     if (mic.autotuneActive) mic.clearAutotune(); // release correction when nothing is playing
@@ -860,8 +865,12 @@ function wireUI() {
 
   $("btn-play").onclick = async () => {
     if (!current) {
-      const first = lib.getSelectedSong() || catalog.search(search.value, 1)[0];
-      if (first) return playNow(first);
+      // Nothing loaded: play a song the user has actually picked (a selected row).
+      // Do NOT fall back to the first library song — pressing play on a fresh load
+      // with nothing selected should do nothing. (Enter in the search box still
+      // plays the top hit — that's the "type + go" path.)
+      const sel = lib.getSelectedSong();
+      if (sel) return playNow(sel);
       return;
     }
     if (media === audio && !(await ensureEngine())) return;
@@ -1002,7 +1011,15 @@ function toMidiBytes(arrayBuffer) {
 }
 
 function setStatus(msg) { $("status").textContent = msg; }
-function setPlayIcon() { $("btn-play").textContent = media.paused ? "▶" : "❚❚"; }
+// Reflects the *real* playback state. A MIDI song at its stalled end reports
+// paused===false (§5.14) while nothing is actually sounding, so treat `audio.ended`
+// as stopped too. Only writes on change so it's cheap to call every rAF frame.
+function setPlayIcon() {
+  const playing = !media.paused && !(media === audio && audio.ended);
+  const icon = playing ? "❚❚" : "▶";
+  const el = $("btn-play");
+  if (el.textContent !== icon) el.textContent = icon;
+}
 function fmtKey(s) { return (s > 0 ? "+" : "") + s; }
 function fmt(s) { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, "0")}`; }
 

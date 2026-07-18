@@ -159,5 +159,9 @@ export class AudioEngine {
   get currentTime() { return this.seq ? this.seq.currentTime : 0; }
   get duration() { return this.seq ? this.seq.duration : 0; }
   get paused() { return this.seq ? this.seq.paused : true; }
+  // The Sequencer doesn't loop (loopCount:0) and, at natural end, leaves `paused`
+  // false with `currentTime` plateaued just short of `duration` — so a time-threshold
+  // end-check misses it. `isFinished` is the authoritative "song is over" flag.
+  get ended() { return this.seq ? !!this.seq.isFinished : false; }
 }
 
