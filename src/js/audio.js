@@ -30,6 +30,14 @@ export class AudioEngine {
     this.ready = false;
     this._transpose = 0;
     this._volume = 0.9;
+    // Per-channel mixer state (MIDI mode). Defaults = "don't touch": CC7 stays
+    // unlocked so the song's own authored volume plays, until the user moves a slider.
+    this._chVol = new Array(NUM_CHANNELS).fill(1);
+    this._chLocked = new Array(NUM_CHANNELS).fill(false);
+    // Real per-channel VU: one AnalyserNode per channel, tapped off the synth's 16
+    // individual worklet outputs (channel N → output N+2). Null if the tap failed.
+    this._analysers = null;
+    this._meterBuf = null;
   }
 
   /**
@@ -59,6 +67,7 @@ export class AudioEngine {
     this.synth = new WorkletSynthesizer(this.ctx);
     await this.synth.isReady;
     this.synth.connect(this.gain);
+    this._setupChannelMeters();
 
     onProgress("Loading SoundFont (~30 MB, first run only)…");
     // Cache-first via Cache Storage (asset-cache.js): downloaded once, then instant
@@ -78,6 +87,7 @@ export class AudioEngine {
     if (!this.ready) throw new Error("AudioEngine not initialised");
     this.seq.loadNewSongList([{ binary: midiBuffer }]);
     this.applyTranspose(this._transpose); // re-assert on the new song
+    this.reassertChannelMix();            // re-apply any locked mixer channels on the new song
   }
 
   async play() {
@@ -132,6 +142,92 @@ export class AudioEngine {
         }
       } catch (_) {}
     }
+  }
+
+  // --- per-channel mixer (MIDI mode) ---------------------------------------
+  //
+  // Everything (volume, mute, solo) is driven through CC7 (channel volume): the mixer
+  // passes an *effective* level per channel and mute/solo are just level 0. We do NOT
+  // use `muteChannel` here — it mutes only the main mix, not the synth's individual
+  // per-channel outputs, so the CC7 taps that feed the VU meters wouldn't reflect it
+  // (the bar would keep bouncing on a "muted" channel). CC7 affects both the audible
+  // mix and the individual output, so volume + VU stay consistent. A channel is only
+  // *locked* once the user touches it, so untouched channels keep the song's authored
+  // mix; the mixer is then authoritative for touched channels (last write wins with
+  // setGuideVocal, which shares CC7).
+
+  /** Set a channel's effective volume (0..1) via CC7, locked against the song's own CC7. */
+  setChannelVolume(ch, v01) {
+    if (ch < 0 || ch >= NUM_CHANNELS) return;
+    this._chVol[ch] = v01;
+    this._chLocked[ch] = true;
+    if (!this.synth) return;
+    try {
+      // Unlock → set → re-lock: a locked controller ignores a plain change (the `force`
+      // flag proved unreliable in the vendored build), so raising a channel back up after
+      // it was set low would otherwise freeze it silent. Setting while unlocked always
+      // lands; the re-lock then holds it against the song's own CC7 automation.
+      this.synth.lockController(ch, 7, false);
+      this.synth.controllerChange(ch, 7, Math.max(0, Math.min(127, Math.round(v01 * 127))));
+      this.synth.lockController(ch, 7, true);
+    } catch (_) {}
+  }
+
+  /** Re-apply the stored per-channel CC7 mix (called after a new song loads). */
+  reassertChannelMix() {
+    if (!this.synth) return;
+    for (let ch = 0; ch < NUM_CHANNELS; ch++) {
+      if (!this._chLocked[ch]) continue;
+      try {
+        this.synth.lockController(ch, 7, false);
+        this.synth.controllerChange(ch, 7, Math.max(0, Math.min(127, Math.round(this._chVol[ch] * 127))));
+        this.synth.lockController(ch, 7, true);
+      } catch (_) {}
+    }
+  }
+
+  /** Hand the mix back to the song: unlock CC7 on every channel, reset state. */
+  releaseChannelMix() {
+    for (let ch = 0; ch < NUM_CHANNELS; ch++) {
+      this._chVol[ch] = 1; this._chLocked[ch] = false;
+      if (!this.synth) continue;
+      try { this.synth.lockController(ch, 7, false); } catch (_) {}
+    }
+  }
+
+  /** Tap the synth's 16 individual outputs with AnalyserNodes for real per-channel VU. */
+  _setupChannelMeters() {
+    try {
+      const nodes = [];
+      for (let i = 0; i < NUM_CHANNELS; i++) {
+        const a = this.ctx.createAnalyser();
+        a.fftSize = 256;
+        a.smoothingTimeConstant = 0.3;
+        nodes.push(a);
+      }
+      this.synth.connectIndividualOutputs(nodes); // channel N → worklet output N+2
+      this._analysers = nodes;
+      this._meterBuf = new Float32Array(nodes[0].fftSize);
+    } catch (e) {
+      this._analysers = null; // metering unavailable → VU falls back to zeros
+      console.warn("channel meters unavailable:", e);
+    }
+  }
+
+  /**
+   * Fill `out` (Float32Array length 16) with each channel's RMS level (0..~1).
+   * Cheap; call once per frame only while the mixer is visible. Zeros if no taps.
+   */
+  getChannelLevels(out) {
+    if (!this._analysers) { out.fill(0); return out; }
+    const buf = this._meterBuf;
+    for (let ch = 0; ch < NUM_CHANNELS; ch++) {
+      this._analysers[ch].getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      out[ch] = Math.sqrt(sum / buf.length);
+    }
+    return out;
   }
 
   /** Semitone transpose, applied to all 16 channels. */

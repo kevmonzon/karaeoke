@@ -92,6 +92,10 @@
         </div>
       </div>
 
+      <!-- MIDI mode: per-channel mixer band (volume / mute / solo + live VU). Rows are
+           built in JS (midi-mixer.js); shown only in body.midi-mode for a MIDI song. -->
+      <div id="midi-mixer" class="midi-mixer"></div>
+
       <div id="offset-toast" class="offset-toast"></div>
 
       <div id="seek-track" class="seek-track"><div id="seekbar" class="seekbar"></div></div>
@@ -174,6 +178,12 @@
           <span>Title card <em id="set-tc-val">3.0 s</em></span>
           <input id="set-tc" type="range" min="0" max="6" step="0.5" value="3" />
         </label>
+      </section>
+
+      <section>
+        <h4>MIDI mode</h4>
+        <label class="row toggle"><span>Channel mixer</span><input id="set-midimode" type="checkbox" /></label>
+        <div class="hint sub">A per-channel band (between the lyrics and controls) with volume, mute/solo and live levels for the current MIDI song. MIDI songs only.</div>
       </section>
 
       <section>

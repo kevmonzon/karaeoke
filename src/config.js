@@ -127,6 +127,15 @@ export const DEFAULT_CONFIG = {
     vocal: { volume: 1, mute: false, solo: false },
   },
 
+  // MIDI mode — a per-channel mixer band (between the lyrics and the transport)
+  // for the current MIDI song: all 16 channels with a volume slider, mute/solo,
+  // and a live VU meter fed by the channel's real audio level. Off by default;
+  // MIDI-only (hidden for video/YouTube). Per-channel slider positions are
+  // transient (reset per song), so only this master toggle persists.
+  midiMode: {
+    enabled: false, // master toggle for the channel mixer band
+  },
+
   // Microphone + voice effects. The mic starts OFF and must be enabled from the
   // ⚙ panel (browsers require a user gesture + permission). Enabling also needs a
   // secure context — http://localhost / 127.0.0.1 counts, so serve.py is fine.

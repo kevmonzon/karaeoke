@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { snapNote, detectKey, keyName, extractMelody } from "../src/js/melody.js";
 import { parseMidi, makeTickToSeconds } from "../src/js/lyrics.js";
 import { Catalog } from "../src/js/catalog.js";
+import { channelInfo } from "../src/js/midi-mixer.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -96,6 +97,41 @@ test("makeTickToSeconds: tick 0 → 0, later ticks advance", () => {
   const t2s = makeTickToSeconds(p);
   assert.equal(t2s(0), 0);
   assert.ok(t2s(480) > 0);
+});
+
+// --- parseMidi: program change ----------------------------------------------
+test("parseMidi: records the first program change per channel", () => {
+  const p = parseMidi(buildProgramMidi());
+  assert.equal(p.programByChannel[0], 40); // ch0: first program (40) wins over a later 41
+  assert.equal(p.programByChannel[9], 24); // ch9 program captured independently
+  assert.equal(p.programByChannel[1], null); // untouched channel stays null
+});
+
+// --- channelInfo (MIDI mixer) -----------------------------------------------
+test("channelInfo: flags active channels, tags drums, names by GM family", () => {
+  const parsed = {
+    noteEvents: [
+      { on: true, chan: 0 }, { on: true, chan: 0 }, { on: false, chan: 0 },
+      { on: true, chan: 9 },
+    ],
+    programByChannel: [24, null, null, null, null, null, null, null, null, null,
+                       null, null, null, null, null, null], // ch0 → Guitar family
+  };
+  const info = channelInfo(parsed);
+  assert.equal(info.length, 16);
+  assert.equal(info[0].active, true);
+  assert.equal(info[0].noteCount, 2);      // note-offs don't count
+  assert.equal(info[0].name, "Guitar");    // program 24 >> 3 = family 3
+  assert.equal(info[9].active, true);
+  assert.equal(info[9].name, "Drums");     // channel 9 is always percussion
+  assert.equal(info[5].active, false);     // no notes
+  assert.equal(info[5].name, "Ch 6");      // no program → 1-based fallback label
+});
+
+test("channelInfo: tolerates a parsed object with no note/program data", () => {
+  const info = channelInfo({});
+  assert.equal(info.length, 16);
+  assert.ok(info.every((c) => c.active === false));
 });
 
 // --- Catalog.fileUrl --------------------------------------------------------
@@ -212,6 +248,28 @@ function buildMinimalMidi() {
     0x00, 0x90, 0x3c, 0x64,                   // note on  C4 v100
     0x83, 0x60, 0x80, 0x3c, 0x00,             // +480: note off C4
     0x00, 0xff, 0x2f, 0x00,                   // end of track
+  ];
+  str("MTrk");
+  const len = trk.length;
+  bytes.push((len >> 24) & 255, (len >> 16) & 255, (len >> 8) & 255, len & 255);
+  for (const b of trk) bytes.push(b);
+  return new Uint8Array(bytes).buffer;
+}
+
+// A one-track MIDI with program changes on ch0 (twice) and ch9, plus a note on each.
+function buildProgramMidi() {
+  const bytes = [];
+  const str = (s) => { for (const c of s) bytes.push(c.charCodeAt(0)); };
+  str("MThd"); bytes.push(0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0); // fmt0, 1 trk, div 480
+
+  const trk = [
+    0x00, 0xc0, 0x28,             // program change ch0 → 40 (first — should win)
+    0x00, 0xc9, 0x18,             // program change ch9 → 24
+    0x00, 0xc0, 0x29,             // program change ch0 → 41 (ignored; first wins)
+    0x00, 0x90, 0x3c, 0x64,       // note on  ch0
+    0x00, 0x99, 0x24, 0x64,       // note on  ch9
+    0x81, 0x00, 0x80, 0x3c, 0x00, // +128: note off ch0
+    0x00, 0xff, 0x2f, 0x00,       // end of track
   ];
   str("MTrk");
   const len = trk.length;

@@ -92,6 +92,8 @@ body.video-mode .kv { display: block; }
    video-mode restores it automatically. */
 body.video-mode .pitch-guide,
 body.video-mode.guide-on .pitch-guide,
+body.video-mode .midi-mixer,
+body.video-mode.midi-mode .midi-mixer,
 body.video-mode .lyrics-wrap { display: none; }
 /* Key transpose is inert for video (no note data) — dim the control. */
 body.video-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
@@ -108,6 +110,8 @@ body.youtube-mode .ytplayer { display: block; }
    video-mode; the `.guide-on` selector out-specifies `body.guide-on .pitch-guide`). */
 body.youtube-mode .pitch-guide,
 body.youtube-mode.guide-on .pitch-guide,
+body.youtube-mode .midi-mixer,
+body.youtube-mode.midi-mode .midi-mixer,
 body.youtube-mode .lyrics-wrap { display: none; }
 body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
 
@@ -203,6 +207,45 @@ button.fav.on { color: #ffce3a; }
   border: 1px solid var(--line); margin-bottom: 6px; flex: 0 0 auto;
 }
 body.guide-on .pitch-guide { display: block; }
+
+/* MIDI mode — per-channel mixer band (built in midi-mixer.js). Sits between the
+   lyrics and the transport; a fixed, scrollable band like the pitch guide. */
+.midi-mixer {
+  display: none; flex: 0 0 auto; width: 100%;
+  max-height: 190px; overflow-y: auto;
+  padding: 8px 10px; margin-bottom: 6px;
+  border-radius: 12px; background: rgba(8, 10, 18, .55); border: 1px solid var(--line);
+  grid-template-columns: 1fr; gap: 4px;
+}
+body.midi-mode .midi-mixer { display: grid; }
+.mx-row {
+  display: grid; align-items: center; gap: 10px;
+  grid-template-columns: 92px 150px 24px 24px 1fr;
+  font-size: 12px; color: var(--muted);
+}
+.mx-row.inactive { opacity: .4; } /* channels with no notes in this song */
+.mx-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.mx-row .mx-vol { width: 100%; margin: 0; }
+.mx-btn {
+  width: 24px; height: 22px; padding: 0; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1;
+}
+.mx-btn:hover { border-color: var(--accent-2); }
+.mx-mute.on { background: var(--accent); border-color: var(--accent); color: #05060a; }
+.mx-solo.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
+/* VU: a prominent horizontal level meter. The track is a fixed green→red gradient;
+   an over-mask hides the unlit right portion, its width set each frame in JS
+   (level 0 → mask 100% = dark; level high → mask small = more of the gradient shows). */
+.mx-vu {
+  position: relative; height: 14px; width: 100%; border-radius: 5px; overflow: hidden;
+  background: linear-gradient(90deg, #35d07f 0%, #7ed957 42%, #ffd23f 70%, #ff5a5f 100%);
+}
+.mx-vu-mask {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 100%;
+  background: var(--panel-2);
+  transition: width .06s linear; /* light smoothing so the bar reads cleanly */
+}
 
 /* Lyrics — a smooth-scrolling column of lines inside a masked viewport */
 .lyrics {
@@ -419,6 +462,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   input[type=range] { width: 128px; }
   .settings-panel { width: 100vw; }
   .pitch-guide { height: min(var(--guide-height, 150px), 22vh); }
+  .midi-mixer { max-height: 26vh; }
 
   /* When the list is hidden (☰), the stage becomes a full-screen lyrics view. */
   body.lib-collapsed .layout { grid-template-rows: 1fr; }

@@ -22,6 +22,7 @@ import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
+import { createMidiMixer } from "./midi-mixer.js";
 import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
@@ -31,7 +32,7 @@ const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
 let lyrics, bgv, mic, pitchGuide, video, youtube; // created at boot (need the DOM)
-let lib, settingsUI;              // UI modules (created at boot)
+let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
 // --- mutable player state ---------------------------------------------------
 let queue = [];
@@ -75,10 +76,12 @@ async function boot() {
     onToggleFavorite: toggleFavorite, isFavorite,
   });
   settingsUI = createSettingsUI({ settings, mic, onRebuild });
+  midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
 
   applyVisualSettings();
   applyGuideSettings();
+  applyMidiMode();
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
@@ -166,6 +169,7 @@ function onSettingChanged(path) {
     // reflect the new state in the current search (append or drop YouTube rows)
     if (path === "youtube.enabled" && !recentMode && !favoritesMode) runSearch($("search").value);
   }
+  if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
   if (path === "*") settingsUI.syncSettingsUI();
 }
@@ -209,6 +213,14 @@ function applyGuideSettings() {
   document.body.classList.toggle("guide-on", on);
   document.documentElement.style.setProperty("--guide-height", settings.get("guide.height") + "px");
   if (on && pitchGuide) pitchGuide.resize();
+}
+
+// MIDI mode: reveal the per-channel mixer band. Turning it OFF hands the mix back
+// to the song (unlock CC7 + unmute every channel).
+function applyMidiMode() {
+  const on = settings.get("midiMode.enabled");
+  document.body.classList.toggle("midi-mode", on);
+  if (!on && audio.ready) audio.releaseChannelMix();
 }
 
 // Apply guide-vocal (melody channel volume/mute/solo) to the live synth.
@@ -581,6 +593,7 @@ function hideMidiSurfaces() {
   $("np-key").textContent = "";
   $("title-card").classList.remove("show");
   if (pitchGuide) pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
+  if (midiMixer) midiMixer.clear();
   currentMelodyChannel = -1;
   lastParsed = null;
   currentKey = null;
@@ -681,10 +694,12 @@ async function playMidi(song) {
     const hasLyrics = lyrics.load(parsed);
     $("lyric-badge").textContent = hasLyrics ? "" : "instrumental";
     loadMelody(parsed);
+    midiMixer.load(parsed); // reset the channel mixer for the new song
   } catch (e) {
     console.warn("Parse failed:", e);
     lyrics.lines = []; lyrics.hasLyrics = false; lyrics.reset();
     lastParsed = null;
+    midiMixer.clear();
   }
 
   audio.loadSong(buf);
@@ -737,6 +752,9 @@ function tick() {
       const offset = (settings.get("lyrics.offsetMs") || 0) / 1000;
       const gt = t + offset;          // visual time — drives lyrics AND the guide
       lyrics.update(gt);
+
+      // MIDI mode: paint the per-channel VU meters from the live audio levels.
+      if (settings.get("midiMode.enabled")) midiMixer.update();
 
       // Live pitch detection is computed off-thread (mic worker); getPitchMidi() just
       // reads the cached value, so we can query it every frame.
@@ -969,6 +987,7 @@ function clearStage() {
   $("lyric-badge").textContent = "";
   lyrics.clear();
   if (pitchGuide) pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
+  if (midiMixer) midiMixer.clear();
   $("seekbar").style.width = "0%";
   $("time-cur").textContent = "0:00"; $("time-dur").textContent = "0:00";
   $("title-card").classList.remove("show");

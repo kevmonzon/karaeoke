@@ -33,6 +33,8 @@ const SETTINGS_SCHEMA = [
   { id: "set-bgv", path: "bgv.enabled", type: "check" },
   { id: "set-bgv-op", path: "bgv.opacity", type: "range", fmt: pct },
   { id: "set-bgv-perssong", path: "bgv.changePerSong", type: "check" },
+  // midi mode (channel mixer band)
+  { id: "set-midimode", path: "midiMode.enabled", type: "check" },
   // key detection
   { id: "set-key-auto", path: "key.autoDetect", type: "check" },
   { id: "set-key-badge", path: "key.showBadge", type: "check" },

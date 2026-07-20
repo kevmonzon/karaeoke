@@ -56,6 +56,7 @@ export function parseMidi(arrayBuffer) {
   const lyricEvents = [];
   const noteEvents = []; // {tick, track, chan, note, on}
   const trackNames = [];
+  const programByChannel = new Array(16).fill(null); // first GM program seen per channel (for mixer labels)
   let keySig = null; // {sf, mi} from the first Key Signature meta (0x59)
 
   for (let t = 0; t < nTracks && pos < dv.byteLength; t++) {
@@ -100,6 +101,8 @@ export function parseMidi(arrayBuffer) {
         if (hi === 0x90 || hi === 0x80) {
           const note = u8(p), vel = u8(p + 1);
           noteEvents.push({ tick, track: t, chan, note, on: hi === 0x90 && vel > 0 });
+        } else if (hi === 0xc0 && programByChannel[chan] == null) {
+          programByChannel[chan] = u8(p); // first program change → the channel's instrument
         }
         p += (hi === 0xc0 || hi === 0xd0) ? 1 : 2;
       }
@@ -112,7 +115,7 @@ export function parseMidi(arrayBuffer) {
   if (tempoMap.length === 0 || tempoMap[0].tick > 0) {
     tempoMap.unshift({ tick: 0, usPerQuarter: 500000 });
   }
-  return { ppqn, isSmpte, tempoMap, lyricEvents, noteEvents, trackNames, nTracks, keySig };
+  return { ppqn, isSmpte, tempoMap, lyricEvents, noteEvents, trackNames, nTracks, keySig, programByChannel };
 }
 
 /** Public helper: a tick→seconds function for a parsed MIDI (used by melody.js). */
