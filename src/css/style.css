@@ -92,6 +92,8 @@ body.video-mode .kv { display: block; }
    video-mode restores it automatically. */
 body.video-mode .pitch-guide,
 body.video-mode.guide-on .pitch-guide,
+body.video-mode .chords,
+body.video-mode.chords-on .chords,
 body.video-mode .midi-mixer,
 body.video-mode.midi-mode .midi-mixer,
 body.video-mode .lyrics-wrap { display: none; }
@@ -110,6 +112,8 @@ body.youtube-mode .ytplayer { display: block; }
    video-mode; the `.guide-on` selector out-specifies `body.guide-on .pitch-guide`). */
 body.youtube-mode .pitch-guide,
 body.youtube-mode.guide-on .pitch-guide,
+body.youtube-mode .chords,
+body.youtube-mode.chords-on .chords,
 body.youtube-mode .midi-mixer,
 body.youtube-mode.midi-mode .midi-mixer,
 body.youtube-mode .lyrics-wrap { display: none; }
@@ -207,6 +211,37 @@ button.fav.on { color: #ffce3a; }
   border: 1px solid var(--line); margin-bottom: 6px; flex: 0 0 auto;
 }
 body.guide-on .pitch-guide { display: block; }
+
+/* Chord follow-along lane (chords.js) — a slim horizontal ribbon that scrolls to
+   anchor the current chord, mirroring the lyric scroll on the X axis. MIDI only. */
+.chords { display: none; flex: 0 0 auto; width: 100%; margin-bottom: 6px; }
+body.chords-on .chords { display: block; }
+.chord-view {
+  position: relative; width: 100%; overflow: hidden; height: 2.2em;
+  font-size: clamp(15px, 2vw, 22px);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+}
+.chord-strip {
+  position: absolute; top: 0; left: 0; height: 100%;
+  display: flex; align-items: center; gap: 0.6em;
+  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  will-change: transform;
+}
+.chord-chip {
+  flex: 0 0 auto; font-weight: 800; letter-spacing: .3px;
+  padding: 2px 12px; border-radius: 999px; border: 1px solid var(--line);
+  color: var(--muted); background: var(--panel-2);
+  transition: color .3s ease, background .3s ease, transform .3s ease, opacity .3s ease;
+}
+.chord-chip.past     { opacity: .35; }
+.chord-chip.upcoming { opacity: .70; }
+.chord-chip.current  {
+  opacity: 1; color: #061018; background: var(--accent-2);
+  border-color: var(--accent-2); transform: scale(1.12);
+  box-shadow: 0 4px 18px rgba(55, 224, 200, .35);
+}
+.chord-chip.placeholder { color: var(--muted); background: none; border: 0; font-weight: 600; }
 
 /* MIDI mode — per-channel mixer band (built in midi-mixer.js). Sits between the
    lyrics and the transport; a fixed, scrollable band like the pitch guide. */

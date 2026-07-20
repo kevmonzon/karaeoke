@@ -16,6 +16,7 @@ import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
 import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
+import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
 import { BackgroundVideo } from "./bgv.js";
 import { MicEngine } from "./mic.js";
@@ -31,7 +32,7 @@ const $ = (id) => document.getElementById(id);
 const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
-let lyrics, bgv, mic, pitchGuide, video, youtube; // created at boot (need the DOM)
+let lyrics, bgv, mic, pitchGuide, video, youtube, chordEngine; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
 // --- mutable player state ---------------------------------------------------
@@ -65,6 +66,7 @@ async function boot() {
   bgv = new BackgroundVideo($("bgv"), settings);
   mic = new MicEngine(audio, settings);
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
+  chordEngine = new ChordEngine($("chords"), { simplify: settings.get("chords.simplify") });
   video = new VideoEngine($("kv"), $("kva")); // VIDEO-song playback (picture + offset audio)
   youtube = new YouTubeEngine($("ytplayer")); // YOUTUBE-song playback (credentialless iframe)
   youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
@@ -81,6 +83,7 @@ async function boot() {
 
   applyVisualSettings();
   applyGuideSettings();
+  applyChordSettings();
   applyMidiMode();
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
@@ -162,7 +165,10 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("key.") || path === "audio.key") {
     if (path === "key.autoDetect" && lastParsed) currentKey = settings.get("key.autoDetect") ? detectKey(lastParsed) : null;
     updateKeyDisplay();
+    // Transpose relabels the chord lane live (root + semitones) — no re-detection.
+    if (chordEngine) chordEngine.setTranspose(settings.get("audio.key"));
   }
+  if (path === "*" || path.startsWith("chords.")) applyChordSettings();
   if (path === "*" || path === "bt.enabled") applyBluetoothMode(path === "bt.enabled");
   if (path === "*" || path === "youtube.enabled") {
     updateYoutubeToggle();
@@ -213,6 +219,16 @@ function applyGuideSettings() {
   document.body.classList.toggle("guide-on", on);
   document.documentElement.style.setProperty("--guide-height", settings.get("guide.height") + "px");
   if (on && pitchGuide) pitchGuide.resize();
+}
+
+// Chord lane: show/hide + push the simplify toggle. (Detection happens on song load;
+// transpose is applied from the audio.key branch below.)
+function applyChordSettings() {
+  document.body.classList.toggle("chords-on", settings.get("chords.enabled"));
+  if (chordEngine) {
+    chordEngine.setSimplify(settings.get("chords.simplify"));
+    chordEngine._rescroll(); // the lane may have just become visible → re-anchor
+  }
 }
 
 // MIDI mode: reveal the per-channel mixer band. Turning it OFF hands the mix back
@@ -694,10 +710,13 @@ async function playMidi(song) {
     const hasLyrics = lyrics.load(parsed);
     $("lyric-badge").textContent = hasLyrics ? "" : "instrumental";
     loadMelody(parsed);
+    chordEngine.load(parsed);                            // detect chords (once, on load)
+    chordEngine.setTranspose(settings.get("audio.key")); // reflect the current Key transpose
     midiMixer.load(parsed); // reset the channel mixer for the new song
   } catch (e) {
     console.warn("Parse failed:", e);
     lyrics.lines = []; lyrics.hasLyrics = false; lyrics.reset();
+    chordEngine.clear();
     lastParsed = null;
     midiMixer.clear();
   }
@@ -750,8 +769,9 @@ function tick() {
     // VIDEO song the lyrics are baked into the picture and there's no note data.)
     if (isMidi) {
       const offset = (settings.get("lyrics.offsetMs") || 0) / 1000;
-      const gt = t + offset;          // visual time — drives lyrics AND the guide
+      const gt = t + offset;          // visual time — drives lyrics, the guide AND chords
       lyrics.update(gt);
+      if (settings.get("chords.enabled")) chordEngine.update(gt);
 
       // MIDI mode: paint the per-channel VU meters from the live audio levels.
       if (settings.get("midiMode.enabled")) midiMixer.update();
@@ -986,6 +1006,7 @@ function clearStage() {
   $("np-key").textContent = "";
   $("lyric-badge").textContent = "";
   lyrics.clear();
+  if (chordEngine) chordEngine.clear();
   if (pitchGuide) pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
   if (midiMixer) midiMixer.clear();
   $("seekbar").style.width = "0%";

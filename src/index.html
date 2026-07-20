@@ -81,6 +81,10 @@
 
       <canvas id="pitch-guide" class="pitch-guide"></canvas>
 
+      <!-- chord follow-along lane (MIDI only): auto-detected chords, scrolls in sync
+           with the lyrics; hidden in video/youtube mode (baked-in, no note data) -->
+      <div id="chords" class="chords"></div>
+
       <!-- the title card overlays only the lyrics area, then fades to reveal it -->
       <div class="lyrics-wrap">
         <div id="lyrics" class="lyrics"></div>
@@ -191,6 +195,13 @@
         <label class="row toggle"><span>Auto-detect key</span><input id="set-key-auto" type="checkbox" /></label>
         <label class="row toggle"><span>Show key by title</span><input id="set-key-badge" type="checkbox" /></label>
         <div class="hint sub">Reads each song's key from the MIDI. Shown as current → transposed beside the title, and drives auto-tune's "Auto" key.</div>
+      </section>
+
+      <section>
+        <h4>Chords <em class="muted">(guitar · MIDI)</em></h4>
+        <label class="row toggle"><span>Show chord lane</span><input id="set-chords" type="checkbox" /></label>
+        <label class="row toggle"><span>Simplify <em class="muted">clean triads</em></span><input id="set-chords-simplify" type="checkbox" /></label>
+        <div class="hint sub"><strong>⚠ Best-effort — may not be fully accurate.</strong> Chords are auto-detected from the MIDI notes (the files carry no chord data), so some songs — especially power-chord / pedal-tone arrangements — can read the wrong quality or root. Treat it as a guide. Follows the Key transpose · <kbd>#</kbd> sharps. Simplify collapses 7ths/sus and fixes power chords to the key's triad (e.g. E5→Em).</div>
       </section>
 
       <section>

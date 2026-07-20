@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 
 import { snapNote, detectKey, keyName, extractMelody } from "../src/js/melody.js";
 import { parseMidi, makeTickToSeconds } from "../src/js/lyrics.js";
+import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuffix } from "../src/js/chords.js";
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 
@@ -277,3 +278,104 @@ function buildProgramMidi() {
   for (const b of trk) bytes.push(b);
   return new Uint8Array(bytes).buffer;
 }
+
+// --- chords -----------------------------------------------------------------
+// chordLabel: pitch-class → name, with live transpose (the Key control).
+test("chordLabel: names roots in sharps and transposes", () => {
+  assert.equal(chordLabel(0, ""), "C");
+  assert.equal(chordLabel(2, "m"), "Dm");
+  assert.equal(chordLabel(9, "7"), "A7");
+  assert.equal(chordLabel(0, "", 2), "D");   // +2 semitones
+  assert.equal(chordLabel(11, "", 1), "C");  // B +1 wraps to C
+  assert.equal(chordLabel(2, "", -2), "C");  // D −2
+});
+
+// simplifySuffix: collapse extensions to the strummer's triad, keep minor.
+test("simplifySuffix: 7/sus4/'' → '' ; m stays", () => {
+  assert.equal(simplifySuffix("7"), "");
+  assert.equal(simplifySuffix("sus4"), "");
+  assert.equal(simplifySuffix(""), "");
+  assert.equal(simplifySuffix("m"), "m");
+});
+
+// detectChords: block chords on one channel (harmony) + a monophonic line on
+// another (the melody, which detection excludes) → the right roots come out.
+function chordTestParsed() {
+  const ppqn = 480, bar = ppqn * 4; // 4/4 → 1920 ticks/bar
+  const noteEvents = [];
+  const span = (chan, note, start, end) => {
+    noteEvents.push({ tick: start, track: 0, chan, note, on: true });
+    noteEvents.push({ tick: end, track: 0, chan, note, on: false });
+  };
+  // ch0 harmony: bar0 = C major (C4 E4 G4 + bass C2), bar1 = G major (G3 B3 D4 + bass G2)
+  for (const n of [60, 64, 67, 36]) span(0, n, 0, bar);
+  for (const n of [55, 59, 62, 43]) span(0, n, bar, bar * 2);
+  // ch1 melody: 8 monophonic quarter notes (so extractMelody picks ch1, not the chords)
+  const mel = [72, 74, 76, 77, 79, 77, 76, 74];
+  mel.forEach((n, i) => span(1, n, i * ppqn, (i + 1) * ppqn));
+  return {
+    ppqn, isSmpte: false,
+    tempoMap: [{ tick: 0, usPerQuarter: 500000 }],
+    noteEvents, trackNames: [], keySig: null, timeSig: { num: 4, den: 4 },
+  };
+}
+
+test("detectChords: recovers C then G from a two-bar harmony", () => {
+  const { chords } = detectChords(chordTestParsed());
+  assert.ok(chords.length >= 2, `expected ≥2 chords, got ${chords.length}`);
+  assert.equal(chordLabel(chords[0].root, chords[0].suf), "C");
+  assert.equal(chordLabel(chords[1].root, chords[1].suf), "G");
+  // times are seconds, ascending (500000 µs/qn @ 480 ppqn → bar = 2.0 s)
+  assert.ok(chords[1].time > chords[0].time);
+});
+
+test("detectChords: no notes → empty, no throw", () => {
+  const { chords } = detectChords({
+    ppqn: 480, isSmpte: false, tempoMap: [{ tick: 0, usPerQuarter: 500000 }],
+    noteEvents: [], trackNames: [], keySig: null, timeSig: null,
+  });
+  assert.deepEqual(chords, []);
+});
+
+// diatonicThird: the third the key implies for a root.
+test("diatonicThird: reads major/minor from the key set", () => {
+  const D = new Set([2, 4, 6, 7, 9, 11, 1]); // D major {D E F# G A B C#}
+  assert.equal(diatonicThird(9, D), "");   // A in D major → major (V)
+  assert.equal(diatonicThird(4, D), "m");  // E in D major → minor (ii)
+  assert.equal(diatonicThird(6, D), "m");  // F# in D major → minor (iii)
+  assert.equal(diatonicThird(3, D), null); // D# is non-diatonic → unknown
+});
+
+// simplifiedSuffix: corrects a thirdless power chord via the key; else collapses.
+test("simplifiedSuffix: power chord → diatonic triad (confident key)", () => {
+  const D = new Set([2, 4, 6, 7, 9, 11, 1]);
+  // a bare E power chord mis-labelled sus4, in confident D major → Em (the ii)
+  assert.equal(simplifiedSuffix({ root: 4, suf: "sus4", powerless: true }, D, 0.95), "m");
+  // a real minor chord (not powerless) keeps m — the faint-key path isn't taken
+  assert.equal(simplifiedSuffix({ root: 4, suf: "m", powerless: false }, D, 0.95), "m");
+  // low key confidence → no correction, plain collapse (7 → "")
+  assert.equal(simplifiedSuffix({ root: 4, suf: "7", powerless: true }, D, 0.5), "");
+});
+
+// The default (faithful) chord list must be unaffected by the simplify machinery:
+// detectChords still emits the same root/suf, now carrying a `powerless` flag + key set.
+test("detectChords: still emits roots + now a key set / confidence", () => {
+  const ppqn = 480, bar = ppqn * 4;
+  const noteEvents = [];
+  const span = (chan, note, s, e) => {
+    noteEvents.push({ tick: s, track: 0, chan, note, on: true });
+    noteEvents.push({ tick: e, track: 0, chan, note, on: false });
+  };
+  for (const n of [60, 64, 67, 36]) span(0, n, 0, bar);      // C major
+  for (const n of [55, 59, 62, 43]) span(0, n, bar, bar * 2); // G major
+  [72, 74, 76, 77, 79, 77, 76, 74].forEach((n, i) => span(1, n, i * ppqn, (i + 1) * ppqn));
+  const r = detectChords({
+    ppqn, isSmpte: false, tempoMap: [{ tick: 0, usPerQuarter: 500000 }],
+    noteEvents, trackNames: [], keySig: null, timeSig: { num: 4, den: 4 },
+  });
+  assert.equal(chordLabel(r.chords[0].root, r.chords[0].suf), "C");
+  assert.equal(chordLabel(r.chords[1].root, r.chords[1].suf), "G");
+  assert.ok(r.keySet instanceof Set && r.keySet.size === 7); // a 7-note diatonic set
+  assert.ok(r.keyConf > 0 && r.keyConf <= 1);
+  assert.ok("powerless" in r.chords[0]); // flag present for the simplify path
+});

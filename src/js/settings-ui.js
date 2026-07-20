@@ -38,6 +38,9 @@ const SETTINGS_SCHEMA = [
   // key detection
   { id: "set-key-auto", path: "key.autoDetect", type: "check" },
   { id: "set-key-badge", path: "key.showBadge", type: "check" },
+  // chords
+  { id: "set-chords", path: "chords.enabled", type: "check" },
+  { id: "set-chords-simplify", path: "chords.simplify", type: "check" },
   // pitch guide
   { id: "set-guide", path: "guide.enabled", type: "check" },
   { id: "set-guide-win", path: "guide.windowSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },

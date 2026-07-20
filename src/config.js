@@ -78,6 +78,16 @@ export const DEFAULT_CONFIG = {
     showBadge: true, // show the key beside the song title (current → transposed)
   },
 
+  // Chord follow-along (for guitarists) — auto-detected chords shown in a tick-synced
+  // lane above the lyrics. MIDI-only (video/YouTube carry no note data). These KAR files
+  // embed no chords, so they're DERIVED from the MIDI notes (see src/js/chords.js). Roots
+  // relabel live with the Key transpose control, in sharps.
+  chords: {
+    enabled: true, // show the chord lane
+    // Collapse 7ths/sus to the bare triad a strummer plays (display-only, reversible).
+    simplify: false,
+  },
+
   // Title card shown over the lyrics area when a song starts (title/artist/key),
   // then fades to the lyrics. seconds = how long it stays (0 = off).
   titleCard: { seconds: 3 },

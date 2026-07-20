@@ -58,6 +58,7 @@ export function parseMidi(arrayBuffer) {
   const trackNames = [];
   const programByChannel = new Array(16).fill(null); // first GM program seen per channel (for mixer labels)
   let keySig = null; // {sf, mi} from the first Key Signature meta (0x59)
+  let timeSig = null; // {num, den} from the first Time Signature meta (0x58) — chords.js bars on it
 
   for (let t = 0; t < nTracks && pos < dv.byteLength; t++) {
     if (str(pos, 4) !== "MTrk") break;
@@ -89,6 +90,8 @@ export function parseMidi(arrayBuffer) {
           trackNames[t] = decodeText(new Uint8Array(arrayBuffer, dataStart, len));
         } else if (metaType === 0x59 && len === 2 && !keySig) {
           keySig = { sf: (u8(dataStart) << 24) >> 24, mi: u8(dataStart + 1) }; // sf signed
+        } else if (metaType === 0x58 && len >= 2 && !timeSig) {
+          timeSig = { num: u8(dataStart), den: 1 << u8(dataStart + 1) }; // dd byte is the power of two
         }
         p = dataStart + len;
       } else if (status === 0xf0 || status === 0xf7) {
@@ -115,7 +118,7 @@ export function parseMidi(arrayBuffer) {
   if (tempoMap.length === 0 || tempoMap[0].tick > 0) {
     tempoMap.unshift({ tick: 0, usPerQuarter: 500000 });
   }
-  return { ppqn, isSmpte, tempoMap, lyricEvents, noteEvents, trackNames, nTracks, keySig, programByChannel };
+  return { ppqn, isSmpte, tempoMap, lyricEvents, noteEvents, trackNames, nTracks, keySig, timeSig, programByChannel };
 }
 
 /** Public helper: a tick→seconds function for a parsed MIDI (used by melody.js). */
