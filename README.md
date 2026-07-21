@@ -42,6 +42,8 @@ your local library plays offline after first-run setup.
 | 📜 | **Smooth-scrolling lyrics** with per-syllable karaoke wipe, parsed from each song's own MIDI meta events |
 | 🎙️ | **Live microphone** mixed with the music: echo, reverb, chorus, pitch-shift, **real-time auto-tune**, feedback/noise control |
 | 🎯 | **Pitch guide** — a scrolling piano-roll of the melody to sing, with your live pitch overlaid + a score |
+| 🎸 | **Chords** — an auto-detected guitar chord lane above the lyrics, scrolling in time (MIDI songs) |
+| 🎛️ | **MIDI mode** — a per-channel mixer (16 channels: volume, mute/solo, live VU) for the current MIDI song |
 | 🎼 | **Key detection** + **transpose**, **tempo**, **volume**, all persisted |
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files and they play full-stage alongside the MIDI songs |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
@@ -228,6 +230,22 @@ from the MIDI's guide track). With the mic on it overlays your **live pitch**, a
 Turn the detected **melody channel** up to learn a song, **mute** it to perform, or **solo**
 it to isolate the tune (⚙ → Pitch guide → guide vocal).
 
+### 🎸 Chords (guitar follow-along)
+⚙ → **Chords → Show chords**: a chord lane above the lyrics scrolls to anchor the current
+chord, so guitarists can strum along. These KAR files carry no chord symbols — they're
+**auto-detected from the notes** on load. The **Key ±** transpose **relabels the chords live**
+(in sharps), and a **Simplify** toggle collapses jazzy 7ths/sus to the bare triad a strummer
+plays (and fixes thirdless power chords to the key's triad). **MIDI-only** — hidden for video
+and YouTube, which carry no note data.
+
+### 🎛️ MIDI mode (channel mixer)
+⚙ → **MIDI mode** reveals a per-channel mixer between the lyrics and the transport for the
+current MIDI song. It shows **all 16 channels** (each labeled by instrument, ch 10 = Drums;
+silent channels are dimmed) with a **volume slider, mute + solo, and a live VU meter** fed by
+each channel's real audio level. Untouched channels keep the song's authored mix; turning MIDI
+mode off — or loading a new song — hands the mix back. **MIDI-only**; per-channel positions
+reset per song.
+
 ### 🎞️ Video karaoke
 A video song plays **full-stage** (the MIDI-only surfaces hide themselves). Transport,
 seeking, queue, tempo, volume, and the mic all work. Because a karaoke video has its lyrics
@@ -271,6 +289,8 @@ defaults** in the panel to adopt them.
 | **Audio** | volume, tempo, key (also driven by the bottom controls) |
 | **Key** | auto-detect, show key badge |
 | **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
+| **Chords** | show chord lane, simplify (collapse 7ths/sus to triads) |
+| **MIDI mode** | enable the per-channel mixer band (volume/mute/solo/VU) |
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Title card** | seconds shown (0 = off) |
