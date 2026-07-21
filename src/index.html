@@ -146,6 +146,14 @@
       <button id="settings-close" class="gear" title="Close">✕</button>
     </div>
     <div class="settings-body">
+      <div class="set-search">
+        <input id="set-search" type="search" placeholder="🔎 Search settings…" autocomplete="off" spellcheck="false" />
+        <button id="set-search-clear" class="set-search-x" title="Clear" aria-label="Clear search">✕</button>
+      </div>
+      <div id="set-no-results" class="hint sub set-no-results hidden">No matching settings.</div>
+
+      <details class="set-cat" data-cat="display" open>
+        <summary>🎬 Display</summary>
       <section>
         <h4>Lyrics</h4>
         <label class="row">
@@ -185,6 +193,26 @@
       </section>
 
       <section>
+        <h4>Background video</h4>
+        <label class="row toggle">
+          <span>Enabled <em id="set-bgv-note" class="muted"></em></span>
+          <input id="set-bgv" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Opacity <em id="set-bgv-op-val">45%</em></span>
+          <input id="set-bgv-op" type="range" min="0" max="1" step="0.05" value="0.45" />
+        </label>
+        <label class="row">
+          <span>Change per song</span>
+          <input id="set-bgv-perssong" type="checkbox" />
+        </label>
+        <div class="hint sub">Drop <code>.mp4</code>/<code>.webm</code> files in <code>src/assets/bgv/</code> and restart the server.</div>
+      </section>
+      </details>
+
+      <details class="set-cat" data-cat="music">
+        <summary>🎵 Music</summary>
+      <section>
         <h4>MIDI mode</h4>
         <label class="row toggle"><span>Channel mixer</span><input id="set-midimode" type="checkbox" /></label>
         <div class="hint sub">A per-channel band (between the lyrics and controls) with volume, mute/solo and live levels for the current MIDI song. MIDI songs only.</div>
@@ -203,7 +231,10 @@
         <label class="row toggle"><span>Simplify <em class="muted">clean triads</em></span><input id="set-chords-simplify" type="checkbox" /></label>
         <div class="hint sub"><strong>⚠ Best-effort — may not be fully accurate.</strong> Chords are auto-detected from the MIDI notes (the files carry no chord data), so some songs — especially power-chord / pedal-tone arrangements — can read the wrong quality or root. Treat it as a guide. Follows the Key transpose · <kbd>#</kbd> sharps. Simplify collapses 7ths/sus and fixes power chords to the key's triad (e.g. E5→Em).</div>
       </section>
+      </details>
 
+      <details class="set-cat" data-cat="singing">
+        <summary>🎤 Singing</summary>
       <section>
         <h4>Pitch guide</h4>
         <label class="row toggle"><span>Show pitch guide</span><input id="set-guide" type="checkbox" /></label>
@@ -230,23 +261,6 @@
         <label class="row toggle"><span>Mute melody</span><input id="set-gv-mute" type="checkbox" /></label>
         <label class="row toggle"><span>Solo melody (isolate)</span><input id="set-gv-solo" type="checkbox" /></label>
         <div class="hint sub">Turn the melody up to learn a song, mute to perform, solo to isolate it.</div>
-      </section>
-
-      <section>
-        <h4>Background video</h4>
-        <label class="row toggle">
-          <span>Enabled <em id="set-bgv-note" class="muted"></em></span>
-          <input id="set-bgv" type="checkbox" />
-        </label>
-        <label class="row">
-          <span>Opacity <em id="set-bgv-op-val">45%</em></span>
-          <input id="set-bgv-op" type="range" min="0" max="1" step="0.05" value="0.45" />
-        </label>
-        <label class="row">
-          <span>Change per song</span>
-          <input id="set-bgv-perssong" type="checkbox" />
-        </label>
-        <div class="hint sub">Drop <code>.mp4</code>/<code>.webm</code> files in <code>src/assets/bgv/</code> and restart the server.</div>
       </section>
 
       <section>
@@ -307,7 +321,10 @@
         </label>
         <div class="hint sub">Auto-tune bends your voice to the note. "Melody guide" snaps to the song's own melody (needs a song playing).</div>
       </section>
+      </details>
 
+      <details class="set-cat" data-cat="sources">
+        <summary>🔎 Sources</summary>
       <section>
         <h4>YouTube search <em class="muted">(BYOC · Chromium)</em></h4>
         <label class="row toggle">
@@ -339,6 +356,7 @@
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
         <div id="rebuild-status" class="hint sub"></div>
       </section>
+      </details>
 
       <button id="settings-reset" class="reset-btn">Reset to defaults</button>
       <p class="hint">Defaults live in <code>src/config.js</code>. Edit it, then Reset.</p>

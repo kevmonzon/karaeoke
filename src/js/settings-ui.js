@@ -82,6 +82,50 @@ const SETTINGS_SCHEMA = [
   { id: "set-youtube-keyword", path: "youtube.keyword", type: "text" },
 ];
 
+// Synonyms so intuitive words find a control whose visible label doesn't contain
+// them. Keyed by the control's (or action button's) element id. Optional sugar —
+// a control without an entry is still searchable by its label + section titles.
+const SEARCH_KEYWORDS = {
+  "set-offset": "latency delay sync timing",
+  "set-bt": "bluetooth latency",
+  "set-tc": "title card intro",
+  "set-bgv": "background wallpaper backdrop",
+  "set-midimode": "channel mixer volume mute solo vu levels",
+  "set-key-auto": "transpose signature",
+  "set-key-badge": "transpose signature",
+  "set-chords": "guitar chord lane strum",
+  "set-chords-simplify": "guitar chord triad",
+  "set-guide": "melody piano roll pitch",
+  "set-gv-vol": "melody vocal",
+  "set-gv-mute": "melody vocal",
+  "set-gv-solo": "melody vocal isolate",
+  "set-mic-vol": "microphone gain",
+  "set-mic-aec": "feedback echo cancellation howl",
+  "set-mic-gate": "noise feedback",
+  "set-mic-echo": "effect delay slapback",
+  "set-mic-reverb": "effect hall space",
+  "set-mic-chorus": "effect thicken",
+  "set-mic-pitch": "shift transpose octave",
+  "set-autotune": "pitch correction tune snap",
+  "set-youtube": "online stream byoc",
+  "mic-enable": "microphone singing voice",
+  "rebuild-catalog": "library refresh scan songs",
+};
+
+const CAT_STATE_KEY = "karaeoke.settingsUI.v1"; // transient UI: category open/closed
+
+/**
+ * Pure token-AND substring match: every whitespace-separated token in `query`
+ * must appear in `text` (case-insensitive). Empty query matches everything.
+ * Exported for unit testing.
+ */
+export function matchesQuery(text, query) {
+  const q = (query || "").trim().toLowerCase();
+  if (!q) return true;
+  const hay = (text || "").toLowerCase();
+  return q.split(/\s+/).every((tok) => hay.includes(tok));
+}
+
 /**
  * @param {object} deps
  * @param {object} deps.settings   the Settings store
@@ -122,6 +166,97 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
     }
   }
 
+  // --- searchable / collapsible settings ---
+  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog"; // matchable controls + action buttons
+  let searchIndex = null;
+
+  function buildSearchIndex() {
+    const root = document.querySelector(".settings-body");
+    const cats = [...root.querySelectorAll(".set-cat")];
+    const leaves = [];
+    for (const cat of cats) {
+      const catText = cat.querySelector("summary")?.textContent || "";
+      for (const sec of cat.querySelectorAll("section")) {
+        const secText = sec.querySelector("h4")?.textContent || "";
+        for (const el of sec.querySelectorAll(LEAF_SEL)) {
+          const ctrl = el.matches(".row") ? el.querySelector("input, select") : el;
+          const kw = SEARCH_KEYWORDS[ctrl?.id || el.id] || "";
+          leaves.push({ el, sec, cat, text: `${el.textContent} ${secText} ${catText} ${kw}` });
+        }
+      }
+    }
+    // pure dividers/descriptions to tuck away while searching (not the no-results line)
+    const dividers = [...root.querySelectorAll(".sub-h, .hint")].filter((d) => d.id !== "set-no-results");
+    return { root, cats, leaves, dividers };
+  }
+
+  const loadCatState = () => {
+    try { return JSON.parse(localStorage.getItem(CAT_STATE_KEY)) || {}; } catch { return {}; }
+  };
+  const restoreCatState = () => {
+    const st = loadCatState();
+    for (const cat of searchIndex?.cats || []) {
+      const v = st[cat.dataset.cat];
+      if (typeof v === "boolean") cat.open = v;
+    }
+  };
+  const saveCatState = () => {
+    const st = {};
+    for (const cat of searchIndex?.cats || []) st[cat.dataset.cat] = cat.open;
+    try { localStorage.setItem(CAT_STATE_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+  };
+
+  function applyFilter(q) {
+    if (!searchIndex) searchIndex = buildSearchIndex();
+    const { root, cats, leaves, dividers } = searchIndex;
+    const active = q.trim().length > 0;
+    $("set-search-clear").classList.toggle("hidden", !active);
+
+    if (!active) {
+      for (const { el } of leaves) el.classList.remove("filtered-out");
+      for (const d of dividers) d.classList.remove("filtered-out");
+      root.querySelectorAll("section").forEach((s) => s.classList.remove("filtered-out"));
+      for (const cat of cats) cat.classList.remove("filtered-out");
+      restoreCatState();
+      $("set-no-results").classList.add("hidden");
+      return;
+    }
+
+    let anyVisible = false;
+    for (const leaf of leaves) {
+      const ok = matchesQuery(leaf.text, q);
+      leaf.el.classList.toggle("filtered-out", !ok);
+      anyVisible = anyVisible || ok;
+    }
+    for (const d of dividers) d.classList.add("filtered-out");
+    root.querySelectorAll("section").forEach((sec) => {
+      const has = [...sec.querySelectorAll(LEAF_SEL)].some((el) => !el.classList.contains("filtered-out"));
+      sec.classList.toggle("filtered-out", !has);
+    });
+    for (const cat of cats) {
+      const has = [...cat.querySelectorAll("section")].some((s) => !s.classList.contains("filtered-out"));
+      cat.classList.toggle("filtered-out", !has);
+      if (has) cat.open = true; // force-open categories with hits (don't persist — see toggle guard)
+    }
+    $("set-no-results").classList.toggle("hidden", anyVisible);
+  }
+
+  function wireSearch() {
+    searchIndex = buildSearchIndex();
+    restoreCatState();
+    const input = $("set-search");
+    if (!input) return;
+    input.addEventListener("input", () => applyFilter(input.value));
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { input.value = ""; applyFilter(""); e.stopPropagation(); }
+    });
+    $("set-search-clear").onclick = () => { input.value = ""; applyFilter(""); input.focus(); };
+    // persist manual open/close, but not the force-opens that happen mid-search
+    for (const cat of searchIndex.cats) {
+      cat.addEventListener("toggle", () => { if (!input.value.trim()) saveCatState(); });
+    }
+  }
+
   function updateMicBtn() {
     const btn = $("mic-enable");
     if (!btn) return;
@@ -130,10 +265,15 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
   }
 
   function wireSettings() {
-    $("btn-settings").onclick = () => $("settings-panel").classList.remove("hidden");
+    $("btn-settings").onclick = () => {
+      $("settings-panel").classList.remove("hidden");
+      const s = $("set-search");
+      if (s) setTimeout(() => s.focus(), 60); // after the slide-in
+    };
     $("settings-close").onclick = () => $("settings-panel").classList.add("hidden");
 
     autoBind();
+    wireSearch();
 
     // --- action buttons (not settings) ---
     $("rebuild-catalog").onclick = async () => {

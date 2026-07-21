@@ -282,6 +282,11 @@ All settings live in the **⚙ panel** and persist in `localStorage`. Their **de
 from **`src/config.js`** — edit that file to change built-in defaults, then click **Reset to
 defaults** in the panel to adopt them.
 
+The panel is organized into **collapsible categories** (🎬 Display · 🎵 Music · 🎤 Singing ·
+🔎 Sources) with a **search box** at the top — start typing to filter every control across all
+categories at once (it matches labels, section names, and synonyms like "latency" → Offset or
+"transpose" → Key). `Esc` or ✕ clears.
+
 | Group | What it controls |
 |---|---|
 | **Lyrics** | offset, smooth wipe, visible lines, merge lines, width, font scale |

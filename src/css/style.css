@@ -429,6 +429,41 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .reset-btn:hover { background: var(--accent); color: #fff; }
 .sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 6px 0 10px; border-top: 1px solid var(--line); padding-top: 12px; }
 .mic-btn { border-color: var(--accent-2); color: var(--accent-2); margin-bottom: 8px; }
+
+/* ⚙ settings: search box + collapsible categories */
+.set-search { position: sticky; top: -16px; z-index: 2; display: flex; align-items: center; gap: 6px;
+  background: var(--panel); padding: 4px 0 12px; margin: -4px 0 6px; }
+.set-search input {
+  flex: 1; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 12px; font-size: 13px; -webkit-appearance: none; appearance: none;
+}
+.set-search input::-webkit-search-cancel-button { display: none; }
+.set-search input:focus { outline: none; border-color: var(--accent-2); }
+.set-search-x {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px;
+}
+.set-search-x:hover { color: var(--ink); border-color: var(--accent-2); }
+.set-search-x.hidden { display: none; }
+.set-no-results { color: var(--accent-2); margin: 2px 0 12px; }
+.set-no-results.hidden { display: none; }
+
+.set-cat { border-top: 1px solid var(--line); }
+.set-cat > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 13px 2px; font-size: 13px; font-weight: 600; letter-spacing: .4px; color: var(--ink);
+}
+.set-cat > summary::-webkit-details-marker { display: none; }
+.set-cat > summary::after {
+  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .18s ease;
+}
+.set-cat[open] > summary::after { transform: rotate(90deg); }
+.set-cat > summary:hover { color: var(--accent-2); }
+.set-cat[open] > summary { color: var(--accent-2); }
+.set-cat > section:first-of-type { margin-top: 2px; }
+/* search filter state (rows, hints, dividers, buttons, sections, categories) */
+.settings-body .filtered-out { display: none; }
 .mic-btn:hover { background: var(--accent-2); color: #05060a; }
 .mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }

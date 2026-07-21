@@ -15,6 +15,7 @@ import { parseMidi, makeTickToSeconds } from "../src/js/lyrics.js";
 import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuffix } from "../src/js/chords.js";
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
+import { matchesQuery } from "../src/js/settings-ui.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -133,6 +134,26 @@ test("channelInfo: tolerates a parsed object with no note/program data", () => {
   const info = channelInfo({});
   assert.equal(info.length, 16);
   assert.ok(info.every((c) => c.active === false));
+});
+
+// --- matchesQuery (settings search) -----------------------------------------
+test("matchesQuery: empty query matches everything", () => {
+  assert.equal(matchesQuery("Reverb mix Microphone", ""), true);
+  assert.equal(matchesQuery("anything", "   "), true);
+});
+
+test("matchesQuery: case-insensitive substring hit on label and section", () => {
+  const text = "Reverb mix Microphone & voice effect hall space";
+  assert.equal(matchesQuery(text, "reverb"), true);   // label
+  assert.equal(matchesQuery(text, "MICRO"), true);    // section, partial + case-fold
+  assert.equal(matchesQuery(text, "hall"), true);     // keyword synonym
+});
+
+test("matchesQuery: all tokens must be present (AND), else miss", () => {
+  const text = "Offset Lyrics latency delay sync";
+  assert.equal(matchesQuery(text, "offset latency"), true);   // both present
+  assert.equal(matchesQuery(text, "offset reverb"), false);   // second token absent
+  assert.equal(matchesQuery(text, "zzz"), false);
 });
 
 // --- Catalog.fileUrl --------------------------------------------------------
