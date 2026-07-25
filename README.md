@@ -283,7 +283,8 @@ build the queue together. When a song was queued from a phone, the host shows **
 the melody guide and on the title card, and an **"up next"** line in the last 20 seconds.
 
 The **room code** is generated once per host browser and kept there (stable across restarts). Each
-host has its own code, so several karaoke stations can share one server. **Off by default.** ⚠️ The
+host has its own code, so several karaoke stations can share one server. **On by default** (turn it off
+in ⚙ for an untrusted network). ⚠️ The
 code is a **friction gate for a trusted network, not real security** — anyone on your LAN who has the
 code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 
@@ -375,7 +376,8 @@ public origin behind a tunnel like cloudflared); set a manual **URL override** i
 
 > ⚠️ The room code is a **friction gate for a trusted network, not real security** — anyone on your
 > LAN with the code can control playback and edit the queue. Keep it on a **trusted network**; behind
-> a public tunnel the code is weak protection. The remote is **off by default** and only relays while
+> a public tunnel the code is weak protection. The remote is **on by default** (turn it off in ⚙ on an
+> untrusted network) and only relays while
 > the host tab stays the foreground display. The code is generated once per host browser and is stable
 > across restarts; each host has its own, so several stations can share one server.
 

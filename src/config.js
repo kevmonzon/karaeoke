@@ -127,11 +127,12 @@ export const DEFAULT_CONFIG = {
 
   // Remote control (phones). A QR code on the queue panel opens a mobile page (/remote)
   // where guests queue/search and control playback. serve.py relays it in memory (host stays
-  // the authoritative player; see src/js/remote-host.js). OFF by default. FREE-FOR-ALL: while
+  // the authoritative player; see src/js/remote-host.js). ON by default. FREE-FOR-ALL: while
   // enabled, anyone who can reach the URL can control playback — keep it to a trusted LAN, or
-  // be aware that a public tunnel exposes control to anyone with the link.
+  // be aware that a public tunnel exposes control to anyone with the link (turn it off in ⚙ for
+  // an untrusted network).
   remote: {
-    enabled: false, // master toggle — shows the QR and starts the host↔phone sync loop
+    enabled: true, // master toggle — shows the QR and starts the host↔phone sync loop
     // Override the auto-detected QR URL. Blank = auto: the host page's own origin when it
     // isn't localhost (covers LAN-IP / cloudflared), else the server-detected LAN IP. Set this
     // to your public/tunnel origin (e.g. "https://karaoke.example.com") if auto-detect is wrong.
