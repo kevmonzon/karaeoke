@@ -2,7 +2,7 @@
 <html lang="en" data-screen="computer">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Ka-Rae-oke — Karaoke</title>
   <!-- 🎤 favicon as an inline SVG data-URI (no external file, works offline). -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>" />
@@ -54,7 +54,7 @@
         <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
         <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
       </div>
-      <ul id="song-list" class="song-list"></ul>
+      <ul id="song-list" class="song-list" role="list" aria-label="Song library"></ul>
     </section>
 
     <!-- CENTER: stage -->
@@ -152,7 +152,7 @@
             </div>
           </div>
           <div class="ctl">
-            <label>Volume</label>
+            <label for="volume">Volume</label>
             <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
           </div>
         </div>
@@ -165,7 +165,7 @@
       <!-- Phone-remote QR (shown only while remote.enabled; see app.js refreshRemoteQr). -->
       <div id="remote-qr" class="remote-qr">
         <div class="remote-qr-title">📱 Scan to control from your phone</div>
-        <div id="remote-qr-code" class="remote-qr-code" aria-label="Remote-control QR code"></div>
+        <div id="remote-qr-code" class="remote-qr-code" role="img" aria-label="Remote-control QR code"></div>
         <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
         <div class="remote-qr-urlrow">URL <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a></div>
       </div>

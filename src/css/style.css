@@ -184,7 +184,9 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
 
 .song-list, .queue-list { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; }
 .song-list { position: relative; }               /* virtualized: rows are absolute */
-.vlist-spacer { position: relative; width: 100%; } /* holds the full scroll height */
+/* Full scroll height without a spacer element (keeps the ul's children pure <li>): an in-flow
+   pseudo-element sized to the total list height (--vlist-h, set by library-ui.js). */
+#song-list::after { content: ""; display: block; height: var(--vlist-h, 0); }
 .song {
   position: absolute; left: 8px; right: 8px; height: var(--row-h); /* library-ui reads --row-h too */
   display: grid; grid-template-columns: 30px 1fr auto auto; align-items: center; gap: 8px;

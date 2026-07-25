@@ -2,8 +2,10 @@
  * library-ui.js — the left (song list) and right (queue) panes.
  *
  * The song list is VIRTUALIZED: only the rows in (and just around) the viewport
- * are in the DOM, positioned absolutely inside a full-height spacer, so a 17k-song
- * result set stays smooth. Row height is fixed (ROW_H) so scroll math is exact.
+ * are in the DOM, absolutely positioned inside the scroll container; the full scroll
+ * height comes from a `#song-list::after` pseudo (var --vlist-h), so the <ul>'s only
+ * children are the <li> rows (valid list a11y). Row height is the --row-h CSS var
+ * (read via rowH()) so scroll math stays exact across display-size profiles.
  *
  * Pure UI: it renders song/queue data and calls back into the player for
  * play/queue actions. Local state is only the selected + now-playing song.
@@ -38,10 +40,10 @@ const kindSpan = (s) => {
  * @returns {{ renderList, renderQueue, getSelectedSong, setNowPlaying }}
  */
 export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite }) {
-  const viewport = $("song-list"); // the scroll container (overflow-y: auto)
-  const spacer = document.createElement("div");
-  spacer.className = "vlist-spacer";
-  viewport.appendChild(spacer);
+  const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
+  // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
+  // by the `--vlist-h` CSS var (set in renderList). That keeps the <ul>'s only real children the
+  // <li> rows — valid list semantics (a spacer <div> child would break ul→li structure for a11y).
 
   let songs = [];
   let selectedSong = null;
@@ -88,12 +90,12 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     const end = Math.min(songs.length, Math.ceil((top + vh) / h) + OVERSCAN);
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) frag.appendChild(makeRow(songs[i], i, h));
-    spacer.replaceChildren(frag);
+    viewport.replaceChildren(frag); // rows are the ul's only children; height is from ::after
   }
 
   function renderList(newSongs) {
     songs = newSongs;
-    spacer.style.height = `${songs.length * rowH()}px`;
+    viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
     viewport.scrollTop = 0;
     renderWindow();
     const lc = $("list-count");
