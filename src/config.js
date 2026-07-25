@@ -90,7 +90,7 @@ export const DEFAULT_CONFIG = {
 
   // Title card shown over the lyrics area when a song starts (title/artist/key),
   // then fades to the lyrics. seconds = how long it stays (0 = off).
-  titleCard: { seconds: 3 },
+  titleCard: { seconds: 5 },
 
   // Bluetooth mode: BT speakers/headphones add output latency, so enabling this
   // auto-sets the lyric/guide offset to -260 ms (delays the visuals to match the

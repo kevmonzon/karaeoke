@@ -44,7 +44,7 @@ body {
 .toggles .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
 
 /* Collapsible panels (topbar toggles) */
-body.lib-collapsed .layout { grid-template-columns: 0 1fr 260px; }
+body.lib-collapsed .layout { grid-template-columns: 0 1fr 320px; }
 body.queue-collapsed .layout { grid-template-columns: 340px 1fr 0; }
 body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
 body.lib-collapsed .library { display: none; }
@@ -56,7 +56,7 @@ body.pb-collapsed .controls { display: none; }
 
 /* Layout */
 .layout {
-  flex: 1; display: grid; grid-template-columns: 340px 1fr 260px;
+  flex: 1; display: grid; grid-template-columns: 340px 1fr 320px;
   gap: 1px; background: var(--line); min-height: 0;
 }
 .library, .stage, .queue { background: var(--bg); min-height: 0; display: flex; flex-direction: column; }
@@ -89,8 +89,8 @@ body.pb-collapsed .controls { display: none; }
   word-break: break-all; line-height: 1.35;
 }
 .remote-qr-url:hover { text-decoration: underline; }
-/* "· name" attribution badge on a queue row (who queued it from a phone). */
-.queue-list .by { color: var(--accent-2); font-size: 12px; flex: 0 0 auto; white-space: nowrap; }
+.remote-qr-room { font-size: 12px; color: var(--muted); margin: 2px 0; }
+.remote-qr-room strong { color: var(--accent); font-size: 16px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
 
 /* Background video layer */
 .bgv {
@@ -207,6 +207,18 @@ button.fav.on { color: #ffce3a; }
 
 /* Stage / now playing */
 .now-playing { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+
+/* Singer + "up next" banner (above the melody guide). Collapses when empty. */
+.stage-banner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.stage-banner:not(:has(> :not(:empty))) { display: none; } /* hide when both children are empty */
+.now-singer { color: var(--accent); font-weight: 700; }
+.now-singer:empty { display: none; }
+.up-next { color: var(--accent-2); font-size: 13px; }
+.up-next:empty { display: none; }
+.stage-banner > *:not(:empty) { padding: 6px 0; }
+
+/* Fullscreen top-bar button active state (it lives outside .toggles). */
+.gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
 .np-code { font-size: 26px; font-weight: 800; color: var(--accent-2); font-variant-numeric: tabular-nums; }
 .np-meta { flex: 1; min-width: 0; }
 .np-title { font-size: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -218,7 +230,6 @@ button.fav.on { color: #ffce3a; }
 .kind {
   font-size: 15px; line-height: 1; text-align: center; user-select: none;
 }
-.queue-list .kind { margin-left: auto; }
 .np-key {
   font-size: 12px; color: var(--accent-2); background: var(--panel-2);
   border: 1px solid var(--line); padding: 4px 11px; border-radius: 20px;
@@ -375,7 +386,15 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 /* Queue */
 .queue h3 { margin: 4px 6px 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
 .muted { color: var(--muted); font-weight: 400; }
-.queue-list li { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; background: var(--panel); margin-bottom: 6px; }
+/* Queue rows mirror the search-list .song layout (icon · title/artist · remove). */
+.queue-list li { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 8px;
+  padding: 6px 10px; border-radius: 10px; background: var(--panel); margin-bottom: 6px; border: 1px solid transparent; }
+.queue-list li:hover { border-color: var(--line); }
+.qsong .kind { font-size: 18px; }
+.qsong .meta { display: flex; flex-direction: column; min-width: 0; }
+.qsong .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .artist .by { color: var(--accent-2); }
 .queue-list .code { color: var(--accent-2); font-weight: 700; }
 .queue-list .qt { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
@@ -402,8 +421,9 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .tc-code { color: var(--accent-2); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .tc-title { font-size: clamp(28px, 5vw, 58px); font-weight: 800; line-height: 1.1; max-width: 92%; }
 .tc-artist { font-size: clamp(16px, 2.6vw, 26px); color: var(--muted); }
+.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: clamp(15px, 2vw, 20px); }
 .tc-key { margin-top: 8px; color: var(--accent-2); font-size: 15px; }
-.tc-title:empty, .tc-artist:empty, .tc-key:empty { display: none; }
+.tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
 /* Mic toggle in the transport row */
 .transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }

@@ -38,6 +38,7 @@
       <button id="toggle-playback" class="gear" title="Toggle playback controls">🎛</button>
     </div>
     <button id="btn-settings" class="gear" title="Settings">⚙</button>
+    <button id="btn-fullscreen" class="gear" title="Full screen">⛶</button>
   </header>
 
   <main class="layout">
@@ -70,6 +71,13 @@
         <span id="lyric-badge" class="badge"></span>
       </div>
 
+      <!-- Singer + "up next" banner (above the melody guide). Populated only when songs
+           were queued from the phone remote; the up-next line shows in the last 20 s. -->
+      <div id="stage-banner" class="stage-banner">
+        <span id="now-singer" class="now-singer"></span>
+        <span id="up-next" class="up-next"></span>
+      </div>
+
       <!-- VIDEO karaoke: #kv is the picture (muted); #kva carries the sound, its
            clock offset from the picture so the lyric-offset control moves the audio.
            #kv fills the freed middle only in body.video-mode. -->
@@ -97,6 +105,7 @@
           <div id="tc-code" class="tc-code"></div>
           <div id="tc-title" class="tc-title"></div>
           <div id="tc-artist" class="tc-artist"></div>
+          <div id="tc-singer" class="tc-singer"></div>
           <div id="tc-key" class="tc-key"></div>
         </div>
       </div>
@@ -144,6 +153,7 @@
         <div id="remote-qr-code" class="remote-qr-code" aria-label="Remote-control QR code"></div>
         <div class="remote-qr-meta">
           <div class="remote-qr-title">📱 Scan to control from your phone</div>
+          <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
           <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a>
         </div>
       </div>
@@ -200,8 +210,8 @@
           <input id="set-font" type="range" min="0.6" max="1.8" step="0.05" value="1" />
         </label>
         <label class="row">
-          <span>Title card <em id="set-tc-val">3.0 s</em></span>
-          <input id="set-tc" type="range" min="0" max="6" step="0.5" value="3" />
+          <span>Title card <em id="set-tc-val">5.0 s</em></span>
+          <input id="set-tc" type="range" min="0" max="10" step="0.5" value="5" />
         </label>
       </section>
 

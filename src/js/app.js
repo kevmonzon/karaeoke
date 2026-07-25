@@ -42,6 +42,7 @@ let remoteHost;                  // host↔phone relay driver (created at boot)
 let queue = [];
 let queueBy = [];                // parallel to `queue`: who queued each song (phone nickname, or "")
 let current = null;
+let currentBy = "";              // who queued the NOW-PLAYING song via the remote ("" if host-added)
 let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
 let recent = []; // recently-played song ids, most-recent first
@@ -328,11 +329,11 @@ function reorderQueue(from, to) {
 }
 function advanceQueue() {
   const next = queue.shift();
-  queueBy.shift();           // keep the attribution array in lockstep with the queue
+  const by = queueBy.shift() || "";  // keep the attribution array in lockstep + carry it to the singer banner
   lib.renderQueue(queue, queueBy);
   saveSession();
   if (remoteHost) remoteHost.push();
-  if (next) playNow(next);
+  if (next) playNow(next, by);
   else {
     media.stop();            // nothing more queued → halt the active engine
     current = null; autoAdvancing = false;
@@ -351,12 +352,31 @@ function advanceQueue() {
 // A guest `setting` command with any other path is ignored — never settings.set() an
 // arbitrary path off the network.
 const REMOTE_SETTABLE = new Set([
-  "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume", "mic.enabled", "bgv.enabled",
+  "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume",
 ]);
 
-// Render/refresh (or hide) the QR + URL on the queue panel. The base URL is auto-detected
-// (settings override → the host page's own non-loopback origin → the server's LAN IP) and
-// "/remote" is appended. Degrades quietly if the QR lib 404'd (feature is opt-in anyway).
+// Room code — OWNED BY THIS HOST BROWSER (generated once, kept in localStorage). Each host has
+// its own code; guests reach THIS host's room by it (baked into the QR). The server keys its
+// multi-room relay on the code. 6 chars, no ambiguous glyphs.
+const HOST_ROOM_KEY = "karaeoke.remote.host.v1";
+let hostRoom = null;
+function getHostRoom() {
+  if (hostRoom) return hostRoom;
+  try { hostRoom = localStorage.getItem(HOST_ROOM_KEY) || ""; } catch (_) { hostRoom = ""; }
+  if (!/^[A-Z0-9]{6}$/.test(hostRoom)) {
+    const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const buf = new Uint32Array(6);
+    (window.crypto || crypto).getRandomValues(buf);
+    hostRoom = Array.from(buf, (n) => A[n % A.length]).join("");
+    try { localStorage.setItem(HOST_ROOM_KEY, hostRoom); } catch (_) {}
+  }
+  return hostRoom;
+}
+
+// Render/refresh (or hide) the QR + URL + room code on the queue panel. The base URL is
+// auto-detected (settings override → the host page's own non-loopback origin → the server's
+// LAN IP); the host's room code is embedded so scanning auto-connects. Degrades quietly if the
+// QR lib 404'd (feature is opt-in anyway).
 let remoteLanUrl = null; // server-detected LAN base (fetched once, cached)
 async function refreshRemoteQr(on) {
   const box = $("remote-qr");
@@ -368,10 +388,12 @@ async function refreshRemoteQr(on) {
       remoteLanUrl = (d && d.lanUrl) || "";
     } catch (_) { remoteLanUrl = ""; }
   }
+  const room = getHostRoom();
   const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, remoteLanUrl);
-  const url = base ? `${base}/remote` : "";
+  const url = base ? `${base}/remote?room=${room}` : "";
+  const roomEl = $("remote-room"); if (roomEl) roomEl.textContent = room;
   const link = $("remote-qr-url");
-  if (link) { link.textContent = url || "(no reachable URL)"; link.href = url || "#"; }
+  if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
   renderQr($("remote-qr-code"), url);
   box.classList.add("show");
 }
@@ -408,6 +430,7 @@ function remoteSnapshot() {
     artist: current.artistName || "",
     kind: current.kind,
     code: current.code || "",
+    by: currentBy || "",
     position: (media && media.currentTime) || 0,
     duration: (media && media.duration) || 0,
     paused: media ? media.paused : true,
@@ -418,7 +441,7 @@ function remoteSnapshot() {
   }));
   const settingsSub = {};
   for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
-  return { now, queue: q, settings: settingsSub };
+  return { room: getHostRoom(), now, queue: q, settings: settingsSub };
 }
 
 // Resolve a song a phone asked to enqueue. Library songs resolve by id; a YouTube
@@ -768,8 +791,9 @@ async function ensureEngine() {
 
 // Dispatch on the song's kind: VIDEO songs take the (synth-free) video path; MIDI
 // songs take the existing SpessaSynth path.
-async function playNow(song) {
+async function playNow(song, by = "") {
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
+  currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   if (song.kind === "youtube") return playYoutube(song);
   if (song.kind === "video") return playVideo(song);
   return playMidi(song);
@@ -936,6 +960,7 @@ function endOfSong() {
 }
 function tick() {
   setPlayIcon(); // keep the transport button mirroring the real play/pause state every frame
+  updateStageBanner(); // singer + "up next" (last 20 s) — change-guarded, cheap
   if (current && media) {
     const isMidi = media === audio;
     const t = media.currentTime;   // active-engine playback time
@@ -1068,6 +1093,19 @@ function wireUI() {
   $("toggle-lib").onclick = () => settings.set("ui.library", !settings.get("ui.library"));
   $("toggle-queue").onclick = () => settings.set("ui.queue", !settings.get("ui.queue"));
   $("toggle-playback").onclick = () => settings.set("ui.playback", !settings.get("ui.playback"));
+
+  // Full-screen toggle (top-right). Falls back silently if the browser refuses.
+  const fsBtn = $("btn-fullscreen");
+  if (fsBtn) {
+    fsBtn.onclick = () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    };
+    document.addEventListener("fullscreenchange", () => {
+      fsBtn.classList.toggle("active", !!document.fullscreenElement);
+      fsBtn.title = document.fullscreenElement ? "Exit full screen" : "Full screen";
+    });
+  }
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
       const hits = catalog.search(search.value, 1);
@@ -1168,14 +1206,36 @@ function showTitleCard(song) {
   $("tc-code").textContent = `#${song.code}`;
   $("tc-title").textContent = song.name || "";
   $("tc-artist").textContent = song.artistName || "";
+  $("tc-singer").textContent = currentBy ? `🎤 ${currentBy}` : ""; // who queued it (remote only)
   $("tc-key").textContent = currentKey && currentKey.source !== "none" && settings.get("key.showBadge")
     ? keyName(currentKey.keyPc, currentKey.mode) : "";
   tc.classList.add("show");
   tcTimer = setTimeout(() => tc.classList.remove("show"), secs * 1000);
 }
 
+// Singer + "up next" banner above the melody guide. Shows the current singer (only when the
+// playing song was queued from the remote) and, in the last 20 s, the next queued song + singer.
+// Change-guarded so it's cheap to call every frame from the rAF loop.
+let _bannerNow = null, _bannerUp = null;
+function updateStageBanner() {
+  const nowEl = $("now-singer"), upEl = $("up-next");
+  if (!nowEl || !upEl) return;
+  const nowText = current && currentBy ? `🎤 ${currentBy}` : "";
+  if (nowText !== _bannerNow) { nowEl.textContent = nowText; _bannerNow = nowText; }
+  let upText = "";
+  if (current && media && media.duration > 0 && queue.length) {
+    const remaining = media.duration - media.currentTime;
+    if (remaining > 0 && remaining <= 20) {
+      const who = queueBy[0];
+      upText = `⏭ Up next: ${queue[0].name || "(untitled)"}${who ? ` · ${who}` : ""}`;
+    }
+  }
+  if (upText !== _bannerUp) { upEl.textContent = upText; _bannerUp = upText; }
+}
+
 // Blank the stage (between songs / when nothing is playing).
 function clearStage() {
+  currentBy = "";              // no singer once playback stops → the banner clears via updateStageBanner
   $("np-title").textContent = "Select a song to begin";
   $("np-artist").textContent = "";
   $("np-code").textContent = "—";

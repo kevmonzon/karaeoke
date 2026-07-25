@@ -352,28 +352,39 @@ def _youtube_search(query: str, max_results: int = 20):
 
 
 # ---------------------------------------------------------------------------
-# Remote-control relay — in-memory, ephemeral, thread-safe.
+# Remote-control relay — in-memory, ephemeral, thread-safe, MULTI-ROOM.
 # ---------------------------------------------------------------------------
-# Lets phones on the network queue/search/control the player from /remote (see
-# src/remote.html + src/js/remote.js). The HOST browser stays the AUTHORITATIVE
-# player: it POSTs its snapshot to /api/remote/host and drains guest COMMANDS in
-# the same call; guests POST intents to /api/remote/command and read
-# /api/remote/state. Free-for-all — no auth (same self-hosted trust model as
-# /api/youtube-block). State is in-memory and resets on restart (a party session).
+# Lets phones queue/search/control the player from /remote (src/remote.html +
+# src/js/remote.js). Each HOST browser OWNS a ROOM CODE (generated + stored in that
+# browser's localStorage) and is the AUTHORITATIVE player for its room: it POSTs its
+# snapshot to /api/remote/host (tagged with its room) and drains THAT room's guest
+# COMMANDS in the same call. Guests reach a specific room by its code — POST intents to
+# /api/remote/command and read /api/remote/state, both scoped by the room code. The
+# server is a keyed relay: the code is the routing key AND a soft gate (a wrong code
+# hits no live room → rejected). In-memory only; a room vanishes when its host stops
+# pushing (ROOM_TTL). Multiple hosts on one server each get their own room.
 _remote_lock = threading.Lock()
-_remote_state = {
-    "rev": 0,        # bumps on every host push; phones poll ?since=<rev> to skip no-ops
-    "ts": 0,         # host heartbeat (epoch secs) — the phone flags a stale/absent host
-    "now": None,     # {id,name,artist,kind,position,duration,paused} or None
-    "queue": [],     # [{id,name,artist,kind,by}]
-    "settings": {},  # mirrored host-settings subset (see REMOTE_SETTABLE on the host)
-}
-_remote_commands: list = []   # inbox: [{seq,type,…}] the host drains + acks
-_remote_cmd_seq = 0           # monotonic command id (host dedups/acks by seq)
+_rooms: dict = {}             # roomCode(upper) -> {rev, ts, now, queue, settings, commands:[], seq}
 REMOTE_CMD_TYPES = frozenset((
     "enqueue", "remove", "reorder", "play", "pause", "next", "seek", "volume", "setting",
 ))
-REMOTE_CMD_MAX = 200          # bound the inbox so an absent host can't let it grow unbounded
+REMOTE_CMD_MAX = 200          # per-room inbox cap (host-less safety)
+ROOM_TTL = 90                 # secs; a room whose host hasn't pushed in this long is dropped
+ROOM_MAX = 200                # sanity cap on concurrent rooms
+_ROOM_RE = re.compile(r"^[A-Z0-9]{4,12}$")
+
+
+def _norm_room(code) -> str:
+    """Normalize + validate a room code → uppercase, or '' if malformed."""
+    code = str(code or "").strip().upper()
+    return code if _ROOM_RE.match(code) else ""
+
+
+def _gc_rooms_locked() -> None:
+    """Drop rooms whose host has gone silent. Call while holding _remote_lock."""
+    cutoff = int(time.time()) - ROOM_TTL
+    for k in [k for k, r in _rooms.items() if r["ts"] < cutoff]:
+        del _rooms[k]
 
 
 def _lan_ip() -> str:
@@ -389,40 +400,69 @@ def _lan_ip() -> str:
         s.close()
 
 
-def _remote_add_command(cmd) -> int:
-    """Validate + append a guest command. Returns its seq, or 0 if rejected."""
-    global _remote_cmd_seq
+def _room_add_command(room, cmd) -> int:
+    """Append a guest command to a LIVE room's inbox. Returns its seq, or 0 if the
+    command is malformed or no live host owns that room code (the soft gate)."""
     if not isinstance(cmd, dict) or cmd.get("type") not in REMOTE_CMD_TYPES:
         return 0
+    room = _norm_room(room)
+    if not room:
+        return 0
     with _remote_lock:
-        _remote_cmd_seq += 1
-        cmd["seq"] = _remote_cmd_seq
-        _remote_commands.append(cmd)
-        if len(_remote_commands) > REMOTE_CMD_MAX:   # keep the newest N (host-less safety)
-            del _remote_commands[:-REMOTE_CMD_MAX]
-        return _remote_cmd_seq
+        r = _rooms.get(room)
+        if not r or r["ts"] < int(time.time()) - ROOM_TTL:
+            return 0          # no live host for this code → reject
+        r["seq"] += 1
+        cmd["seq"] = r["seq"]
+        r["commands"].append(cmd)
+        if len(r["commands"]) > REMOTE_CMD_MAX:
+            del r["commands"][:-REMOTE_CMD_MAX]
+        return r["seq"]
 
 
-def _remote_host_sync(snapshot) -> dict:
-    """Host pushes its snapshot (replacing the shared state) and drains commands.
-    `ackSeq` = the highest command seq the host has already applied; we drop those
-    and return everything newer (re-delivered until acked, so the host dedups by seq)."""
-    global _remote_state
+def _room_host_sync(snapshot) -> dict:
+    """Host upserts its room's snapshot (creating the room on first push) and drains that
+    room's commands. `ackSeq` = the highest command seq the host applied; we drop those and
+    return everything newer (re-delivered until acked, so the host dedups by seq)."""
+    room = _norm_room(snapshot.get("room"))
+    if not room:
+        return {"ok": False, "error": "room"}
     try:
         ack = int(snapshot.get("ackSeq") or 0)
     except (TypeError, ValueError):
         ack = 0
+    now = int(time.time())
     with _remote_lock:
-        # New object (never mutated in place) so a concurrent reader's snapshot stays valid.
-        _remote_state = {
-            "rev": _remote_state["rev"] + 1,
-            "ts": int(time.time()),
-            "now": snapshot.get("now"),
-            "queue": snapshot.get("queue") or [],
-            "settings": snapshot.get("settings") or {},
-        }
-        _remote_commands[:] = [c for c in _remote_commands if c["seq"] > ack]
-        return {"ok": True, "rev": _remote_state["rev"], "commands": list(_remote_commands)}
+        _gc_rooms_locked()
+        r = _rooms.get(room)
+        if r is None:
+            if len(_rooms) >= ROOM_MAX:
+                return {"ok": False, "error": "full"}
+            r = _rooms[room] = {"rev": 0, "ts": now, "commands": [], "seq": 0}
+        r["rev"] += 1
+        r["ts"] = now
+        r["now"] = snapshot.get("now")
+        r["queue"] = snapshot.get("queue") or []
+        r["settings"] = snapshot.get("settings") or {}
+        r["commands"] = [c for c in r["commands"] if c["seq"] > ack]
+        return {"ok": True, "rev": r["rev"], "commands": list(r["commands"])}
+
+
+def _room_state(code, since) -> dict:
+    """The snapshot a guest reads (/api/remote/state). Returns {error:'no-room'} when the
+    code names no live room (wrong code / host gone) — the gate's signal to the phone."""
+    room = _norm_room(code)
+    if not room:
+        return {"ok": False, "error": "no-room"}
+    with _remote_lock:
+        r = _rooms.get(room)
+        if not r or r["ts"] < int(time.time()) - ROOM_TTL:
+            return {"ok": False, "error": "no-room"}
+        rev = r["rev"]
+        if since is not None and str(since).isdigit() and int(since) == rev:
+            return {"ok": True, "rev": rev, "unchanged": True}
+        return {"ok": True, "rev": rev, "ts": r["ts"], "now": r.get("now"),
+                "queue": r.get("queue", []), "settings": r.get("settings", {})}
 
 
 # ---------------------------------------------------------------------------
@@ -482,21 +522,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True
 
     def _handle_remote_get(self, path):
-        # GET /api/remote/info  → the phone-reachable base URL (LAN IP + port), so the
-        # host's QR works even when the host opened http://127.0.0.1.
+        # GET /api/remote/info → the phone-reachable base URL (LAN IP + port), so the host's
+        # QR works even when the host opened http://127.0.0.1. (The room code is host-owned.)
         if path == "/api/remote/info":
             port = self.server.server_address[1]
             self._send_json({"ok": True, "lanUrl": f"http://{_lan_ip()}:{port}", "port": port})
             return
-        # GET /api/remote/state[?since=<rev>] → the shared snapshot (short-circuits to
-        # {unchanged:true} when the caller's rev is already current — cheap phone polls).
+        # GET /api/remote/state?room=<code>[&since=<rev>] → that room's snapshot (short-circuits
+        # to {unchanged:true} when the caller's rev is current; {error:'no-room'} for a dead code).
         if path == "/api/remote/state":
-            since = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("since", [""])[0]
-            with _remote_lock:
-                rev = _remote_state["rev"]
-                snap = None if (since.isdigit() and int(since) == rev) else dict(_remote_state)
-            self._send_json({"ok": True, "rev": rev, "unchanged": True} if snap is None
-                            else {"ok": True, **snap})
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send_json(_room_state(qs.get("room", [""])[0], qs.get("since", [None])[0]))
             return
         self.send_error(404)
 
@@ -618,18 +654,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
             return
         if path == "/api/remote/host":
-            # Host pushes its snapshot + drains guest commands. Body:
-            # {now, queue, settings, ackSeq} → {ok, rev, commands:[…]}.
+            # Host pushes its room's snapshot + drains that room's commands. Body:
+            # {room, now, queue, settings, ackSeq} → {ok, rev, commands:[…]}.
             try:
-                self._send_json(_remote_host_sync(json.loads(raw or b"{}")))
+                self._send_json(_room_host_sync(json.loads(raw or b"{}")))
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
             return
         if path == "/api/remote/command":
-            # A guest phone posts an intent. Body: {type, …, by} → {ok, seq}.
+            # A guest posts an intent to a room. Body: {room, type, …, by} → {ok, seq}.
+            # The room code gates control: an unknown/dead room is rejected (403 no-room).
             try:
-                seq = _remote_add_command(json.loads(raw or b"{}"))
-                self._send_json({"ok": bool(seq), "seq": seq})
+                cmd = json.loads(raw or b"{}")
+                room = cmd.get("room") if isinstance(cmd, dict) else None
+                seq = _room_add_command(room, cmd)
+                if seq:
+                    self._send_json({"ok": True, "seq": seq})
+                else:
+                    self._send_json({"ok": False, "error": "no-room"}, 403)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
             return

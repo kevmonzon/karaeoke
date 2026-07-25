@@ -8,13 +8,28 @@
   <link rel="stylesheet" href="./css/remote.css" />
 </head>
 <body>
+  <!-- Room-code gate: shown until the guest supplies the code for a live host room.
+       Scanning the QR fills ?room= and auto-connects, so this only appears for manual entry
+       or a stale/wrong code. -->
+  <div id="gate" class="gate">
+    <div class="gate-card">
+      <div class="gate-brand">📱 Ka-<span>Rae</span>-oke</div>
+      <div class="gate-title">Enter room code</div>
+      <div class="gate-sub">Shown on the karaoke screen</div>
+      <input id="gate-code" type="text" inputmode="text" autocapitalize="characters"
+             autocomplete="off" spellcheck="false" maxlength="6" placeholder="CODE" aria-label="Room code" />
+      <button id="gate-go" class="gate-go">Connect</button>
+      <div id="gate-err" class="gate-err"></div>
+    </div>
+  </div>
+
   <header class="rhead">
     <div class="rbrand">📱 Ka-<span>Rae</span>-oke</div>
     <div id="conn" class="conn"><span class="dot"></span><span id="conn-label">connecting…</span></div>
   </header>
 
   <main class="rmain">
-    <!-- Tab 1: Now Playing -->
+    <!-- Tab 1: Now Playing (with the key / tempo / volume controls) -->
     <section id="tab-now" class="panel active">
       <div class="now-card">
         <div id="now-kind" class="now-kind">🎤</div>
@@ -28,7 +43,15 @@
           <button id="now-playpause" class="ctl primary" aria-label="Play/pause">▶</button>
           <button id="now-next" class="ctl" aria-label="Next">⏭</button>
         </div>
-        <label class="vol">🔊<input id="now-vol" type="range" min="0" max="200" value="90" aria-label="Volume" /></label>
+        <div class="now-mix">
+          <label class="mrow"><span>🔊 Volume <em id="now-vol-val">90%</em></span>
+            <input id="now-vol" type="range" min="0" max="200" value="90" aria-label="Volume" /></label>
+          <div class="mrow"><span>🎚 Key <em id="now-key-val">0</em></span>
+            <span class="stepper"><button id="now-key-down" aria-label="Key down">–</button>
+            <button id="now-key-up" aria-label="Key up">+</button></span></div>
+          <label class="mrow"><span>⏩ Tempo <em id="now-tempo-val">1.00×</em></span>
+            <input id="now-tempo" type="range" min="0.5" max="1.5" step="0.01" value="1" aria-label="Tempo" /></label>
+        </div>
       </div>
     </section>
 
@@ -63,15 +86,7 @@
         <h3>Room controls <em class="muted">(affects everyone)</em></h3>
         <label class="frow"><span>Lyric offset <em id="s-offset-val">0 ms</em></span>
           <input id="s-offset" type="range" min="-1000" max="1000" step="50" value="0" /></label>
-        <div class="frow"><span>Key <em id="s-key-val">0</em></span>
-          <span class="stepper"><button id="s-key-down" aria-label="Key down">–</button>
-          <button id="s-key-up" aria-label="Key up">+</button></span></div>
-        <label class="frow"><span>Tempo <em id="s-tempo-val">1.00×</em></span>
-          <input id="s-tempo" type="range" min="0.5" max="1.5" step="0.01" value="1" /></label>
-        <label class="frow"><span>Volume <em id="s-vol-val">90%</em></span>
-          <input id="s-vol" type="range" min="0" max="200" step="1" value="90" /></label>
-        <label class="frow toggle"><span>Microphone</span><input id="s-mic" type="checkbox" /></label>
-        <label class="frow toggle"><span>Background video</span><input id="s-bgv" type="checkbox" /></label>
+        <div class="hint">Key, tempo &amp; volume are on the <strong>Now</strong> tab.</div>
       </div>
 
       <div class="set-group">
@@ -84,9 +99,11 @@
 
       <div class="set-group">
         <h3>Connection</h3>
+        <div class="hint">Room code: <strong id="s-room">—</strong></div>
         <div class="hint">Host: <span id="s-origin">—</span></div>
         <div class="hint">Status: <span id="s-status">—</span></div>
         <button id="s-reconnect" class="btn">Reconnect</button>
+        <button id="s-leave" class="btn">Leave room</button>
       </div>
     </section>
   </main>

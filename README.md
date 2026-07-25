@@ -264,29 +264,36 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 **needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
 
 ### 📱 Remote control (phones)
-Turn on **⚙ → Sources → Remote** and a **QR code** appears on the queue panel. Guests scan it
-with their phones (same network) to open a mobile page at **`/remote`** with four tabs:
-- **Now** — the current song with play/pause, next, seek, and volume.
+Turn on **⚙ → Sources → Remote** and a **QR code + room code** appear on the queue panel. Guests
+scan the QR with their phones (same network) to open **`/remote`**. Scanning auto-connects; anyone
+typing the URL by hand enters the **room code** shown on screen. Four tabs:
+- **Now** — the current song with play/pause, next, seek, and **key / tempo / volume**.
 - **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
 - **Queue** — the live queue with an "added by" name, plus remove / reorder.
-- **You** — your nickname (shown on songs you add), a few room controls (offset / key / tempo /
-  volume / mic / background video), device theme & text size, and connection status.
+- **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size, and
+  the connection status + room code.
 
-The host stays the real player — phones send requests that the host applies, so the whole room
-can build the queue together. **Off by default.** ⚠️ It's a **free-for-all**: anyone who can
-reach the URL can control playback, so keep it to a trusted network (see [§9](#9-serving-to-phonestvs-on-your-network)).
+The host stays the real player — phones send requests that the host applies, so the whole room can
+build the queue together. When a song was queued from a phone, the host shows **who's singing** above
+the melody guide and on the title card, and an **"up next"** line in the last 20 seconds.
+
+The **room code** is generated once per host browser and kept there (stable across restarts). Each
+host has its own code, so several karaoke stations can share one server. **Off by default.** ⚠️ The
+code is a **friction gate for a trusted network, not real security** — anyone on your LAN who has the
+code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 
 ### 🌄 Background video, title card, Bluetooth mode
 - **Background video** (⚙ → Background video): drop clips in `data/bgv/` (restart to
   detect) or list them in `config.js`. No clips → animated gradient.
-- **Title card** — a title/artist/key card overlays the lyrics when a song starts, then
-  fades in the words (⚙ → duration; 0 = off).
+- **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
+  lyrics when a song starts, then fades in the words (⚙ → duration 0–10 s; 0 = off).
 - **Bluetooth mode** (⚙) — BT speakers lag ~260 ms, so this delays the visuals to match and
   disables the mic; the offset stays adjustable.
 
 ### Layout
-Collapse the **song list / queue / playback strip** from the top-bar toggles (☰ ▦ 🎛). The
-live **song count** is under ⚙ → Library. Everything is responsive down to phone widths.
+Collapse the **song list / queue / playback strip** from the top-bar toggles (☰ ▦ 🎛), and go
+**full screen** with the **⛶** button in the top-right corner. The live **song count** is under
+⚙ → Library. Everything is responsive down to phone widths.
 
 ---
 
@@ -313,7 +320,7 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
-| **Title card** | seconds shown (0 = off) |
+| **Title card** | seconds shown, 0–10 (0 = off; default 5) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |
 
@@ -349,17 +356,18 @@ Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi.
 
 ### 📱 Phone remote control
 
-Once you're serving on the LAN, turn on **⚙ → Sources → Remote** on the host. A **QR code**
-appears on the queue panel — guests scan it to open **`http://<your-LAN-IP>:8080/remote`** and
+Once you're serving on the LAN, turn on **⚙ → Sources → Remote** on the host. A **QR code + a room
+code** appear on the queue panel — guests scan the QR to open **`http://<your-LAN-IP>:8080/remote`**
+(it auto-connects), or type that URL and enter the **room code** shown on screen. Then they can
 queue / search / control from their phones (any modern mobile browser; see the walkthrough in
-[§6](#6-using-the-app--full-walkthrough)). The URL is **auto-detected** (the host's LAN IP, or
-the public origin if you serve it behind a tunnel like cloudflared); set a manual **URL override**
-in ⚙ if you need to.
+[§6](#6-using-the-app--full-walkthrough)). The URL is **auto-detected** (the host's LAN IP, or the
+public origin behind a tunnel like cloudflared); set a manual **URL override** in ⚙ if needed.
 
-> ⚠️ The remote is **free-for-all with no password** — anyone who can open the URL can control
-> playback and edit the queue. Keep it on a **trusted network**. Behind a public tunnel, the link
-> is effectively an open remote. It's **off by default** and only relays while the host tab stays
-> the foreground display.
+> ⚠️ The room code is a **friction gate for a trusted network, not real security** — anyone on your
+> LAN with the code can control playback and edit the queue. Keep it on a **trusted network**; behind
+> a public tunnel the code is weak protection. The remote is **off by default** and only relays while
+> the host tab stays the foreground display. The code is generated once per host browser and is stable
+> across restarts; each host has its own, so several stations can share one server.
 
 ---
 

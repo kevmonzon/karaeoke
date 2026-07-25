@@ -107,23 +107,28 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     renderWindow();
   }
 
-  // `queueBy` (optional, parallel to `queue`) holds who queued each song via the phone
-  // remote — shown as a small "· name" badge. Absent/blank for host-added songs.
+  // Queue rows mirror the search-list `.song` layout: [icon][title / artist(+singer)][✕].
+  // `queueBy` (optional, parallel to `queue`) holds who queued each song via the phone remote —
+  // shown as a "· name" badge on the artist line. Absent/blank for host-added songs.
   function renderQueue(queue, queueBy = []) {
     const q = $("queue-list");
     q.innerHTML = "";
     queue.forEach((s, i) => {
       const li = document.createElement("li");
-      li.innerHTML = `<span class="code">${s.code}</span> <span class="qt"></span>` + kindSpan(s);
-      li.querySelector(".qt").textContent = `${s.name} — ${s.artistName}`;
+      li.className = "qsong";
+      li.innerHTML = kindSpan(s) +
+        `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
+      li.querySelector(".title").textContent = s.name || "(untitled)";
+      const artistEl = li.querySelector(".artist");
+      artistEl.textContent = s.artistName || "";
       const by = queueBy[i];
       if (by) {
         const b = document.createElement("span");
-        b.className = "by"; b.textContent = `· ${by}`; b.title = `Added by ${by}`;
-        li.insertBefore(b, li.querySelector(".kind")); // sibling of .qt so it survives the title ellipsis
+        b.className = "by"; b.textContent = ` · ${by}`; b.title = `Added by ${by}`;
+        artistEl.appendChild(b);
       }
       const rm = document.createElement("button");
-      rm.textContent = "✕"; rm.className = "add";
+      rm.textContent = "✕"; rm.className = "add"; rm.title = "Remove from queue";
       rm.onclick = () => onRemoveFromQueue(i);
       li.appendChild(rm);
       q.appendChild(li);

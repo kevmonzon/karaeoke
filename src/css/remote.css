@@ -120,3 +120,36 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 }
 .tabbar .tab .ti { font-size: 20px; }
 .tabbar .tab.active { color: var(--accent); }
+
+/* --- Room gate (shown until a valid room code is entered) --- */
+.gate { position: fixed; inset: 0; z-index: 100; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; padding: 24px; }
+body.connected .gate { display: none; }
+.gate-card { width: 100%; max-width: 360px; text-align: center; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 18px; padding: 28px 22px; }
+.gate-brand { font-weight: 700; font-size: 20px; margin-bottom: 18px; }
+.gate-brand span { color: var(--accent); }
+.gate-title { font-size: 18px; font-weight: 700; }
+.gate-sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+#gate-code { width: 100%; text-align: center; font-size: 30px; letter-spacing: 8px;
+  text-transform: uppercase; padding: 14px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink); font-variant-numeric: tabular-nums; }
+#gate-code:focus { border-color: var(--accent); outline: none; }
+.gate-go { width: 100%; margin-top: 14px; padding: 14px; border-radius: 12px; border: none;
+  background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; cursor: pointer; }
+.gate-err { color: var(--bad); font-size: 13px; min-height: 18px; margin-top: 12px; }
+
+/* --- Now tab: key / tempo / volume mix block --- */
+.now-mix { margin-top: 16px; display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.now-mix .mrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+.now-mix .mrow > span:first-child { flex: 0 0 auto; }
+.now-mix .mrow input[type="range"] { flex: 1; max-width: 55%; }
+.now-mix em { color: var(--accent-2); font-style: normal; font-size: 13px; }
+.now-mix .stepper { display: flex; gap: 8px; }
+.now-mix .stepper button { width: 42px; height: 42px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink); font-size: 20px; cursor: pointer; }
+
+/* Singer badge on the queue "now" card */
+.q-now-card .by { color: var(--accent-2); }
+.set-group .btn + .btn { margin-top: 8px; }
+#s-room { color: var(--accent); letter-spacing: 2px; font-variant-numeric: tabular-nums; }

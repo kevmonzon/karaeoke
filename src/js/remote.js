@@ -2,12 +2,13 @@
  * remote.js — the phone remote-control page (served at /remote; shell = src/remote.html).
  *
  * A guest's browser on the same network. It has NO synth and NO local player: it reuses
- * the tested Catalog (catalog.js) to search the songbook locally, reads the host's live
- * state from serve.py's relay (GET /api/remote/state), and sends intents back
- * (POST /api/remote/command). The HOST stays the authoritative player — see
- * src/js/remote-host.js and §5.x in CLAUDE.md. Four tabs: Now / Search / Queue / You.
+ * the tested Catalog (catalog.js) to search the songbook locally, reads a specific host
+ * ROOM's live state from serve.py's multi-room relay (GET /api/remote/state?room=CODE) and
+ * sends intents back (POST /api/remote/command, scoped to the room). The HOST stays the
+ * authoritative player — see src/js/remote-host.js and §5.x in CLAUDE.md.
  *
- * Free-for-all (no auth): anyone who can open this page can queue and control playback.
+ * A ROOM CODE gates entry: scanning the host's QR fills ?room= and auto-connects; otherwise
+ * the guest types the code shown on the karaoke screen. Four tabs: Now / Search / Queue / You.
  */
 import { Catalog } from "./catalog.js";
 
@@ -16,15 +17,17 @@ const KIND_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
 const PREFS_KEY = "karaeoke.remote.v1";
 
 // --- device-local state (persisted on the phone) ---------------------------
-let prefs = { nickname: "", theme: "dark", text: "m" };
+let prefs = { nickname: "", theme: "dark", text: "m", room: "" };
 // --- live host state -------------------------------------------------------
 let catalog = new Catalog();
+let room = "";           // the room code we're connected to ("" until the gate is passed)
 let state = null;        // last host snapshot {rev, ts, now, queue, settings}
 let lastRev = -1;
 let stamp = 0;           // performance.now() when `state` arrived (for progress interpolation)
 let lastOk = 0;          // last successful poll time (connection health)
 let ytOn = false;        // include YouTube results in search
 let seeking = false;     // true while the user drags the seek slider (don't fight them)
+let pollTimer = null;
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -36,18 +39,68 @@ async function boot() {
   wireNow();
   wireSearch();
   wireSettings();
+  wireGate();
 
   $("s-origin").textContent = location.origin;
   try { await catalog.load(); } catch (_) { /* songbook optional for control-only use */ }
 
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
-  poll();
-  setInterval(poll, 1000);   // pull host state
-  setInterval(uiTick, 250);  // smooth the now-playing progress between polls
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && room) poll(); });
+
+  // A room code from the scanned QR (?room=) wins; else the last room we used. Validate it
+  // against a live host room before entering; otherwise show the gate.
+  const urlRoom = normRoom(new URLSearchParams(location.search).get("room"));
+  const candidate = urlRoom || normRoom(prefs.room);
+  if (candidate && await roomIsLive(candidate)) enterRoom(candidate);
+  else { $("gate-code").value = candidate; showGate(candidate ? "That code isn't active right now." : ""); }
 }
 
 // ---------------------------------------------------------------------------
-// Prefs (nickname + device-local look)
+// Room gate
+// ---------------------------------------------------------------------------
+function normRoom(s) { return String(s || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, ""); }
+
+async function roomIsLive(code) {
+  try {
+    const d = await (await fetch(`/api/remote/state?room=${code}`)).json();
+    return !!(d && d.ok);
+  } catch (_) { return false; }
+}
+
+function wireGate() {
+  const go = async () => {
+    const code = normRoom($("gate-code").value);
+    if (code.length < 4) { $("gate-err").textContent = "Enter the code from the karaoke screen."; return; }
+    $("gate-err").textContent = "Checking…";
+    if (await roomIsLive(code)) enterRoom(code);
+    else $("gate-err").textContent = "No room with that code. Check the screen and try again.";
+  };
+  $("gate-go").onclick = go;
+  $("gate-code").onkeydown = (e) => { if (e.key === "Enter") go(); };
+  $("gate-code").oninput = (e) => { e.target.value = e.target.value.toUpperCase(); };
+}
+
+function showGate(msg) {
+  room = "";
+  document.body.classList.remove("connected");
+  $("gate-err").textContent = msg || "";
+  $("gate-code").focus();
+}
+
+function enterRoom(code) {
+  room = code;
+  prefs.room = code; savePrefs();
+  $("s-room").textContent = code;
+  document.body.classList.add("connected");
+  lastRev = -1; state = null;
+  poll();
+  if (!pollTimer) {
+    pollTimer = setInterval(poll, 1000);   // pull host state
+    setInterval(uiTick, 250);              // smooth now-playing progress between polls
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Prefs (nickname + device-local look + last room)
 // ---------------------------------------------------------------------------
 function loadPrefs() {
   try {
@@ -67,28 +120,34 @@ function applyPrefs() {
 }
 
 // ---------------------------------------------------------------------------
-// Relay I/O
+// Relay I/O (all scoped to the room)
 // ---------------------------------------------------------------------------
 async function poll() {
+  if (!room) return;
   try {
-    const res = await fetch(`/api/remote/state?since=${Math.max(0, lastRev)}`);
+    const res = await fetch(`/api/remote/state?room=${room}&since=${Math.max(0, lastRev)}`);
     const d = await res.json();
     lastOk = performance.now();
-    if (d && d.ok && !d.unchanged) {
+    if (d && d.error === "no-room") {
+      // The host stopped pushing (tab closed / server restart) — stay on the code and keep
+      // polling; the room resumes when the host comes back. renderConn shows "waiting".
+      state = null; renderNow(); renderQueue();
+    } else if (d && d.ok && !d.unchanged) {
       state = d; lastRev = d.rev; stamp = performance.now();
       renderNow(); renderQueue(); renderSettingsMirror();
     }
-  } catch (_) { /* host/server unreachable — the status dot will reflect it */ }
+  } catch (_) { /* server unreachable — the status dot reflects it */ }
   renderConn();
 }
 
-// Send an intent to the host. Always carries the guest nickname.
+// Send an intent to the host — always carries the guest nickname AND the room code (gated).
 function cmd(obj) {
+  if (!room) return;
   try {
     fetch("/api/remote/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...obj, by: prefs.nickname || "" }),
+      body: JSON.stringify({ ...obj, by: prefs.nickname || "", room }),
     }).then(() => poll()).catch(() => {});
   } catch (_) {}
 }
@@ -108,7 +167,7 @@ function showTab(name) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1 — Now Playing
+// Tab 1 — Now Playing (transport + key / tempo / volume)
 // ---------------------------------------------------------------------------
 function wireNow() {
   $("now-playpause").onclick = () => {
@@ -125,6 +184,16 @@ function wireNow() {
     if (now && now.duration > 0) cmd({ type: "seek", position: (seek.value / 1000) * now.duration });
   };
   $("now-vol").onchange = (e) => cmd({ type: "volume", value: +e.target.value / 100 });
+  $("now-tempo").onchange = (e) => cmd({ type: "setting", path: "audio.tempo", value: +e.target.value });
+  $("now-key-down").onclick = () => stepKey(-1);
+  $("now-key-up").onclick = () => stepKey(1);
+}
+
+function stepKey(delta) {
+  const cur = (state && state.settings && state.settings["audio.key"]) || 0;
+  const next = Math.max(-12, Math.min(12, cur + delta));
+  $("now-key-val").textContent = fmtKey(next);
+  cmd({ type: "setting", path: "audio.key", value: next });
 }
 
 function renderNow() {
@@ -133,9 +202,14 @@ function renderNow() {
   $("now-title").textContent = now ? (now.name || "(untitled)") : "Nothing playing";
   $("now-artist").textContent = now ? (now.artist || "") : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
-  if (state && state.settings && document.activeElement !== $("now-vol")) {
-    $("now-vol").value = Math.round((state.settings["audio.volume"] ?? 0.9) * 100);
-  }
+  // reflect the host's key/tempo/volume (unless the guest is dragging a control)
+  const s = (state && state.settings) || {};
+  const active = document.activeElement;
+  if (active !== $("now-vol")) $("now-vol").value = Math.round((s["audio.volume"] ?? 0.9) * 100);
+  $("now-vol-val").textContent = `${Math.round((s["audio.volume"] ?? 0.9) * 100)}%`;
+  if (active !== $("now-tempo")) $("now-tempo").value = s["audio.tempo"] ?? 1;
+  $("now-tempo-val").textContent = `${(+(s["audio.tempo"] ?? 1)).toFixed(2)}×`;
+  $("now-key-val").textContent = fmtKey(s["audio.key"] ?? 0);
   uiTick();
 }
 
@@ -222,7 +296,8 @@ function renderQueue() {
   if (now) {
     const d = document.createElement("div"); d.className = "q-now-card";
     d.innerHTML = `<span class="np">NOW</span> <span class="kind">${KIND_ICON[now.kind] || "🎵"}</span>
-      <span class="t">${esc(now.name || "(untitled)")}</span> <span class="a">${esc(now.artist || "")}</span>`;
+      <span class="t">${esc(now.name || "(untitled)")}</span> <span class="a">${esc(now.artist || "")}</span>
+      ${now.by ? `<span class="by">· ${esc(now.by)}</span>` : ""}`;
     $("q-now").appendChild(d);
   }
   const ul = $("r-queue");
@@ -259,45 +334,22 @@ function mkBtn(label, title, onClick, disabled) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 4 — You (nickname, room controls mirror, device prefs, connection)
+// Tab 4 — You (nickname, lyric offset, device prefs, connection + room)
 // ---------------------------------------------------------------------------
 function wireSettings() {
   $("s-nick").oninput = (e) => { prefs.nickname = e.target.value.slice(0, 24); savePrefs(); };
   $("s-theme").onchange = (e) => { prefs.theme = e.target.value; document.documentElement.dataset.theme = prefs.theme; savePrefs(); };
   $("s-text").onchange = (e) => { prefs.text = e.target.value; document.documentElement.dataset.text = prefs.text; savePrefs(); };
-
-  // Room controls → host `setting` (and `volume`) commands.
   $("s-offset").onchange = (e) => cmd({ type: "setting", path: "lyrics.offsetMs", value: +e.target.value });
-  $("s-tempo").onchange = (e) => cmd({ type: "setting", path: "audio.tempo", value: +e.target.value });
-  $("s-vol").onchange = (e) => cmd({ type: "volume", value: +e.target.value / 100 });
-  $("s-mic").onchange = (e) => cmd({ type: "setting", path: "mic.enabled", value: e.target.checked });
-  $("s-bgv").onchange = (e) => cmd({ type: "setting", path: "bgv.enabled", value: e.target.checked });
-  $("s-key-down").onclick = () => stepKey(-1);
-  $("s-key-up").onclick = () => stepKey(1);
-
   $("s-reconnect").onclick = () => { lastRev = -1; poll(); };
-}
-function stepKey(delta) {
-  const cur = (state && state.settings && state.settings["audio.key"]) || 0;
-  const next = Math.max(-12, Math.min(12, cur + delta));
-  $("s-key-val").textContent = fmtKey(next);
-  cmd({ type: "setting", path: "audio.key", value: next });
+  $("s-leave").onclick = () => { prefs.room = ""; savePrefs(); $("gate-code").value = ""; showGate(""); };
 }
 
-// Reflect the host's mirrored settings into the room controls — but never overwrite a
-// control the guest is actively touching.
+// Reflect the host's mirrored lyric offset (not while the guest is dragging it).
 function renderSettingsMirror() {
   const s = (state && state.settings) || {};
-  const active = document.activeElement;
-  if (active !== $("s-offset")) { $("s-offset").value = s["lyrics.offsetMs"] ?? 0; }
+  if (document.activeElement !== $("s-offset")) $("s-offset").value = s["lyrics.offsetMs"] ?? 0;
   $("s-offset-val").textContent = `${s["lyrics.offsetMs"] ?? 0} ms`;
-  if (active !== $("s-tempo")) { $("s-tempo").value = s["audio.tempo"] ?? 1; }
-  $("s-tempo-val").textContent = `${(+(s["audio.tempo"] ?? 1)).toFixed(2)}×`;
-  if (active !== $("s-vol")) { $("s-vol").value = Math.round((s["audio.volume"] ?? 0.9) * 100); }
-  $("s-vol-val").textContent = `${Math.round((s["audio.volume"] ?? 0.9) * 100)}%`;
-  $("s-key-val").textContent = fmtKey(s["audio.key"] ?? 0);
-  if (active !== $("s-mic")) $("s-mic").checked = !!s["mic.enabled"];
-  if (active !== $("s-bgv")) $("s-bgv").checked = s["bgv.enabled"] !== false;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +357,7 @@ function renderSettingsMirror() {
 // ---------------------------------------------------------------------------
 function renderConn() {
   const reachable = performance.now() - lastOk < 4000;
-  // The host bumps `ts` every ~1s while it's syncing; stale ts ⇒ host tab closed or remote off.
+  // The host bumps `ts` every ~1s while it's syncing; stale/absent ts ⇒ host tab closed or remote off.
   const hostLive = state && state.ts && (Date.now() / 1000 - state.ts) < 6;
   let label, cls;
   if (!reachable) { label = "offline"; cls = "bad"; }
