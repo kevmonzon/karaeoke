@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-screen="computer">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
@@ -62,7 +62,7 @@
       <video id="bgv" class="bgv" muted loop playsinline></video>
 
       <div class="now-playing">
-        <span id="np-code" class="np-code">—</span>
+        <span id="np-code" class="np-code"></span>
         <div class="np-meta">
           <div id="np-title" class="np-title">Select a song to begin</div>
           <div id="np-artist" class="np-artist"></div>
@@ -177,6 +177,20 @@
 
       <details class="set-cat" data-cat="display" open>
         <summary>🎬 Display</summary>
+      <section>
+        <h4>Screen</h4>
+        <label class="row">
+          <span>Display size</span>
+          <select id="set-screen">
+            <option value="auto">Auto</option>
+            <option value="phone">Phone</option>
+            <option value="tablet">Tablet</option>
+            <option value="computer">Computer</option>
+            <option value="tv">TV</option>
+          </select>
+        </label>
+        <div class="hint sub">Scales the whole player for readability. <strong>Auto</strong> follows the window size (a big screen reads as <strong>TV</strong>); pick TV for large, read-at-a-distance text, or Computer for a desktop monitor. Font size (below) fine-tunes on top.</div>
+      </section>
       <section>
         <h4>Lyrics</h4>
         <label class="row">

@@ -290,10 +290,14 @@ code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 - **Bluetooth mode** (⚙) — BT speakers lag ~260 ms, so this delays the visuals to match and
   disables the mic; the offset stays adjustable.
 
-### Layout
-Collapse the **song list / queue / playback strip** from the top-bar toggles (☰ ▦ 🎛), and go
-**full screen** with the **⛶** button in the top-right corner. The live **song count** is under
-⚙ → Library. Everything is responsive down to phone widths.
+### Layout & screens
+The player adapts across **phone · tablet · computer · TV**. It auto-scales to your window size
+(**⚙ → Display → Display size**, default **Auto**) so the lyrics stay readable — a big screen reads
+as **TV** with large, read-at-a-distance text. If Auto guesses wrong (e.g. a desktop 4K monitor gets
+TV-sized text), switch it to **Computer**; the **font size** slider fine-tunes on top. Collapse the
+**song list / queue / playback strip** from the top-bar toggles (☰ ▦ 🎛), go **full screen** with the
+**⛶** button (top-right), and find the live **song count** under ⚙ → Library. On phones/tablets the
+layout stacks to a single column with the lyrics front and centre.
 
 ---
 
@@ -320,6 +324,7 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
+| **Display size** | Auto / Phone / Tablet / Computer / TV — scales the whole player for readability (Auto follows the window; big screens read as TV) |
 | **Title card** | seconds shown, 0–10 (0 = off; default 5) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |

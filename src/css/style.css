@@ -12,7 +12,17 @@
   --line: #262c3d;
   --line-width: 90%;
   --font-scale: 1;
+  /* Display-size profile knobs (set per [data-screen] below; app.js picks the profile). --ui-scale
+     multiplies the distance-read type; --row-h is the virtualized song-row height (library-ui reads it). */
+  --ui-scale: 1;
+  --row-h: 46px;
 }
+/* Display-size profiles — phone / tablet / computer / TV. app.js sets <html data-screen> from the
+   window size (or the ⚙ override). The stage (lyrics/chords/now-playing) scales for couch distance. */
+html[data-screen="phone"]    { --ui-scale: 0.9; --row-h: 50px; }
+html[data-screen="tablet"]   { --ui-scale: 1.0; --row-h: 54px; }
+html[data-screen="computer"] { --ui-scale: 1.0; --row-h: 46px; }  /* = today's desktop look */
+html[data-screen="tv"]       { --ui-scale: 1.8; --row-h: 62px; }  /* big, read-at-a-distance */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -177,17 +187,17 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
 .song-list { position: relative; }               /* virtualized: rows are absolute */
 .vlist-spacer { position: relative; width: 100%; } /* holds the full scroll height */
 .song {
-  position: absolute; left: 8px; right: 8px; height: 46px; /* height must match ROW_H in library-ui.js */
+  position: absolute; left: 8px; right: 8px; height: var(--row-h); /* library-ui reads --row-h too */
   display: grid; grid-template-columns: 30px 1fr auto auto; align-items: center; gap: 8px;
   padding: 6px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
 }
 .song.playing { border-color: var(--accent); background: rgba(255, 61, 129, .10); }
 .song:hover { background: var(--panel); }
 .song.selected { background: var(--panel-2); border-color: var(--accent); }
-.song .kind { font-size: 18px; }
+.song .kind { font-size: calc(18px * var(--ui-scale)); }
 .song .meta { display: flex; flex-direction: column; min-width: 0; }
-.song .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.song .artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.add {
   background: var(--panel-2); border: none; color: var(--ink); width: 26px; height: 26px;
   border-radius: 8px; cursor: pointer; font-size: 14px; line-height: 1;
@@ -211,19 +221,20 @@ button.fav.on { color: #ffce3a; }
 /* Singer + "up next" banner (above the melody guide). Collapses when empty. */
 .stage-banner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .stage-banner:not(:has(> :not(:empty))) { display: none; } /* hide when both children are empty */
-.now-singer { color: var(--accent); font-weight: 700; }
+.now-singer { color: var(--accent); font-weight: 700; font-size: calc(15px * var(--ui-scale)); }
 .now-singer:empty { display: none; }
-.up-next { color: var(--accent-2); font-size: 13px; }
+.up-next { color: var(--accent-2); font-size: calc(13px * var(--ui-scale)); }
 .up-next:empty { display: none; }
 .stage-banner > *:not(:empty) { padding: 6px 0; }
 
 /* Fullscreen top-bar button active state (it lives outside .toggles). */
 .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
-.np-code { font-size: 26px; font-weight: 800; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+.np-code { font-size: calc(26px * var(--ui-scale)); line-height: 1; user-select: none; } /* source-kind icon */
+.np-code:empty { display: none; }
 .np-meta { flex: 1; min-width: 0; }
-.np-title { font-size: 20px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-artist { color: var(--muted); }
-.badge { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
+.np-title { font-size: calc(20px * var(--ui-scale)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-artist { color: var(--muted); font-size: calc(14px * var(--ui-scale)); }
+.badge { font-size: calc(11px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
 .badge:empty { display: none; }
 
 /* Source icon on each song row (and queue item): 🎤 MIDI · 🎞️ video. */
@@ -231,7 +242,7 @@ button.fav.on { color: #ffce3a; }
   font-size: 15px; line-height: 1; text-align: center; user-select: none;
 }
 .np-key {
-  font-size: 12px; color: var(--accent-2); background: var(--panel-2);
+  font-size: calc(12px * var(--ui-scale)); color: var(--accent-2); background: var(--panel-2);
   border: 1px solid var(--line); padding: 4px 11px; border-radius: 20px;
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
@@ -253,7 +264,7 @@ body.guide-on .pitch-guide { display: block; }
 body.chords-on .chords { display: block; }
 .chord-view {
   position: relative; width: 100%; overflow: hidden; height: 2.2em;
-  font-size: clamp(15px, 2vw, 22px);
+  font-size: calc(clamp(15px, 2vw, 22px) * var(--ui-scale));
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
           mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
 }
@@ -321,7 +332,7 @@ body.midi-mode .midi-mixer { display: grid; }
 .lyrics {
   flex: 1; display: flex; align-items: center; justify-content: center;
   min-height: 0; padding: 12px 20px; width: 100%;
-  font-size: calc(clamp(20px, 3.1vw, 38px) * var(--font-scale));
+  font-size: calc(clamp(20px, 3.1vw, 38px) * var(--font-scale) * var(--ui-scale));
 }
 .lyric-view {
   position: relative; width: 100%; overflow: hidden;
@@ -362,25 +373,25 @@ body.midi-mode .midi-mixer { display: grid; }
 /* Seek + time */
 .seek-track { height: 8px; background: var(--panel-2); border-radius: 20px; overflow: hidden; cursor: pointer; }
 .seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-.time { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 6px 2px 14px; font-variant-numeric: tabular-nums; }
+.time { display: flex; justify-content: space-between; color: var(--muted); font-size: calc(12px * var(--ui-scale)); margin: 6px 2px 14px; font-variant-numeric: tabular-nums; }
 
 /* Transport */
 .transport { display: flex; gap: 12px; justify-content: center; align-items: center; margin-bottom: 16px; }
 .transport button {
-  width: 52px; height: 52px; border-radius: 50%; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: 18px; cursor: pointer;
+  width: calc(52px * var(--ui-scale)); height: calc(52px * var(--ui-scale)); border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: calc(18px * var(--ui-scale)); cursor: pointer;
 }
 .transport button:hover { border-color: var(--accent-2); }
-.transport .primary { width: 66px; height: 66px; font-size: 22px; background: var(--accent); border: none; }
+.transport .primary { width: calc(66px * var(--ui-scale)); height: calc(66px * var(--ui-scale)); font-size: calc(22px * var(--ui-scale)); background: var(--accent); border: none; }
 .transport .primary:hover { filter: brightness(1.1); }
 
 /* Controls */
 .controls { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
 .ctl { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-.ctl label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+.ctl label { color: var(--muted); font-size: calc(12px * var(--ui-scale)); text-transform: uppercase; letter-spacing: .5px; }
 .stepper { display: flex; align-items: center; gap: 10px; }
-.stepper button { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-size: 15px; }
-.stepper span { min-width: 28px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stepper button { width: calc(30px * var(--ui-scale)); height: calc(30px * var(--ui-scale)); border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-size: calc(15px * var(--ui-scale)); }
+.stepper span { min-width: 28px; text-align: center; font-weight: 700; font-size: calc(14px * var(--ui-scale)); font-variant-numeric: tabular-nums; }
 input[type=range] { width: 160px; accent-color: var(--accent); }
 
 /* Queue */
@@ -390,10 +401,10 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .queue-list li { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 8px;
   padding: 6px 10px; border-radius: 10px; background: var(--panel); margin-bottom: 6px; border: 1px solid transparent; }
 .queue-list li:hover { border-color: var(--line); }
-.qsong .kind { font-size: 18px; }
+.qsong .kind { font-size: calc(18px * var(--ui-scale)); }
 .qsong .meta { display: flex; flex-direction: column; min-width: 0; }
-.qsong .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.qsong .artist { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist .by { color: var(--accent-2); }
 .queue-list .code { color: var(--accent-2); font-weight: 700; }
 .queue-list .qt { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -418,11 +429,11 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
   opacity: 0; pointer-events: none; transition: opacity .6s ease;
 }
 .title-card.show { opacity: 1; }
-.tc-code { color: var(--accent-2); font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.tc-title { font-size: clamp(28px, 5vw, 58px); font-weight: 800; line-height: 1.1; max-width: 92%; }
-.tc-artist { font-size: clamp(16px, 2.6vw, 26px); color: var(--muted); }
-.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: clamp(15px, 2vw, 20px); }
-.tc-key { margin-top: 8px; color: var(--accent-2); font-size: 15px; }
+.tc-code { color: var(--accent-2); font-size: calc(22px * var(--ui-scale)); font-weight: 800; font-variant-numeric: tabular-nums; }
+.tc-title { font-size: calc(clamp(28px, 5vw, 58px) * var(--ui-scale)); font-weight: 800; line-height: 1.1; max-width: 92%; }
+.tc-artist { font-size: calc(clamp(16px, 2.6vw, 26px) * var(--ui-scale)); color: var(--muted); }
+.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(15px, 2vw, 20px) * var(--ui-scale)); }
+.tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(15px * var(--ui-scale)); }
 .tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
 /* Mic toggle in the transport row */

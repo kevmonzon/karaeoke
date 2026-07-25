@@ -28,6 +28,9 @@ import { createRemoteHost, pickRemoteBaseUrl } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
+// Source-kind icon shown in the now-playing header (in place of the dial number).
+const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
+const npIcon = (kind) => NP_ICON[kind] || "🎵";
 
 // --- singletons -------------------------------------------------------------
 const settings = new Settings();
@@ -92,6 +95,7 @@ async function boot() {
   applyChordSettings();
   applyMidiMode();
   applyRemoteMode();
+  applyScreenProfile();  // set the display-size profile before first paint of the list/guide
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
@@ -185,10 +189,43 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
+  if (path === "*" || path === "ui.screen") applyScreenProfile();
   if (path === "*") settingsUI.syncSettingsUI();
 }
 
 // Collapsible panels (song list / queue / playback controls), toggled from the top bar.
+// Display-size profile — scales the whole player for readability across phone / tablet /
+// computer / TV. "auto" derives it from the window width (live on resize); an explicit choice
+// forces it. Sets <html data-screen>, then re-measures the virtual list (row height changes via
+// the --row-h var) + the pitch-guide canvas. Big screens (~1800px+) read as "tv" by default.
+const SCREEN_PROFILES = new Set(["phone", "tablet", "computer", "tv"]);
+// Breakpoints aligned with the layout @media queries (560 / 900) so scaling + layout switch
+// together; ≥1800 reads as "tv" (big text) by default — override to "computer" for a big monitor.
+function detectScreen() {
+  const w = window.innerWidth || 1280;
+  if (w < 560) return "phone";
+  if (w < 900) return "tablet";
+  if (w < 1800) return "computer";
+  return "tv";
+}
+function applyScreenProfile() {
+  const pref = settings.get("ui.screen");
+  const profile = SCREEN_PROFILES.has(pref) ? pref : detectScreen();
+  const el = document.documentElement;
+  if (el.dataset.screen === profile) return; // no change → nothing to re-measure
+  el.dataset.screen = profile;
+  requestAnimationFrame(() => {
+    if (lib) lib.refresh();          // --row-h changed → re-measure the virtualized list
+    if (pitchGuide) pitchGuide.resize();
+  });
+}
+// Re-evaluate the auto profile as the window crosses a breakpoint (debounced).
+let _screenResizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(_screenResizeTimer);
+  _screenResizeTimer = setTimeout(applyScreenProfile, 150);
+});
+
 function applyUiCollapse() {
   const libOpen = settings.get("ui.library");
   const qOpen = settings.get("ui.queue");
@@ -831,7 +868,7 @@ async function playVideo(song) {
   pushRecent(song);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
-  $("np-code").textContent = song.code ? `#${song.code}` : ""; // blank for code-less videos
+  $("np-code").textContent = npIcon(song.kind); // source icon instead of the dial number
   $("lyric-badge").textContent = "video";
 
   const url = Catalog.fileUrl(song);
@@ -863,7 +900,7 @@ async function playYoutube(song) {
   pushRecent(song);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
-  $("np-code").textContent = "";        // YouTube songs have no dial code
+  $("np-code").textContent = npIcon(song.kind); // source icon instead of the dial number
   $("lyric-badge").textContent = "youtube";
 
   youtube.setVolume(settings.get("audio.volume"));
@@ -891,7 +928,7 @@ async function playMidi(song) {
   setStatus(`Loading: ${song.code} — ${song.name}`);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
-  $("np-code").textContent = `#${song.code}`;
+  $("np-code").textContent = npIcon(song.kind); // source icon instead of the dial number
 
   const url = Catalog.fileUrl(song);
   let buf;
@@ -1238,7 +1275,7 @@ function clearStage() {
   currentBy = "";              // no singer once playback stops → the banner clears via updateStageBanner
   $("np-title").textContent = "Select a song to begin";
   $("np-artist").textContent = "";
-  $("np-code").textContent = "—";
+  $("np-code").textContent = ""; // nothing playing → no source icon
   $("np-key").textContent = "";
   $("lyric-badge").textContent = "";
   lyrics.clear();

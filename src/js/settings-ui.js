@@ -20,6 +20,8 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
 const SETTINGS_SCHEMA = [
+  // display size / profile
+  { id: "set-screen", path: "ui.screen", type: "select" },
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
   { id: "set-bt", path: "bt.enabled", type: "check" },
@@ -89,6 +91,7 @@ const SETTINGS_SCHEMA = [
 // them. Keyed by the control's (or action button's) element id. Optional sugar —
 // a control without an entry is still searchable by its label + section titles.
 const SEARCH_KEYWORDS = {
+  "set-screen": "tv television display size screen distance responsive scale zoom big large",
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",

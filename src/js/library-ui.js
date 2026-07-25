@@ -11,7 +11,9 @@
  */
 
 const $ = (id) => document.getElementById(id);
-const ROW_H = 46;        // must match `.song { height }` in style.css
+// Row height comes from the `--row-h` CSS var (set per display-size profile in style.css), so the
+// list scales with the screen (phone → TV). Read once per render; falls back to 46 if unset.
+const rowH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || 46;
 const OVERSCAN = 5;      // extra rows above/below the viewport
 
 // Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube.
@@ -48,12 +50,12 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   viewport.addEventListener("scroll", renderWindow, { passive: true });
   window.addEventListener("resize", renderWindow);
 
-  function makeRow(s, i) {
+  function makeRow(s, i, h) {
     const li = document.createElement("li");
     li.className = "song" +
       (selectedSong && s.id === selectedSong.id ? " selected" : "") +
       (nowPlaying && s.id === nowPlaying.id ? " playing" : "");
-    li.style.top = `${i * ROW_H}px`;
+    li.style.top = `${i * h}px`;
     li.innerHTML =
       kindSpan(s) +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
@@ -81,16 +83,17 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   function renderWindow() {
     const vh = viewport.clientHeight || 1;
     const top = viewport.scrollTop;
-    const start = Math.max(0, Math.floor(top / ROW_H) - OVERSCAN);
-    const end = Math.min(songs.length, Math.ceil((top + vh) / ROW_H) + OVERSCAN);
+    const h = rowH();
+    const start = Math.max(0, Math.floor(top / h) - OVERSCAN);
+    const end = Math.min(songs.length, Math.ceil((top + vh) / h) + OVERSCAN);
     const frag = document.createDocumentFragment();
-    for (let i = start; i < end; i++) frag.appendChild(makeRow(songs[i], i));
+    for (let i = start; i < end; i++) frag.appendChild(makeRow(songs[i], i, h));
     spacer.replaceChildren(frag);
   }
 
   function renderList(newSongs) {
     songs = newSongs;
-    spacer.style.height = `${songs.length * ROW_H}px`;
+    spacer.style.height = `${songs.length * rowH()}px`;
     viewport.scrollTop = 0;
     renderWindow();
     const lc = $("list-count");

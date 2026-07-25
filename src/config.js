@@ -99,7 +99,12 @@ export const DEFAULT_CONFIG = {
   bt: { enabled: false },
 
   // Collapsible panels (toggled from the top bar; true = shown). Persisted.
-  ui: { library: true, queue: true, playback: true },
+  // `screen` = the display-size profile that scales the whole UI for readability:
+  //   "auto"     → detect from the window size (phone / tablet / computer / TV), live on resize
+  //   "phone" | "tablet" | "computer" | "tv" → force that profile (e.g. pick "tv" for big,
+  //                 read-at-a-distance text when casting to a television). A large screen
+  //                 (~1800px+) auto-detects as "tv" — switch to "computer" if it's a desktop monitor.
+  ui: { library: true, queue: true, playback: true, screen: "auto" },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. OFF by default — opt in with the 🌐 pill in the search
