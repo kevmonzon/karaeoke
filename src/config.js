@@ -33,7 +33,7 @@ export const DEFAULT_CONFIG = {
     smooth: true,
 
     // How many lyric lines are visible in the scrolling viewport.
-    lineCount: 4,
+    lineCount: 5,
 
     // Concatenate N consecutive source lines into one display line (1–4).
     // Higher = longer lines and fewer, less-distracting line changes.
@@ -47,8 +47,8 @@ export const DEFAULT_CONFIG = {
   },
 
   bgv: {
-    // Master switch for the background video layer.
-    enabled: true,
+    // Master switch for the background video layer. OFF by default.
+    enabled: false,
 
     // "random" | "sequential" — how the next clip is chosen.
     mode: "random",
@@ -83,7 +83,7 @@ export const DEFAULT_CONFIG = {
   // embed no chords, so they're DERIVED from the MIDI notes (see src/js/chords.js). Roots
   // relabel live with the Key transpose control, in sharps.
   chords: {
-    enabled: true, // show the chord lane
+    enabled: false, // show the chord lane (off by default)
     // Collapse 7ths/sus to the bare triad a strummer plays (display-only, reversible).
     simplify: false,
   },
@@ -107,13 +107,14 @@ export const DEFAULT_CONFIG = {
   ui: { library: true, queue: true, playback: true, screen: "auto" },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
-  // the song list while you search. OFF by default — opt in with the 🌐 pill in the search
-  // row (the app stays fully offline until then). BYOC-clean: results are live metadata only,
+  // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).
+  // It still only queries YouTube when the local library comes up short (< autoThreshold hits),
+  // so the app stays offline-first in practice. BYOC-clean: results are live metadata only,
   // playback is the official YouTube embed, favorites store just a pointer (never content).
   // Chromium-only (needs the credentialless-iframe escape hatch under the app's cross-origin
   // isolation — see src/js/youtube.js); the feature self-disables on browsers without it.
   youtube: {
-    enabled: false,                    // master toggle (mirrors the 🌐 search-row pill)
+    enabled: true,                     // master toggle (mirrors the 🌐 search-row pill)
     searchUrl: "/api/youtube-search",  // server-side keyless-scrape proxy (serve.py)
     blockUrl:  "/api/youtube-block",   // report un-embeddable videoIds → shared server blocklist
     autoThreshold: 2,                  // only query YouTube when the local search has < this many hits
@@ -147,7 +148,7 @@ export const DEFAULT_CONFIG = {
     channel: -1, // -1 = auto-detect the melody channel; 0–15 = manual override
     showMic: true, // overlay the singer's detected pitch (needs mic enabled)
     trail: true, // soft fading ribbon tracing where the voice has been
-    scoring: true, // compute + show a score from mic vs. target melody
+    scoring: false, // compute + show a score from mic vs. target melody (off by default)
 
     // The audible guide melody (the detected melody channel in the song).
     // volume 1 + no mute/solo = the song plays as authored (non-intrusive).
