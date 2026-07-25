@@ -9,5 +9,9 @@ _memory/
 __pycache__/
 *.pyc
 *.bak
+# macOS filesystem junk (AppleDouble sidecars + Finder metadata). These are
+# binary blobs that get scooped into `find src -name '*.js'` and crash esbuild.
+**/._*
+**/.DS_Store
 # Docs aren't needed at runtime.
 *.md

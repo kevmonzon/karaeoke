@@ -28,7 +28,7 @@ COPY src/ ./src/
 # Already-*.min.js vendor files re-minify harmlessly; the big non-min SpessaSynth
 # libs (spessasynth_lib.js + spessasynth_core.js, ~678 KB) are the real win.
 RUN npx --yes esbuild@0.24.2 \
-      $(find src \( -name '*.js' -o -name '*.css' \)) \
+      $(find src \( -name '*.js' -o -name '*.css' \) -not -name '._*') \
       --minify --outbase=src --outdir=src --allow-overwrite
 
 # HTML shell: collapse whitespace + drop comments, minify the inline CSS/JS.
