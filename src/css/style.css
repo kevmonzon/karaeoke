@@ -16,13 +16,15 @@
      multiplies the distance-read type; --row-h is the virtualized song-row height (library-ui reads it). */
   --ui-scale: 1;
   --row-h: 46px;
+  --lib-w: 340px;   /* library column width (wider on TV so big titles are readable) */
+  --queue-w: 320px; /* queue column width */
 }
 /* Display-size profiles — phone / tablet / computer / TV. app.js sets <html data-screen> from the
    window size (or the ⚙ override). The stage (lyrics/chords/now-playing) scales for couch distance. */
 html[data-screen="phone"]    { --ui-scale: 0.9; --row-h: 50px; }
 html[data-screen="tablet"]   { --ui-scale: 1.0; --row-h: 54px; }
 html[data-screen="computer"] { --ui-scale: 1.0; --row-h: 46px; }  /* = today's desktop look */
-html[data-screen="tv"]       { --ui-scale: 1.8; --row-h: 62px; }  /* big, read-at-a-distance */
+html[data-screen="tv"]       { --ui-scale: 1.8; --row-h: 92px; --lib-w: 580px; --queue-w: 420px; }  /* big, read-at-a-distance (tall enough for the 1.8× two-line rows; wider columns so titles fit) */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -54,8 +56,8 @@ body {
 .toggles .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
 
 /* Collapsible panels (topbar toggles) */
-body.lib-collapsed .layout { grid-template-columns: 0 1fr 320px; }
-body.queue-collapsed .layout { grid-template-columns: 340px 1fr 0; }
+body.lib-collapsed .layout { grid-template-columns: 0 1fr var(--queue-w); }
+body.queue-collapsed .layout { grid-template-columns: var(--lib-w) 1fr 0; }
 body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
 body.lib-collapsed .library { display: none; }
 body.queue-collapsed .queue { display: none; }
@@ -64,7 +66,7 @@ body.pb-collapsed .playbar { display: none; }
 
 /* Layout */
 .layout {
-  flex: 1; display: grid; grid-template-columns: 340px 1fr 320px;
+  flex: 1; display: grid; grid-template-columns: var(--lib-w) 1fr var(--queue-w);
   gap: 1px; background: var(--line); min-height: 0;
 }
 .library, .stage, .queue { background: var(--bg); min-height: 0; display: flex; flex-direction: column; }
@@ -74,7 +76,7 @@ body.pb-collapsed .playbar { display: none; }
 .stage   { grid-column: 2; }
 .queue   { grid-column: 3; }
 .stage { padding: 22px 26px; align-items: stretch; position: relative; overflow: hidden; }
-.queue { padding: 16px; }
+.queue { padding: calc(16px * var(--ui-scale)); }
 
 /* Phone-remote QR panel — hidden unless remote.enabled (JS adds .show). */
 .remote-qr { display: none; }
@@ -153,22 +155,24 @@ body.youtube-mode .lyrics-wrap { display: none; }
 body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
 
 /* Library */
-.search-row { display: flex; gap: 8px; padding: 12px; align-items: center; }
+/* Search row + pills scale with the display-size profile (--ui-scale), like the song rows. */
+.search-row { display: flex; gap: calc(8px * var(--ui-scale)); padding: calc(12px * var(--ui-scale)); align-items: center; }
 .search-box { position: relative; flex: 1; display: flex; }
 #search {
-  flex: 1; padding: 10px 30px 10px 12px; border-radius: 10px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: 14px; outline: none;
+  flex: 1; padding: calc(10px * var(--ui-scale)) calc(30px * var(--ui-scale)) calc(10px * var(--ui-scale)) calc(12px * var(--ui-scale));
+  border-radius: calc(10px * var(--ui-scale)); border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: calc(14px * var(--ui-scale)); outline: none;
 }
 #search:focus { border-color: var(--accent); }
 .search-clear {
-  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-  width: 20px; height: 20px; border: none; border-radius: 50%;
+  position: absolute; right: calc(6px * var(--ui-scale)); top: 50%; transform: translateY(-50%);
+  width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); border: none; border-radius: 50%;
   background: var(--panel-2); color: var(--muted); cursor: pointer;
-  font-size: 11px; line-height: 1; display: none; align-items: center; justify-content: center;
+  font-size: calc(11px * var(--ui-scale)); line-height: 1; display: none; align-items: center; justify-content: center;
 }
 .search-clear.show { display: inline-flex; }
 .search-clear:hover { color: var(--ink); background: var(--accent); }
-.pill { background: var(--panel-2); color: var(--muted); border-radius: 20px; padding: 4px 10px; font-size: 12px; }
+.pill { background: var(--panel-2); color: var(--muted); border-radius: calc(20px * var(--ui-scale)); padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale)); font-size: calc(12px * var(--ui-scale)); }
 .pill-btn { border: 1px solid var(--line); cursor: pointer; }
 .pill-btn:hover { color: var(--ink); border-color: var(--accent-2); }
 .pill-btn.active { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
@@ -180,7 +184,7 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
 }
 .set-text:focus { border-color: var(--accent); }
 /* icon-only pills (★ favorites · ⟲ recent): square, centered glyph */
-.pill-btn.icon { padding: 4px; width: 30px; height: 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 15px; line-height: 1; }
+.pill-btn.icon { padding: calc(4px * var(--ui-scale)); width: calc(30px * var(--ui-scale)); height: calc(28px * var(--ui-scale)); display: inline-flex; align-items: center; justify-content: center; font-size: calc(15px * var(--ui-scale)); line-height: 1; }
 
 .song-list, .queue-list { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; }
 .song-list { position: relative; }               /* virtualized: rows are absolute */
@@ -188,9 +192,16 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
    pseudo-element sized to the total list height (--vlist-h, set by library-ui.js). */
 #song-list::after { content: ""; display: block; height: var(--vlist-h, 0); }
 .song {
-  position: absolute; left: 8px; right: 8px; height: var(--row-h); /* library-ui reads --row-h too */
-  display: grid; grid-template-columns: 30px 1fr auto auto; align-items: center; gap: 8px;
-  padding: 6px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+  /* Rows are abs-positioned against the ul's PADDING box (the ul's own 8px padding doesn't inset
+     them), so use 16px here to keep the intended gutter and clear the scrollbar on the right. */
+  position: absolute; left: 16px; right: 16px; height: var(--row-h); /* library-ui reads --row-h too */
+  /* Chrome scales with the display-size profile (--ui-scale) so the highlight box, gaps, icon column
+     and controls stay proportional to the scaled text — otherwise big TV text crams a tiny box. */
+  display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto auto;
+  align-items: center; gap: calc(8px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
+  border-radius: calc(10px * var(--ui-scale)); cursor: pointer;
+  border: max(1px, calc(1px * var(--ui-scale))) solid transparent;
 }
 .song.playing { border-color: var(--accent); background: rgba(255, 61, 129, .10); }
 .song:hover { background: var(--panel); }
@@ -200,8 +211,9 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
 .song .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.add {
-  background: var(--panel-2); border: none; color: var(--ink); width: 26px; height: 26px;
-  border-radius: 8px; cursor: pointer; font-size: 14px; line-height: 1;
+  background: var(--panel-2); border: none; color: var(--ink);
+  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
+  border-radius: calc(8px * var(--ui-scale)); cursor: pointer; font-size: calc(14px * var(--ui-scale)); line-height: 1;
 }
 button.add:hover { background: var(--accent); }
 
@@ -209,8 +221,9 @@ button.add:hover { background: var(--accent); }
    when starred; the star stays legible on hover without shouting like ＋. */
 button.fav {
   background: none; border: none; cursor: pointer; padding: 0;
-  width: 26px; height: 26px; border-radius: 8px; line-height: 1;
-  font-size: 16px; color: var(--muted); transition: color .12s, transform .08s;
+  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
+  border-radius: calc(8px * var(--ui-scale)); line-height: 1;
+  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color .12s, transform .08s;
 }
 button.fav:hover { color: #ffd23f; }
 button.fav:active { transform: scale(.85); }
@@ -404,11 +417,11 @@ body.midi-mode .midi-mixer { display: grid; }
 input[type=range] { width: 160px; accent-color: var(--accent); }
 
 /* Queue */
-.queue h3 { margin: 4px 6px 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+.queue h3 { margin: 4px 6px 12px; font-size: calc(14px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; }
 .muted { color: var(--muted); font-weight: 400; }
-/* Queue rows mirror the search-list .song layout (icon · title/artist · remove). */
-.queue-list li { display: grid; grid-template-columns: 30px 1fr auto; align-items: center; gap: 8px;
-  padding: 6px 10px; border-radius: 10px; background: var(--panel); margin-bottom: 6px; border: 1px solid transparent; }
+/* Queue rows mirror the search-list .song layout (icon · title/artist · remove) and scale the same way. */
+.queue-list li { display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto; align-items: center; gap: calc(8px * var(--ui-scale));
+  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale)); border-radius: calc(10px * var(--ui-scale)); background: var(--panel); margin-bottom: calc(6px * var(--ui-scale)); border: 1px solid transparent; }
 .queue-list li:hover { border-color: var(--line); }
 .qsong .kind { font-size: calc(18px * var(--ui-scale)); }
 .qsong .meta { display: flex; flex-direction: column; min-width: 0; }
@@ -418,6 +431,7 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .queue-list .code { color: var(--accent-2); font-weight: 700; }
 .queue-list .qt { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+.queue .hint { font-size: calc(12px * var(--ui-scale)); } /* queue hint scales with the profile */
 
 /* Overlay */
 .overlay { position: fixed; inset: 0; background: rgba(6,8,14,.82); display: flex; align-items: center; justify-content: center; z-index: 50; }

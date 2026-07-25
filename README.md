@@ -198,15 +198,17 @@ compilation of your own library, not something the repo distributes.
 - **Search** by number, title, or artist in the top-left box. **Enter** plays the top hit.
 - **Click** a song to select it, **double-click** to play now, **＋** to add to the **queue**.
 - **★** stars a song; the **★ Favorites** and **⟲ Recent** pills toggle those filtered views.
-- The **🌐** pill in the search row turns on **YouTube search** (see below; off by default).
+- The **🌐** pill in the search row toggles **YouTube search** (see below; **on by default** — it still only queries when your local results are thin).
 - The queue auto-advances between songs (MIDI, video, and YouTube alike). Remove queued items with **✕**.
 
 ### Playback controls (bottom strip)
-- **Play/Pause** (or **Space**) and **Next**.
-- **Seek bar** — click/drag to scrub.
+- **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (toggle the melody guide vocal on/off), and **🎤 Mic**.
+- **Seek bar** — click/drag to scrub (the current / total time flank it).
 - **Key ±** — transpose in semitones (the resulting key is named next to it).
-- **Tempo** — 0.5×–1.5× playback rate.
+- **Tempo ±** — 0.5×–1.5× playback rate (a −/＋ stepper, like Key).
 - **Volume** — up to 200%.
+
+The controls spread evenly across the strip and reflow (stack) on narrow screens.
 
 ### Lyrics
 A smooth-scrolling column glides upward as lines finish (no jump-cuts); the active line is
@@ -223,17 +225,18 @@ counts as secure, so no HTTPS needed). Once live, your voice mixes with the musi
   High-pass filter, and a Noise gate. **The definitive anti-feedback fix is headphones.**
 
 ### 🎯 Pitch guide
-⚙ → **Pitch guide → Show pitch guide**: a scrolling piano-roll of the melody to sing (read
-from the MIDI's guide track). With the mic on it overlays your **live pitch**, a fading
-**trail** of where you've been, and a running **score**.
+⚙ → **Pitch guide → Show pitch guide** (on by default): a scrolling piano-roll of the melody to
+sing (read from the MIDI's guide track). With the mic on it overlays your **live pitch**, a fading
+**trail** of where you've been, and an optional running **score** (scoring is off by default).
 
 ### 🎼 Guide vocal
 Turn the detected **melody channel** up to learn a song, **mute** it to perform, or **solo**
-it to isolate the tune (⚙ → Pitch guide → guide vocal).
+it to isolate the tune (⚙ → Pitch guide → guide vocal). The **🎵** button in the transport — and
+the **Melody** toggle on the phone remote — is a quick mute/unmute for it.
 
 ### 🎸 Chords (guitar follow-along)
-⚙ → **Chords → Show chords**: a chord lane above the lyrics scrolls to anchor the current
-chord, so guitarists can strum along. These KAR files carry no chord symbols — they're
+⚙ → **Chords → Show chords** (off by default): a chord lane above the lyrics scrolls to anchor the
+current chord, so guitarists can strum along. These KAR files carry no chord symbols — they're
 **auto-detected from the notes** on load. The **Key ±** transpose **relabels the chords live**
 (in sharps), and a **Simplify** toggle collapses jazzy 7ths/sus to the bare triad a strummer
 plays (and fixes thirdless power chords to the key's triad). **MIDI-only** — hidden for video
@@ -254,10 +257,10 @@ seeking, queue, tempo, volume, and the mic all work. Because a karaoke video has
 so you can line the sound up to the on-screen words.
 
 ### 🌐 YouTube karaoke (BYOC)
-Off by default (the app is offline-first). Flip the **🌐** pill in the search row (or ⚙ →
-**YouTube search**) to turn it on. Then, **only when your local library comes up short**, a
-search also queries YouTube — appending a "karaoke" keyword — and the hits append to the list
-marked **🌐**. Selecting one plays the **official YouTube embed** full-stage, with working
+**On by default**, but the app stays offline-first in practice — it queries YouTube **only when your
+local library comes up short**. Toggle it with the **🌐** pill in the search row (or ⚙ →
+**YouTube search**). Such a search appends a "karaoke" keyword to the query, and the hits append to
+the list marked **🌐**. Selecting one plays the **official YouTube embed** full-stage, with working
 transport / seek / queue / tempo / volume and the mic; YouTube songs are favoritable and show
 up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` pointer.
 **Chromium-only** (it needs a `credentialless` iframe; the pill is dimmed elsewhere) and it
@@ -267,8 +270,9 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 Turn on **⚙ → Sources → Remote** and a **QR code + room code** appear on the queue panel. Guests
 scan the QR with their phones (same network) to open **`/remote`**. Scanning auto-connects; anyone
 typing the URL by hand enters the **room code** shown on screen. Four tabs:
-- **Now** — the current song with play/pause, next, seek, **key / tempo / volume**, and a **guide
-  vocal** On/Muted toggle so a singer can silence the melody guide from their phone.
+- **Now** — the current song with play/pause, next, seek, **key / tempo / volume** (tempo is a −/＋
+  stepper), and a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from their phone
+  (mirrors the host's 🎵 button).
 - **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
 - **Queue** — the live queue with an "added by" name, plus remove / reorder.
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size, and
@@ -284,8 +288,8 @@ code is a **friction gate for a trusted network, not real security** — anyone 
 code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 
 ### 🌄 Background video, title card, Bluetooth mode
-- **Background video** (⚙ → Background video): drop clips in `data/bgv/` (restart to
-  detect) or list them in `config.js`. No clips → animated gradient.
+- **Background video** (⚙ → Background video, **off by default**): drop clips in `data/bgv/`
+  (restart to detect) or list them in `config.js`. No clips → animated gradient.
 - **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
   lyrics when a song starts, then fades in the words (⚙ → duration 0–10 s; 0 = off).
 - **Bluetooth mode** (⚙) — BT speakers lag ~260 ms, so this delays the visuals to match and
