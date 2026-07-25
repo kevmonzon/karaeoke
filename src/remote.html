@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en" data-theme="dark" data-text="m">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0d14" />
+  <title>Ka-Rae-oke Remote</title>
+  <link rel="stylesheet" href="./css/remote.css" />
+</head>
+<body>
+  <header class="rhead">
+    <div class="rbrand">📱 Ka-<span>Rae</span>-oke</div>
+    <div id="conn" class="conn"><span class="dot"></span><span id="conn-label">connecting…</span></div>
+  </header>
+
+  <main class="rmain">
+    <!-- Tab 1: Now Playing -->
+    <section id="tab-now" class="panel active">
+      <div class="now-card">
+        <div id="now-kind" class="now-kind">🎤</div>
+        <div id="now-title" class="now-title">Nothing playing</div>
+        <div id="now-artist" class="now-artist"></div>
+        <div class="seek">
+          <input id="now-seek" type="range" min="0" max="1000" value="0" aria-label="Seek" />
+          <div class="seek-times"><span id="now-cur">0:00</span><span id="now-dur">0:00</span></div>
+        </div>
+        <div class="now-controls">
+          <button id="now-playpause" class="ctl primary" aria-label="Play/pause">▶</button>
+          <button id="now-next" class="ctl" aria-label="Next">⏭</button>
+        </div>
+        <label class="vol">🔊<input id="now-vol" type="range" min="0" max="200" value="90" aria-label="Volume" /></label>
+      </div>
+    </section>
+
+    <!-- Tab 2: Search -->
+    <section id="tab-search" class="panel">
+      <div class="search-bar">
+        <input id="r-search" type="search" inputmode="search" autocomplete="off"
+               placeholder="Search songs · number · artist" aria-label="Search" />
+        <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
+      </div>
+      <ul id="r-results" class="song-list"></ul>
+      <p id="r-search-hint" class="empty">Type to search the songbook.</p>
+    </section>
+
+    <!-- Tab 3: Queue -->
+    <section id="tab-queue" class="panel">
+      <div id="q-now" class="q-now"></div>
+      <ul id="r-queue" class="queue-list"></ul>
+      <p id="q-empty" class="empty">Queue is empty — add songs from Search.</p>
+    </section>
+
+    <!-- Tab 4: Settings / You -->
+    <section id="tab-settings" class="panel">
+      <div class="set-group">
+        <h3>You</h3>
+        <label class="frow"><span>Nickname</span>
+          <input id="s-nick" type="text" maxlength="24" placeholder="Guest" /></label>
+        <div class="hint">Shown on the songs you add to the queue.</div>
+      </div>
+
+      <div class="set-group">
+        <h3>Room controls <em class="muted">(affects everyone)</em></h3>
+        <label class="frow"><span>Lyric offset <em id="s-offset-val">0 ms</em></span>
+          <input id="s-offset" type="range" min="-1000" max="1000" step="50" value="0" /></label>
+        <div class="frow"><span>Key <em id="s-key-val">0</em></span>
+          <span class="stepper"><button id="s-key-down" aria-label="Key down">–</button>
+          <button id="s-key-up" aria-label="Key up">+</button></span></div>
+        <label class="frow"><span>Tempo <em id="s-tempo-val">1.00×</em></span>
+          <input id="s-tempo" type="range" min="0.5" max="1.5" step="0.01" value="1" /></label>
+        <label class="frow"><span>Volume <em id="s-vol-val">90%</em></span>
+          <input id="s-vol" type="range" min="0" max="200" step="1" value="90" /></label>
+        <label class="frow toggle"><span>Microphone</span><input id="s-mic" type="checkbox" /></label>
+        <label class="frow toggle"><span>Background video</span><input id="s-bgv" type="checkbox" /></label>
+      </div>
+
+      <div class="set-group">
+        <h3>This device</h3>
+        <label class="frow"><span>Theme</span>
+          <select id="s-theme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+        <label class="frow"><span>Text size</span>
+          <select id="s-text"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
+      </div>
+
+      <div class="set-group">
+        <h3>Connection</h3>
+        <div class="hint">Host: <span id="s-origin">—</span></div>
+        <div class="hint">Status: <span id="s-status">—</span></div>
+        <button id="s-reconnect" class="btn">Reconnect</button>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar">
+    <button data-tab="now" class="tab active"><span class="ti">▶</span><span>Now</span></button>
+    <button data-tab="search" class="tab"><span class="ti">🔎</span><span>Search</span></button>
+    <button data-tab="queue" class="tab"><span class="ti">≣</span><span>Queue</span></button>
+    <button data-tab="settings" class="tab"><span class="ti">⚙</span><span>You</span></button>
+  </nav>
+
+  <script type="module" src="./js/remote.js"></script>
+</body>
+</html>

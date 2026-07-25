@@ -24,6 +24,7 @@ import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melod
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
+import { createRemoteHost, pickRemoteBaseUrl } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
@@ -35,8 +36,11 @@ const audio = new AudioEngine();
 let lyrics, bgv, mic, pitchGuide, video, youtube, chordEngine; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
+let remoteHost;                  // host↔phone relay driver (created at boot)
+
 // --- mutable player state ---------------------------------------------------
 let queue = [];
+let queueBy = [];                // parallel to `queue`: who queued each song (phone nickname, or "")
 let current = null;
 let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
@@ -79,12 +83,14 @@ async function boot() {
   });
   settingsUI = createSettingsUI({ settings, mic, onRebuild });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
+  remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
 
   applyVisualSettings();
   applyGuideSettings();
   applyChordSettings();
   applyMidiMode();
+  applyRemoteMode();
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
@@ -176,6 +182,7 @@ function onSettingChanged(path) {
     if (path === "youtube.enabled" && !recentMode && !favoritesMode) runSearch($("search").value);
   }
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
+  if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
   if (path === "*") settingsUI.syncSettingsUI();
 }
@@ -293,21 +300,38 @@ function pcDist(a, b) {
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
-function enqueue(song) {
+// `queueBy` runs parallel to `queue` — index i holds who queued queue[i] (a phone
+// nickname, or "" for a host-added song). Every queue mutation keeps them in lockstep.
+function enqueue(song, by = "") {
   queue.push(song);
-  lib.renderQueue(queue);
+  queueBy.push(by);
+  lib.renderQueue(queue, queueBy);
   saveSession();
+  if (remoteHost) remoteHost.push();
   if (!current) advanceQueue();
 }
 function removeFromQueue(i) {
   queue.splice(i, 1);
-  lib.renderQueue(queue);
+  queueBy.splice(i, 1);
+  lib.renderQueue(queue, queueBy);
   saveSession();
+  if (remoteHost) remoteHost.push();
+}
+// Move a queued song from one position to another (used by the phone remote's reorder).
+function reorderQueue(from, to) {
+  if (from < 0 || from >= queue.length || to < 0 || to >= queue.length || from === to) return;
+  const [s] = queue.splice(from, 1); queue.splice(to, 0, s);
+  const [b] = queueBy.splice(from, 1); queueBy.splice(to, 0, b);
+  lib.renderQueue(queue, queueBy);
+  saveSession();
+  if (remoteHost) remoteHost.push();
 }
 function advanceQueue() {
   const next = queue.shift();
-  lib.renderQueue(queue);
+  queueBy.shift();           // keep the attribution array in lockstep with the queue
+  lib.renderQueue(queue, queueBy);
   saveSession();
+  if (remoteHost) remoteHost.push();
   if (next) playNow(next);
   else {
     media.stop();            // nothing more queued → halt the active engine
@@ -315,6 +339,158 @@ function advanceQueue() {
     clearStage();            // blank the lyrics + reset the seek bar/time once playback ends
     setPlayIcon();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Remote control (phones) — host side. The host stays the authoritative player;
+// remote-host.js POSTs remoteSnapshot() to serve.py and hands back guest COMMANDS
+// which applyRemoteCommand() applies through the SAME functions the local UI uses.
+// See src/remote.html / src/js/remote.js (the phone) and §5.x in CLAUDE.md.
+// ---------------------------------------------------------------------------
+// The host-settings subset mirrored to phones AND the allowlist a guest may change.
+// A guest `setting` command with any other path is ignored — never settings.set() an
+// arbitrary path off the network.
+const REMOTE_SETTABLE = new Set([
+  "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume", "mic.enabled", "bgv.enabled",
+]);
+
+// Render/refresh (or hide) the QR + URL on the queue panel. The base URL is auto-detected
+// (settings override → the host page's own non-loopback origin → the server's LAN IP) and
+// "/remote" is appended. Degrades quietly if the QR lib 404'd (feature is opt-in anyway).
+let remoteLanUrl = null; // server-detected LAN base (fetched once, cached)
+async function refreshRemoteQr(on) {
+  const box = $("remote-qr");
+  if (!box) return;
+  if (!on) { box.classList.remove("show"); return; }
+  if (remoteLanUrl == null) {
+    try {
+      const d = await (await fetch("/api/remote/info")).json();
+      remoteLanUrl = (d && d.lanUrl) || "";
+    } catch (_) { remoteLanUrl = ""; }
+  }
+  const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, remoteLanUrl);
+  const url = base ? `${base}/remote` : "";
+  const link = $("remote-qr-url");
+  if (link) { link.textContent = url || "(no reachable URL)"; link.href = url || "#"; }
+  renderQr($("remote-qr-code"), url);
+  box.classList.add("show");
+}
+
+// Draw a QR into `el` using the vendored qrcode-generator (window.qrcode). No-op if the
+// lib is missing or the URL is empty.
+function renderQr(el, text) {
+  if (!el) return;
+  el.innerHTML = "";
+  const qrcode = window.qrcode;
+  if (!text || typeof qrcode !== "function") return;
+  try {
+    const qr = qrcode(0, "M");        // type 0 = auto-fit the data, error-correction level M
+    qr.addData(text);
+    qr.make();
+    el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+  } catch (e) { console.error("QR render failed:", e); }
+}
+
+function applyRemoteMode() {
+  const on = !!settings.get("remote.enabled");
+  document.body.classList.toggle("remote-on", on);
+  if (!remoteHost) return;
+  if (on) remoteHost.start(); else remoteHost.stop();
+  refreshRemoteQr(on); // render/refresh (or hide) the QR on the queue panel — see Stage 3
+}
+
+// Snapshot the host state for the phones: now-playing, the queue (with attribution),
+// and the mirrored settings subset. remote-host.js adds the ackSeq before POSTing.
+function remoteSnapshot() {
+  const now = current ? {
+    id: current.id,
+    name: current.name || "",
+    artist: current.artistName || "",
+    kind: current.kind,
+    code: current.code || "",
+    position: (media && media.currentTime) || 0,
+    duration: (media && media.duration) || 0,
+    paused: media ? media.paused : true,
+  } : null;
+  const q = queue.map((s, i) => ({
+    id: s.id, name: s.name || "", artist: s.artistName || "",
+    kind: s.kind, code: s.code || "", by: queueBy[i] || "",
+  }));
+  const settingsSub = {};
+  for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
+  return { now, queue: q, settings: settingsSub };
+}
+
+// Resolve a song a phone asked to enqueue. Library songs resolve by id; a YouTube
+// result (not in the local catalog) is reconstructed from the command metadata and
+// registered so it resolves everywhere else (favorites/recent/queue) like a local one.
+function remoteResolveSong(c) {
+  const hit = catalog.getById(c.id);
+  if (hit) return hit;
+  if (c.kind === "youtube" && c.videoId) {
+    return registerYoutube(Catalog.makeYoutubeRecord({
+      videoId: c.videoId, title: c.name, channelTitle: c.artist,
+    }));
+  }
+  return null;
+}
+
+// Apply one guest command (already validated server-side to a known type).
+function applyRemoteCommand(cmd) {
+  switch (cmd.type) {
+    case "enqueue": {
+      const song = remoteResolveSong(cmd);
+      if (song) enqueue(song, String(cmd.by || "").slice(0, 24));
+      break;
+    }
+    case "remove":
+      if (Number.isInteger(cmd.index)) removeFromQueue(cmd.index);
+      break;
+    case "reorder":
+      if (Number.isInteger(cmd.from) && Number.isInteger(cmd.to)) reorderQueue(cmd.from, cmd.to);
+      break;
+    case "play":  remotePlay();  break;
+    case "pause": remotePause(); break;
+    case "next":  advanceQueue(); break;
+    case "seek":
+      if (current && media.duration > 0 && typeof cmd.position === "number")
+        media.seek(Math.max(0, Math.min(media.duration, cmd.position)));
+      break;
+    case "volume":
+      if (typeof cmd.value === "number") setRemoteVolume(cmd.value);
+      break;
+    case "setting":
+      if (typeof cmd.path === "string" && REMOTE_SETTABLE.has(cmd.path)) {
+        settings.set(cmd.path, cmd.value);   // → onSettingChanged fans it out
+        settingsUI.syncSettingsUI();          // refresh the ⚙ panel controls
+        syncTransportLabels();                // …and the bottom key/tempo/volume labels
+      }
+      break;
+  }
+}
+
+async function remotePlay() {
+  if (!current) { if (queue.length) advanceQueue(); return; }
+  if (media === audio && !(await ensureEngine())) return;
+  if (media.paused) media.play();
+  userPaused = false;
+  setPlayIcon();
+}
+function remotePause() {
+  if (current && !media.paused) { media.pause(); userPaused = true; setPlayIcon(); }
+}
+function setRemoteVolume(v) {
+  v = Math.max(0, Math.min(2, v));        // the volume slider goes to 200% (see Bluetooth mode)
+  settings.set("audio.volume", v);         // → applyAudioSettings
+  const el = $("volume"); if (el) el.value = v;
+}
+// Keep the bottom transport labels/sliders in step when a phone changes key/tempo/volume.
+function syncTransportLabels() {
+  const t = $("tempo"), tv = $("tempo-val"), v = $("volume"), kv = $("key-val");
+  if (t) t.value = settings.get("audio.tempo");
+  if (tv) tv.textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
+  if (v) v.value = settings.get("audio.volume");
+  if (kv) kv.textContent = fmtKey(settings.get("audio.key"));
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +518,7 @@ function loadSession() {
   recent = (Array.isArray(data.recent) ? data.recent : [])
     .map(resolveSong).filter(Boolean).map((s) => s.id);
   const q = (data.queue || []).map(resolveSong).filter(Boolean);
-  if (q.length) { queue = q; lib.renderQueue(queue); }
+  if (q.length) { queue = q; queueBy = q.map(() => ""); lib.renderQueue(queue, queueBy); }
 }
 function pushRecent(song) {
   recent = [song.id, ...recent.filter((id) => id !== song.id)].slice(0, 40);

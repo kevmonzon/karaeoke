@@ -49,6 +49,7 @@ your local library plays offline after first-run setup.
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
 | 🌄 | **Background video** layer behind the lyrics (or an animated gradient) |
 | 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
+| 📱 | **Phone remote** — show a QR on the queue; guests scan it to queue, search & control playback from their phones |
 | 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
 
 > **About:** *Ka-Rae-oke* is an independent, client-side karaoke player, reconstructed for
@@ -85,7 +86,7 @@ python tools/serve.py
 
 On the **first** run it automatically (only downloading what's missing):
 
-- ⬇️ vendors the **SpessaSynth engine** + `pako` into `src/vendor/`
+- ⬇️ vendors the **SpessaSynth engine** + `pako` + the **QR encoder** into `src/vendor/`
   *(these are already committed; this is just a fallback)*
 - ⬇️ fetches a free **General MIDI SoundFont** (GeneralUser GS, ~31 MB) → `data/soundfont.sf2`
 - 🗂️ builds **`catalog.json`** from whatever songs are in `data/kar_raw/`
@@ -262,6 +263,19 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 **Chromium-only** (it needs a `credentialless` iframe; the pill is dimmed elsewhere) and it
 **needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
 
+### 📱 Remote control (phones)
+Turn on **⚙ → Sources → Remote** and a **QR code** appears on the queue panel. Guests scan it
+with their phones (same network) to open a mobile page at **`/remote`** with four tabs:
+- **Now** — the current song with play/pause, next, seek, and volume.
+- **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
+- **Queue** — the live queue with an "added by" name, plus remove / reorder.
+- **You** — your nickname (shown on songs you add), a few room controls (offset / key / tempo /
+  volume / mic / background video), device theme & text size, and connection status.
+
+The host stays the real player — phones send requests that the host applies, so the whole room
+can build the queue together. **Off by default.** ⚠️ It's a **free-for-all**: anyone who can
+reach the URL can control playback, so keep it to a trusted network (see [§9](#9-serving-to-phonestvs-on-your-network)).
+
 ### 🌄 Background video, title card, Bluetooth mode
 - **Background video** (⚙ → Background video): drop clips in `data/bgv/` (restart to
   detect) or list them in `config.js`. No clips → animated gradient.
@@ -298,6 +312,7 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | **MIDI mode** | enable the per-channel mixer band (volume/mute/solo/VU) |
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
+| **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
 | **Title card** | seconds shown (0 = off) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |
@@ -332,6 +347,20 @@ Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi.
 > localhost for mic access) — playback, lyrics, and the pitch guide still work. On Windows,
 > allow Python through the firewall on **Private** networks.
 
+### 📱 Phone remote control
+
+Once you're serving on the LAN, turn on **⚙ → Sources → Remote** on the host. A **QR code**
+appears on the queue panel — guests scan it to open **`http://<your-LAN-IP>:8080/remote`** and
+queue / search / control from their phones (any modern mobile browser; see the walkthrough in
+[§6](#6-using-the-app--full-walkthrough)). The URL is **auto-detected** (the host's LAN IP, or
+the public origin if you serve it behind a tunnel like cloudflared); set a manual **URL override**
+in ⚙ if you need to.
+
+> ⚠️ The remote is **free-for-all with no password** — anyone who can open the URL can control
+> playback and edit the queue. Keep it on a **trusted network**. Behind a public tunnel, the link
+> is effectively an open remote. It's **off by default** and only relays while the host tab stays
+> the foreground display.
+
 ---
 
 ## 10. Project structure
@@ -359,11 +388,13 @@ karaoke-clone/
 │
 └── src/                      ← the app — served at the site root /
     ├── index.html            ← shell + import map + settings panel
+    ├── remote.html           ← phone remote-control page (served at /remote)
     ├── config.js             ← DEFAULT_CONFIG (editable defaults)
-    ├── css/style.css
+    ├── css/style.css · css/remote.css
     ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
-    ├── js/                   ← app modules (app, catalog, audio, video, youtube, lyrics, mic, melody, asset-cache, …)
-    └── vendor/               ← SpessaSynth engine + pako (committed)
+    ├── js/                   ← app modules (app, catalog, audio, video, youtube, lyrics, mic, melody,
+    │                            remote-host, remote [phone], asset-cache, …)
+    └── vendor/               ← SpessaSynth engine + pako + qrcode (committed)
 ```
 
 > **The app (`src/` + `tools/`) is immutable; everything you supply lives in `data/`.** That
@@ -388,6 +419,8 @@ karaoke-clone/
 | **Mic won't enable** | It needs a click (browser gesture) + a secure context. Use `http://localhost` / `127.0.0.1` (not a LAN IP). Grant the browser permission when prompted. |
 | **Feedback/howling on speakers** | Use **headphones**. Otherwise keep Echo-cancellation + Noise-gate on and lower mic volume. |
 | **Port 8080 in use** | `python tools/serve.py --port 9000`. |
+| **Phone remote won't connect** | Enable ⚙ → Remote on the host, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
+| **QR code doesn't render** | The QR needs `src/vendor/qrcode.min.js` — re-run `python tools/serve.py` once to fetch it. The URL text is always shown even without the image. |
 | **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `data/soundfont.sf2`. |
 | **Run the tests** | `npm test` (or `node --test`) — covers the pure functions. Needs Node.js. |
 
@@ -412,8 +445,10 @@ catalog.json + catalog-video.json ──► one merged, searchable list
 Local **MIDI/video** playback is **same-origin and works offline** after setup; the optional
 **YouTube search** is the one online, cross-origin feature. The server (`tools/serve.py`) sends
 the cross-origin-isolation headers the synth needs, serves HTTP Range requests so video seeking
-works, and exposes a few endpoints — `POST /api/rebuild-catalog` (⚙ rebuild button) plus
-`/api/youtube-search` and `/api/youtube-block` (the keyless YouTube search). For deeper detail,
+works, and exposes a few endpoints — `POST /api/rebuild-catalog` (⚙ rebuild button),
+`/api/youtube-search` + `/api/youtube-block` (the keyless YouTube search), and the **phone-remote
+relay** (`/api/remote/*`): an in-memory, ephemeral channel where the host posts its state and drains
+the commands guests send from `/remote` (the host stays the authoritative player). For deeper detail,
 the module reference and gotchas are documented inline in the `src/js/` source.
 
 ---
@@ -429,6 +464,7 @@ in `src/vendor/`, summarized in `src/vendor/NOTICE`):
 
 - **SpessaSynth** (**Apache-2.0**) — SoundFont synthesis — <https://github.com/spessasus/SpessaSynth>
 - **pako** (MIT) — zlib/deflate inflate — <https://github.com/nodeca/pako>
+- **qrcode-generator** (MIT) by Kazuhiko Arase — the phone-remote QR code — <https://github.com/kazuhikoarase/qrcode-generator>
 - **GeneralUser GS** by S. Christian Collins — freely redistributable General MIDI SoundFont (fetched at first run, not bundled)
 - The original application's design belongs to its author; this project does not redistribute
   that app's code, catalog, or songs — it reconstructs interoperable behavior using

@@ -12,6 +12,11 @@
        them client-side before handing bytes to the synth. Exposes window.pako. -->
   <script src="./vendor/pako.min.js"></script>
 
+  <!-- QR generator (UMD, MIT) — renders the phone-remote QR on the queue panel. Fetched
+       by serve.py setup into ./vendor/ if missing. Exposes window.qrcode. Optional: the
+       remote is off by default and the app degrades gracefully if this 404s. -->
+  <script src="./vendor/qrcode.min.js"></script>
+
   <!-- SpessaSynth is vendored under ./vendor/. The lib imports the core via the
        bare specifier 'spessasynth_core', resolved by this import map. -->
   <script type="importmap">
@@ -134,6 +139,14 @@
     <!-- RIGHT: queue -->
     <aside class="queue">
       <h3>Queue <span id="queue-count" class="muted"></span></h3>
+      <!-- Phone-remote QR (shown only while remote.enabled; see app.js refreshRemoteQr). -->
+      <div id="remote-qr" class="remote-qr">
+        <div id="remote-qr-code" class="remote-qr-code" aria-label="Remote-control QR code"></div>
+        <div class="remote-qr-meta">
+          <div class="remote-qr-title">📱 Scan to control from your phone</div>
+          <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a>
+        </div>
+      </div>
       <ul id="queue-list" class="queue-list"></ul>
       <p class="hint">Double-click a song to play now · ＋ to queue · Space to play/pause</p>
     </aside>
@@ -348,6 +361,19 @@
           <input id="set-youtube-keyword" type="text" class="set-text" placeholder="karaoke" />
         </label>
         <div class="hint sub">Searches append YouTube results for <code>"&lt;your search&gt; <em>keyword</em>"</code> when the local library comes up short. Live metadata only; playback is the official YouTube embed.</div>
+      </section>
+
+      <section>
+        <h4>Remote <em class="muted">(phones)</em></h4>
+        <label class="row toggle">
+          <span>Enabled <em class="muted">(QR on the queue)</em></span>
+          <input id="set-remote" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>URL override</span>
+          <input id="set-remote-url" type="text" class="set-text" placeholder="auto-detect" />
+        </label>
+        <div class="hint sub">Shows a QR on the queue panel; phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
       </section>
 
       <section>

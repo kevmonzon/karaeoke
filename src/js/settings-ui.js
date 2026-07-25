@@ -80,6 +80,9 @@ const SETTINGS_SCHEMA = [
   { id: "set-youtube-debounce", path: "youtube.debounceMs", type: "range", fmt: (v) => `${(+v / 1000).toFixed(1)} s` },
   { id: "set-youtube-max", path: "youtube.maxResults", type: "range", fmt: (v) => `${v}` },
   { id: "set-youtube-keyword", path: "youtube.keyword", type: "text" },
+  // remote control (phones) — QR on the queue panel opens /remote
+  { id: "set-remote", path: "remote.enabled", type: "check" },
+  { id: "set-remote-url", path: "remote.baseUrl", type: "text" },
 ];
 
 // Synonyms so intuitive words find a control whose visible label doesn't contain
@@ -108,6 +111,8 @@ const SEARCH_KEYWORDS = {
   "set-mic-pitch": "shift transpose octave",
   "set-autotune": "pitch correction tune snap",
   "set-youtube": "online stream byoc",
+  "set-remote": "phone qr code queue guest party mobile control",
+  "set-remote-url": "phone qr url tunnel address host",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
 };

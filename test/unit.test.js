@@ -16,6 +16,7 @@ import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuff
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 import { matchesQuery } from "../src/js/settings-ui.js";
+import { pickRemoteBaseUrl } from "../src/js/remote-host.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -399,4 +400,28 @@ test("detectChords: still emits roots + now a key set / confidence", () => {
   assert.ok(r.keySet instanceof Set && r.keySet.size === 7); // a 7-note diatonic set
   assert.ok(r.keyConf > 0 && r.keyConf <= 1);
   assert.ok("powerless" in r.chords[0]); // flag present for the simplify path
+});
+
+// --- pickRemoteBaseUrl (phone-remote QR base URL) ---------------------------
+test("pickRemoteBaseUrl: explicit override wins and is trimmed", () => {
+  assert.equal(
+    pickRemoteBaseUrl("https://karaoke.example.com/", "http://127.0.0.1:8080", "http://192.168.1.5:8080"),
+    "https://karaoke.example.com");
+});
+test("pickRemoteBaseUrl: a non-loopback page origin is used (LAN IP / cloudflared)", () => {
+  assert.equal(pickRemoteBaseUrl("", "http://192.168.1.20:8080", "http://192.168.1.5:8080"),
+    "http://192.168.1.20:8080");
+  assert.equal(pickRemoteBaseUrl("", "https://abc.trycloudflare.com", "http://192.168.1.5:8080"),
+    "https://abc.trycloudflare.com");
+});
+test("pickRemoteBaseUrl: loopback page origin falls back to the server LAN URL", () => {
+  assert.equal(pickRemoteBaseUrl("", "http://127.0.0.1:8080", "http://192.168.1.5:8080"),
+    "http://192.168.1.5:8080");
+  assert.equal(pickRemoteBaseUrl("", "http://localhost:8080", "http://10.0.0.2:8080"),
+    "http://10.0.0.2:8080");
+  assert.equal(pickRemoteBaseUrl("  ", "http://[::1]:8080", "http://10.0.0.2:8080"),
+    "http://10.0.0.2:8080");
+});
+test("pickRemoteBaseUrl: loopback + no LAN URL yields empty string", () => {
+  assert.equal(pickRemoteBaseUrl("", "http://localhost:8080", ""), "");
 });

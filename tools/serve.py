@@ -36,9 +36,11 @@ import json
 import os
 import re
 import subprocess
+import socket
 import socketserver
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -86,6 +88,12 @@ SOUNDFONT_URL = (
     "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2"
 )
 SOUNDFONT_PATH = os.path.join(DATA_DIR, "soundfont.sf2")
+
+# --- QR encoder (qrcode-generator 1.4.4, MIT) — vendored; fallback-fetched if missing ---
+#     UMD (~57 KB) exposing window.qrcode; renders the phone-remote QR on the queue panel.
+#     Committed alongside the engine; this download only restores it if it's absent.
+QRCODE_URL = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"
+QRCODE_PATH = os.path.join(VENDOR, "qrcode.min.js")
 
 USER_AGENT = "karaeoke-offline-setup/1.0"
 
@@ -157,6 +165,17 @@ def setup() -> None:
         print("    The player needs these files to synthesize audio.")
     else:
         print("SpessaSynth engine: vendored ✓")
+
+    # 1b) QR encoder (fetched if missing — powers the opt-in phone-remote QR)
+    if os.path.exists(QRCODE_PATH) and os.path.getsize(QRCODE_PATH) > 1000:
+        print("QR encoder: vendored ✓")
+    else:
+        print("Fetching the QR encoder (qrcode-generator, MIT, ~57 KB):")
+        if _download(QRCODE_URL, QRCODE_PATH, "qrcode.min.js"):
+            print("    QR encoder ready ✓")
+        else:
+            print("    !! QR encoder unavailable — the phone-remote QR won't render "
+                  "(the remote is off by default, so nothing else is affected).")
 
     # 2) soundfont
     if _valid_soundfont(SOUNDFONT_PATH):
@@ -333,6 +352,80 @@ def _youtube_search(query: str, max_results: int = 20):
 
 
 # ---------------------------------------------------------------------------
+# Remote-control relay — in-memory, ephemeral, thread-safe.
+# ---------------------------------------------------------------------------
+# Lets phones on the network queue/search/control the player from /remote (see
+# src/remote.html + src/js/remote.js). The HOST browser stays the AUTHORITATIVE
+# player: it POSTs its snapshot to /api/remote/host and drains guest COMMANDS in
+# the same call; guests POST intents to /api/remote/command and read
+# /api/remote/state. Free-for-all — no auth (same self-hosted trust model as
+# /api/youtube-block). State is in-memory and resets on restart (a party session).
+_remote_lock = threading.Lock()
+_remote_state = {
+    "rev": 0,        # bumps on every host push; phones poll ?since=<rev> to skip no-ops
+    "ts": 0,         # host heartbeat (epoch secs) — the phone flags a stale/absent host
+    "now": None,     # {id,name,artist,kind,position,duration,paused} or None
+    "queue": [],     # [{id,name,artist,kind,by}]
+    "settings": {},  # mirrored host-settings subset (see REMOTE_SETTABLE on the host)
+}
+_remote_commands: list = []   # inbox: [{seq,type,…}] the host drains + acks
+_remote_cmd_seq = 0           # monotonic command id (host dedups/acks by seq)
+REMOTE_CMD_TYPES = frozenset((
+    "enqueue", "remove", "reorder", "play", "pause", "next", "seek", "volume", "setting",
+))
+REMOTE_CMD_MAX = 200          # bound the inbox so an absent host can't let it grow unbounded
+
+
+def _lan_ip() -> str:
+    """Best-effort primary LAN IPv4 of this host. The UDP 'connect' only selects a
+    route (no packets are sent). Falls back to 127.0.0.1 when offline."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def _remote_add_command(cmd) -> int:
+    """Validate + append a guest command. Returns its seq, or 0 if rejected."""
+    global _remote_cmd_seq
+    if not isinstance(cmd, dict) or cmd.get("type") not in REMOTE_CMD_TYPES:
+        return 0
+    with _remote_lock:
+        _remote_cmd_seq += 1
+        cmd["seq"] = _remote_cmd_seq
+        _remote_commands.append(cmd)
+        if len(_remote_commands) > REMOTE_CMD_MAX:   # keep the newest N (host-less safety)
+            del _remote_commands[:-REMOTE_CMD_MAX]
+        return _remote_cmd_seq
+
+
+def _remote_host_sync(snapshot) -> dict:
+    """Host pushes its snapshot (replacing the shared state) and drains commands.
+    `ackSeq` = the highest command seq the host has already applied; we drop those
+    and return everything newer (re-delivered until acked, so the host dedups by seq)."""
+    global _remote_state
+    try:
+        ack = int(snapshot.get("ackSeq") or 0)
+    except (TypeError, ValueError):
+        ack = 0
+    with _remote_lock:
+        # New object (never mutated in place) so a concurrent reader's snapshot stays valid.
+        _remote_state = {
+            "rev": _remote_state["rev"] + 1,
+            "ts": int(time.time()),
+            "now": snapshot.get("now"),
+            "queue": snapshot.get("queue") or [],
+            "settings": snapshot.get("settings") or {},
+        }
+        _remote_commands[:] = [c for c in _remote_commands if c["seq"] > ack]
+        return {"ok": True, "rev": _remote_state["rev"], "commands": list(_remote_commands)}
+
+
+# ---------------------------------------------------------------------------
 # HTTP server with cross-origin isolation + correct MIME types
 # ---------------------------------------------------------------------------
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -370,6 +463,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     timeout = 120
 
     def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        # Pretty route: /remote → the mobile control page (served from APP_DIR/src).
+        if path in ("/remote", "/remote/"):
+            self.path = "/remote.html"
+        # Remote-relay read endpoints (before static/range handling).
+        elif path.startswith("/api/remote/"):
+            return self._handle_remote_get(path)
         # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
         # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
         try:
@@ -380,6 +480,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Client/tunnel hung up mid-transfer (e.g. an aborted 32 MB soundfont) — not
             # our failure; drop the connection quietly instead of spewing a traceback.
             self.close_connection = True
+
+    def _handle_remote_get(self, path):
+        # GET /api/remote/info  → the phone-reachable base URL (LAN IP + port), so the
+        # host's QR works even when the host opened http://127.0.0.1.
+        if path == "/api/remote/info":
+            port = self.server.server_address[1]
+            self._send_json({"ok": True, "lanUrl": f"http://{_lan_ip()}:{port}", "port": port})
+            return
+        # GET /api/remote/state[?since=<rev>] → the shared snapshot (short-circuits to
+        # {unchanged:true} when the caller's rev is already current — cheap phone polls).
+        if path == "/api/remote/state":
+            since = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("since", [""])[0]
+            with _remote_lock:
+                rev = _remote_state["rev"]
+                snap = None if (since.isdigit() and int(since) == rev) else dict(_remote_state)
+            self._send_json({"ok": True, "rev": rev, "unchanged": True} if snap is None
+                            else {"ok": True, **snap})
+            return
+        self.send_error(404)
 
     def translate_path(self, path):
         # Route data URLs (songs, videos, bgv, catalogs, soundfont) to DATA_DIR; every
@@ -497,6 +616,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": True, "records": n, "videoRecords": vn})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
+            return
+        if path == "/api/remote/host":
+            # Host pushes its snapshot + drains guest commands. Body:
+            # {now, queue, settings, ackSeq} → {ok, rev, commands:[…]}.
+            try:
+                self._send_json(_remote_host_sync(json.loads(raw or b"{}")))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
+            return
+        if path == "/api/remote/command":
+            # A guest phone posts an intent. Body: {type, …, by} → {ok, seq}.
+            try:
+                seq = _remote_add_command(json.loads(raw or b"{}"))
+                self._send_json({"ok": bool(seq), "seq": seq})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
             return
         if path == "/api/youtube-search":
             # Keyless YouTube search proxy. Body: {"q": "<query>"} → {"ok", "items":[…]}.
