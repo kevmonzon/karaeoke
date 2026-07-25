@@ -134,6 +134,7 @@ async function poll() {
       state = null; renderNow(); renderQueue();
     } else if (d && d.ok && !d.unchanged) {
       state = d; lastRev = d.rev; stamp = performance.now();
+      reconcile(); // drop optimistic overrides the host has now caught up to
       renderNow(); renderQueue(); renderSettingsMirror();
     }
   } catch (_) { /* server unreachable — the status dot reflects it */ }
@@ -150,6 +151,52 @@ function cmd(obj) {
       body: JSON.stringify({ ...obj, by: prefs.nickname || "", room }),
     }).then(() => poll()).catch(() => {});
   } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
+// Optimistic overlay — "opportunistic update" for responsiveness
+// ---------------------------------------------------------------------------
+// A guest's action reaches the host through a ~1–2 s relay (host drains commands on its ~1 s tick,
+// then pushes state back). To keep the UI responsive we apply the user's intent LOCALLY at once and
+// HOLD it against the mirror for HOLD_MS: the render functions read the EFFECTIVE value (optimistic if
+// held, else the host mirror), so a poll returning the not-yet-applied host state can't clobber the
+// user mid-action. `reconcile()` clears an override the instant the mirror actually reflects it (seamless
+// handoff, no masking of the real value); anything not yet applied simply ages out after HOLD_MS (and a
+// dropped command quietly reverts then). Generalizes the seek slider's `seeking` flag.
+const HOLD_MS = 2500;
+const opt = {};                                        // key -> { v, t }
+const optActive = (k) => !!opt[k] && performance.now() - opt[k].t < HOLD_MS;
+const optGet = (k, fallback) => (optActive(k) ? opt[k].v : fallback);
+function optSet(k, v) { opt[k] = { v, t: performance.now() }; }
+
+// Effective (host-mirror with optimistic override) reads used by the renders.
+const setVal = (path, fallback) => optGet("set:" + path, (state && state.settings && state.settings[path]) ?? fallback);
+const effQueue = () => optGet("queue", (state && state.queue) || []);
+function effNow() {                                    // now-playing, with optimistic next / pause applied
+  const base = optActive("now") ? opt["now"].v : (state && state.now);
+  if (!base) return null;
+  return { ...base, paused: optGet("paused", base.paused) };
+}
+function effPos(now) {                                  // interpolated position (from the optimistic seek base if held)
+  const seek = optActive("position");
+  const base = seek ? opt["position"].v : now.position;
+  const from = seek ? opt["position"].t : stamp;
+  return now.paused ? base : base + (performance.now() - from) / 1000;
+}
+// After a fresh poll, drop any optimistic override the host has now caught up to (instant handoff).
+function reconcile() {
+  const s = (state && state.settings) || {}, now = state && state.now, q = (state && state.queue) || [];
+  for (const k of Object.keys(opt)) {
+    if (!optActive(k)) { delete opt[k]; continue; }
+    if (k === "position") continue;                    // rides the hold; interpolation stays continuous
+    if (k.startsWith("set:")) { if (s[k.slice(4)] === opt[k].v) delete opt[k]; }
+    else if (k === "paused") { if (now && now.paused === opt[k].v) delete opt[k]; }
+    else if (k === "now") { if (now && opt[k].v && now.id === opt[k].v.id) delete opt[k]; }
+    else if (k === "queue") {
+      const ids = (a) => a.map((x) => x.id).join("");
+      if (ids(q) === ids(opt[k].v)) delete opt[k];
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,19 +218,37 @@ function showTab(name) {
 // ---------------------------------------------------------------------------
 function wireNow() {
   $("now-playpause").onclick = () => {
-    const now = state && state.now;
-    if (now && !now.paused) cmd({ type: "pause" });
-    else cmd({ type: "play" });   // resumes, or (host-side) starts the queue if nothing is loaded
+    const now = effNow();
+    if (now) { optSet("paused", !now.paused); cmd({ type: now.paused ? "play" : "pause" }); renderNow(); }
+    else cmd({ type: "play" });   // nothing loaded → host starts the queue; poll will show it
   };
-  $("now-next").onclick = () => cmd({ type: "next" });
+  $("now-next").onclick = () => {
+    const q = effQueue();
+    if (q.length) {                                   // optimistically advance to the next queued song
+      const nx = q[0];
+      optSet("now", { id: nx.id, name: nx.name, artist: nx.artist, kind: nx.kind, by: nx.by || "", position: 0, duration: 0, paused: false });
+      optSet("position", 0);
+      optSet("queue", q.slice(1));
+      renderNow(); renderQueue();
+    }
+    cmd({ type: "next" });
+  };
   const seek = $("now-seek");
   seek.oninput = () => { seeking = true; };
   seek.onchange = () => {
     seeking = false;
-    const now = state && state.now;
-    if (now && now.duration > 0) cmd({ type: "seek", position: (seek.value / 1000) * now.duration });
+    const now = effNow();
+    if (now && now.duration > 0) {
+      const pos = (seek.value / 1000) * now.duration;
+      optSet("position", pos); uiTick();
+      cmd({ type: "seek", position: pos });
+    }
   };
-  $("now-vol").onchange = (e) => cmd({ type: "volume", value: +e.target.value / 100 });
+  $("now-vol").onchange = (e) => {
+    const v = +e.target.value / 100;
+    optSet("set:audio.volume", v); renderNow();
+    cmd({ type: "volume", value: v });
+  };
   $("now-key-down").onclick = () => stepKey(-1);
   $("now-key-up").onclick = () => stepKey(1);
   $("now-tempo-down").onclick = () => stepTempo(-0.05);
@@ -191,54 +256,40 @@ function wireNow() {
   // Melody (guide-vocal channel) — an On/Off toggle mirroring the host's 🎵 transport button.
   // MIDI-only host-side (a no-op on video/YouTube); shown always, like the Key control.
   $("now-melody-toggle").onclick = () => {
-    const muted = !!(state && state.settings && state.settings["guide.vocal.mute"]);
+    const muted = !!setVal("guide.vocal.mute", false);
+    optSet("set:guide.vocal.mute", !muted); renderNow();
     cmd({ type: "setting", path: "guide.vocal.mute", value: !muted });
   };
 }
 
-// Optimistic stepper state (key + tempo). On a polled remote the mirror lags ~1 s, so we HOLD the
-// locally-chosen value against mirror overwrites for HOLD_MS after a tap: rapid taps compound off the
-// held value, and a poll returning the not-yet-applied host value can't clobber the user mid-adjust.
-// After the hold expires the host has applied the change, so the mirror == held value and renderNow
-// takes over seamlessly. Same mechanism as the seek slider's `seeking` flag.
-const HOLD_MS = 2500;
-const held = { "audio.key": { v: null, t: 0 }, "audio.tempo": { v: null, t: 0 } };
-const holdActive = (p) => held[p].v != null && performance.now() - held[p].t < HOLD_MS;
-const holdBase = (p, fallback) => (holdActive(p) ? held[p].v : fallback);
-function holdSet(p, v) { held[p] = { v, t: performance.now() }; }
-
 function stepKey(delta) {
-  const cur = holdBase("audio.key", (state && state.settings && state.settings["audio.key"]) || 0);
-  const next = Math.max(-12, Math.min(12, cur + delta));
-  holdSet("audio.key", next);
+  const next = Math.max(-12, Math.min(12, setVal("audio.key", 0) + delta));
+  optSet("set:audio.key", next);
   $("now-key-val").textContent = fmtKey(next);
   cmd({ type: "setting", path: "audio.key", value: next });
 }
 
 function stepTempo(delta) {
-  const cur = holdBase("audio.tempo", (state && state.settings && state.settings["audio.tempo"]) ?? 1);
-  const next = Math.round(Math.max(0.5, Math.min(1.5, cur + delta)) * 100) / 100; // clamp + avoid fp drift
-  holdSet("audio.tempo", next);
+  const next = Math.round(Math.max(0.5, Math.min(1.5, setVal("audio.tempo", 1) + delta)) * 100) / 100; // clamp + avoid fp drift
+  optSet("set:audio.tempo", next);
   $("now-tempo-val").textContent = `${next.toFixed(2)}×`;
   cmd({ type: "setting", path: "audio.tempo", value: next });
 }
 
 function renderNow() {
-  const now = state && state.now;
+  const now = effNow();
   $("now-kind").textContent = now ? (KIND_ICON[now.kind] || "🎵") : "🎤";
   $("now-title").textContent = now ? (now.name || "(untitled)") : "Nothing playing";
   $("now-artist").textContent = now ? (now.artist || "") : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
-  // reflect the host's key/tempo/volume (unless the guest is dragging a control)
-  const s = (state && state.settings) || {};
-  const active = document.activeElement;
-  if (active !== $("now-vol")) $("now-vol").value = Math.round((s["audio.volume"] ?? 0.9) * 100);
-  $("now-vol-val").textContent = `${Math.round((s["audio.volume"] ?? 0.9) * 100)}%`;
-  // don't clobber a value the user just stepped (held for HOLD_MS after a tap)
-  if (!holdActive("audio.tempo")) $("now-tempo-val").textContent = `${(+(s["audio.tempo"] ?? 1)).toFixed(2)}×`;
-  if (!holdActive("audio.key")) $("now-key-val").textContent = fmtKey(s["audio.key"] ?? 0);
+  // reflect the effective key/tempo/volume (optimistic if the guest just changed it, else the host mirror)
+  const vol = Math.round(setVal("audio.volume", 0.9) * 100);
+  if (document.activeElement !== $("now-vol")) $("now-vol").value = vol;
+  $("now-vol-val").textContent = `${vol}%`;
+  $("now-tempo-val").textContent = `${(+setVal("audio.tempo", 1)).toFixed(2)}×`;
+  $("now-key-val").textContent = fmtKey(setVal("audio.key", 0));
   // melody (guide vocal): On/Off toggle
-  const melodyMuted = !!s["guide.vocal.mute"];
+  const melodyMuted = !!setVal("guide.vocal.mute", false);
   const mt = $("now-melody-toggle");
   mt.classList.toggle("off", melodyMuted);
   mt.textContent = melodyMuted ? "Off" : "On";
@@ -247,16 +298,14 @@ function renderNow() {
 
 // Smooth the seek bar/time between 1-Hz polls by extrapolating the position locally.
 function uiTick() {
-  const now = state && state.now;
+  const now = effNow();
   const seek = $("now-seek");
   if (!now || !(now.duration > 0)) {
     if (!seeking) seek.value = 0;
     $("now-cur").textContent = "0:00"; $("now-dur").textContent = "0:00";
     return;
   }
-  let pos = now.position;
-  if (!now.paused) pos += (performance.now() - stamp) / 1000;
-  pos = Math.max(0, Math.min(now.duration, pos));
+  const pos = Math.max(0, Math.min(now.duration, effPos(now)));
   if (!seeking) seek.value = Math.round((pos / now.duration) * 1000);
   $("now-cur").textContent = fmt(pos);
   $("now-dur").textContent = fmt(now.duration);
@@ -310,6 +359,9 @@ function songRow(s) {
   meta.append(t, a);
   const add = document.createElement("button"); add.className = "add"; add.textContent = "＋"; add.title = "Add to queue";
   add.onclick = () => {
+    // optimistically append to the queue (mirror shape: id/name/artist/kind/code/by) so the Queue tab updates now
+    optSet("queue", [...effQueue(), { id: s.id, name: s.name, artist: s.artistName || "", kind: s.kind, code: s.code || "", by: prefs.nickname || "" }]);
+    renderQueue();
     cmd({ type: "enqueue", id: s.id, name: s.name, artist: s.artistName || "",
           kind: s.kind, code: s.code || "", videoId: s.videoId || "" });
     add.textContent = "✓"; add.classList.add("done");
@@ -323,7 +375,7 @@ function songRow(s) {
 // Tab 3 — Queue
 // ---------------------------------------------------------------------------
 function renderQueue() {
-  const now = state && state.now;
+  const now = effNow();
   $("q-now").innerHTML = "";
   if (now) {
     const d = document.createElement("div"); d.className = "q-now-card";
@@ -334,7 +386,7 @@ function renderQueue() {
   }
   const ul = $("r-queue");
   ul.innerHTML = "";
-  const q = (state && state.queue) || [];
+  const q = effQueue();
   $("q-empty").style.display = q.length ? "none" : "";
   q.forEach((s, i) => ul.appendChild(queueRow(s, i, q.length)));
 }
@@ -350,13 +402,23 @@ function queueRow(s, i, n) {
   if (s.by) { const b = document.createElement("span"); b.className = "by"; b.textContent = ` · ${s.by}`; a.appendChild(b); }
   meta.append(t, a);
   const ctr = document.createElement("div"); ctr.className = "qctl";
-  const up = mkBtn("↑", "Move up", () => cmd({ type: "reorder", from: i, to: i - 1 }), i === 0);
-  const dn = mkBtn("↓", "Move down", () => cmd({ type: "reorder", from: i, to: i + 1 }), i === n - 1);
-  const rm = mkBtn("✕", "Remove", () => cmd({ type: "remove", index: i }));
+  const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1 }); }, i === 0);
+  const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1 }); }, i === n - 1);
+  const rm = mkBtn("✕", "Remove", () => {
+    optSet("queue", effQueue().filter((_, idx) => idx !== i)); renderQueue();
+    cmd({ type: "remove", index: i });
+  });
   rm.classList.add("rm");
   ctr.append(up, dn, rm);
   li.append(meta, ctr);
   return li;
+}
+// Optimistically move a queue item (mirrors the host's reorder) so the list reflows at once.
+function reorderOpt(from, to) {
+  const q = effQueue().slice();
+  if (to < 0 || to >= q.length) return;
+  const [item] = q.splice(from, 1); q.splice(to, 0, item);
+  optSet("queue", q); renderQueue();
 }
 function mkBtn(label, title, onClick, disabled) {
   const b = document.createElement("button");
@@ -372,16 +434,20 @@ function wireSettings() {
   $("s-nick").oninput = (e) => { prefs.nickname = e.target.value.slice(0, 24); savePrefs(); };
   $("s-theme").onchange = (e) => { prefs.theme = e.target.value; document.documentElement.dataset.theme = prefs.theme; savePrefs(); };
   $("s-text").onchange = (e) => { prefs.text = e.target.value; document.documentElement.dataset.text = prefs.text; savePrefs(); };
-  $("s-offset").onchange = (e) => cmd({ type: "setting", path: "lyrics.offsetMs", value: +e.target.value });
+  $("s-offset").onchange = (e) => {
+    const v = +e.target.value;
+    optSet("set:lyrics.offsetMs", v); renderSettingsMirror();
+    cmd({ type: "setting", path: "lyrics.offsetMs", value: v });
+  };
   $("s-reconnect").onclick = () => { lastRev = -1; poll(); };
   $("s-leave").onclick = () => { prefs.room = ""; savePrefs(); $("gate-code").value = ""; showGate(""); };
 }
 
-// Reflect the host's mirrored lyric offset (not while the guest is dragging it).
+// Reflect the effective lyric offset (optimistic if just changed, else the host mirror; not while dragging).
 function renderSettingsMirror() {
-  const s = (state && state.settings) || {};
-  if (document.activeElement !== $("s-offset")) $("s-offset").value = s["lyrics.offsetMs"] ?? 0;
-  $("s-offset-val").textContent = `${s["lyrics.offsetMs"] ?? 0} ms`;
+  const v = setVal("lyrics.offsetMs", 0);
+  if (document.activeElement !== $("s-offset")) $("s-offset").value = v;
+  $("s-offset-val").textContent = `${v} ms`;
 }
 
 // ---------------------------------------------------------------------------
