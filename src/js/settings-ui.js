@@ -274,6 +274,7 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
 
   function wireSettings() {
     $("btn-settings").onclick = () => {
+      syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
       $("settings-panel").classList.remove("hidden");
       const s = $("set-search");
       if (s) setTimeout(() => s.focus(), 60); // after the slide-in
@@ -308,10 +309,10 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
   function syncSettingsUI() {
     autoSync();
     updateMicBtn();
-    // bottom transport controls (wired in app.js, but reflected here on reset)
-    if ($("tempo")) {
+    // bottom transport controls (wired in app.js, but reflected here on reset).
+    // Tempo & key are ± steppers (labels only); volume is still a slider.
+    if ($("tempo-val")) {
       const g = (p) => settings.get(p);
-      $("tempo").value = g("audio.tempo");
       $("tempo-val").textContent = `${(+g("audio.tempo")).toFixed(2)}×`;
       $("volume").value = g("audio.volume");
       $("key-val").textContent = (g("audio.key") > 0 ? "+" : "") + g("audio.key");

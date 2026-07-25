@@ -171,7 +171,7 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("guide.")) {
     applyGuideSettings();
     if ((path === "*" || path === "guide.channel") && lastParsed) loadMelody(lastParsed);
-    if (path === "*" || path.startsWith("guide.vocal")) applyGuideVocal();
+    if (path === "*" || path.startsWith("guide.vocal")) { applyGuideVocal(); updateMelodyToggle(); }
   }
   if (path === "*" || path.startsWith("key.") || path === "audio.key") {
     if (path === "key.autoDetect" && lastParsed) currentKey = settings.get("key.autoDetect") ? detectKey(lastParsed) : null;
@@ -390,6 +390,7 @@ function advanceQueue() {
 // arbitrary path off the network.
 const REMOTE_SETTABLE = new Set([
   "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume",
+  "guide.vocal.mute",
 ]);
 
 // Room code — OWNED BY THIS HOST BROWSER (generated once, kept in localStorage). Each host has
@@ -546,8 +547,7 @@ function setRemoteVolume(v) {
 }
 // Keep the bottom transport labels/sliders in step when a phone changes key/tempo/volume.
 function syncTransportLabels() {
-  const t = $("tempo"), tv = $("tempo-val"), v = $("volume"), kv = $("key-val");
-  if (t) t.value = settings.get("audio.tempo");
+  const tv = $("tempo-val"), v = $("volume"), kv = $("key-val");
   if (tv) tv.textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
   if (v) v.value = settings.get("audio.volume");
   if (kv) kv.textContent = fmtKey(settings.get("audio.key"));
@@ -1168,6 +1168,9 @@ function wireUI() {
     setPlayIcon();
   };
   $("btn-next").onclick = () => advanceQueue();
+  // 🎵 melody toggle — flips the guide-vocal mute (melody channel audible on/off). Same setting
+  // the ⚙ "Mute melody" checkbox and the phone remote drive, so all three stay in sync.
+  $("btn-melody").onclick = () => settings.set("guide.vocal.mute", !settings.get("guide.vocal.mute"));
   $("btn-mic").onclick = async () => {
     if (settings.get("bt.enabled")) return; // mic disabled in Bluetooth mode
     $("mic-status").textContent = mic.enabled ? "Stopping…" : "Requesting microphone…";
@@ -1180,11 +1183,8 @@ function wireUI() {
   // Bottom controls (persisted via settings)
   $("key-down").onclick = () => setKey(settings.get("audio.key") - 1);
   $("key-up").onclick = () => setKey(settings.get("audio.key") + 1);
-  $("tempo").oninput = (e) => {
-    const r = +e.target.value;
-    settings.set("audio.tempo", r);
-    $("tempo-val").textContent = `${r.toFixed(2)}×`;
-  };
+  $("tempo-down").onclick = () => setTempoRate(settings.get("audio.tempo") - 0.05);
+  $("tempo-up").onclick = () => setTempoRate(settings.get("audio.tempo") + 0.05);
   $("volume").oninput = (e) => settings.set("audio.volume", +e.target.value);
 
   $("seek-track").onclick = (e) => {
@@ -1201,7 +1201,7 @@ function wireUI() {
   };
 
   // reflect persisted bottom-control values
-  $("tempo").value = settings.get("audio.tempo");
+  updateMelodyToggle();
   $("tempo-val").textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
   $("volume").value = settings.get("audio.volume");
   $("key-val").textContent = fmtKey(settings.get("audio.key"));
@@ -1213,6 +1213,12 @@ function setKey(semi) {
   settings.set("audio.key", semi);
   $("key-val").textContent = fmtKey(semi);
   updateKeyDisplay();
+}
+
+function setTempoRate(rate) {
+  rate = Math.round(Math.max(0.5, Math.min(1.5, rate)) * 100) / 100; // clamp 0.5–1.5, avoid fp drift
+  settings.set("audio.tempo", rate);
+  $("tempo-val").textContent = `${rate.toFixed(2)}×`;
 }
 
 function nudgeOffset(delta) {
@@ -1300,6 +1306,15 @@ function updateMicToggle() {
   b.classList.toggle("on", mic.enabled);
   b.disabled = btOn;
   b.title = btOn ? "Microphone disabled in Bluetooth mode" : "Microphone on/off";
+}
+
+// 🎵 melody toggle state — lit when the melody guide vocal is audible (not muted).
+function updateMelodyToggle() {
+  const b = $("btn-melody");
+  if (!b) return;
+  const on = !settings.get("guide.vocal.mute");
+  b.classList.toggle("on", on);
+  b.title = on ? "Melody guide: on (click to mute)" : "Melody guide: off (click to unmute)";
 }
 
 // Rebuild catalog.json from kar_raw/ (called by the settings-ui button).

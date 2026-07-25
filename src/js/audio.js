@@ -131,8 +131,13 @@ export class AudioEngine {
       try {
         if (ch === channel) {
           this.synth.muteChannel(ch, mute);
-          if (active) { this.synth.controllerChange(ch, 7, melCC); this.synth.lockController(ch, 7, true); }
-          else this.synth.lockController(ch, 7, false);
+          // Unlock BEFORE writing CC7 — a locked controller ignores controllerChange (§5.15),
+          // so returning from a muted/locked state (CC7=0) needs unlock → set → (maybe) re-lock;
+          // otherwise the melody stays silent after un-muting. melCC is 127 at volume 1 unmuted,
+          // so this re-asserts full level instead of leaving the channel stuck at 0.
+          this.synth.lockController(ch, 7, false);
+          this.synth.controllerChange(ch, 7, melCC);
+          if (active) this.synth.lockController(ch, 7, true);
         } else if (solo) {
           this.synth.muteChannel(ch, true); // solo = mute everything else
         } else {

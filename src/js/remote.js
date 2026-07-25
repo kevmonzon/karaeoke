@@ -184,16 +184,43 @@ function wireNow() {
     if (now && now.duration > 0) cmd({ type: "seek", position: (seek.value / 1000) * now.duration });
   };
   $("now-vol").onchange = (e) => cmd({ type: "volume", value: +e.target.value / 100 });
-  $("now-tempo").onchange = (e) => cmd({ type: "setting", path: "audio.tempo", value: +e.target.value });
   $("now-key-down").onclick = () => stepKey(-1);
   $("now-key-up").onclick = () => stepKey(1);
+  $("now-tempo-down").onclick = () => stepTempo(-0.05);
+  $("now-tempo-up").onclick = () => stepTempo(0.05);
+  // Melody (guide-vocal channel) — an On/Off toggle mirroring the host's 🎵 transport button.
+  // MIDI-only host-side (a no-op on video/YouTube); shown always, like the Key control.
+  $("now-melody-toggle").onclick = () => {
+    const muted = !!(state && state.settings && state.settings["guide.vocal.mute"]);
+    cmd({ type: "setting", path: "guide.vocal.mute", value: !muted });
+  };
 }
 
+// Optimistic stepper state (key + tempo). On a polled remote the mirror lags ~1 s, so we HOLD the
+// locally-chosen value against mirror overwrites for HOLD_MS after a tap: rapid taps compound off the
+// held value, and a poll returning the not-yet-applied host value can't clobber the user mid-adjust.
+// After the hold expires the host has applied the change, so the mirror == held value and renderNow
+// takes over seamlessly. Same mechanism as the seek slider's `seeking` flag.
+const HOLD_MS = 2500;
+const held = { "audio.key": { v: null, t: 0 }, "audio.tempo": { v: null, t: 0 } };
+const holdActive = (p) => held[p].v != null && performance.now() - held[p].t < HOLD_MS;
+const holdBase = (p, fallback) => (holdActive(p) ? held[p].v : fallback);
+function holdSet(p, v) { held[p] = { v, t: performance.now() }; }
+
 function stepKey(delta) {
-  const cur = (state && state.settings && state.settings["audio.key"]) || 0;
+  const cur = holdBase("audio.key", (state && state.settings && state.settings["audio.key"]) || 0);
   const next = Math.max(-12, Math.min(12, cur + delta));
+  holdSet("audio.key", next);
   $("now-key-val").textContent = fmtKey(next);
   cmd({ type: "setting", path: "audio.key", value: next });
+}
+
+function stepTempo(delta) {
+  const cur = holdBase("audio.tempo", (state && state.settings && state.settings["audio.tempo"]) ?? 1);
+  const next = Math.round(Math.max(0.5, Math.min(1.5, cur + delta)) * 100) / 100; // clamp + avoid fp drift
+  holdSet("audio.tempo", next);
+  $("now-tempo-val").textContent = `${next.toFixed(2)}×`;
+  cmd({ type: "setting", path: "audio.tempo", value: next });
 }
 
 function renderNow() {
@@ -207,9 +234,14 @@ function renderNow() {
   const active = document.activeElement;
   if (active !== $("now-vol")) $("now-vol").value = Math.round((s["audio.volume"] ?? 0.9) * 100);
   $("now-vol-val").textContent = `${Math.round((s["audio.volume"] ?? 0.9) * 100)}%`;
-  if (active !== $("now-tempo")) $("now-tempo").value = s["audio.tempo"] ?? 1;
-  $("now-tempo-val").textContent = `${(+(s["audio.tempo"] ?? 1)).toFixed(2)}×`;
-  $("now-key-val").textContent = fmtKey(s["audio.key"] ?? 0);
+  // don't clobber a value the user just stepped (held for HOLD_MS after a tap)
+  if (!holdActive("audio.tempo")) $("now-tempo-val").textContent = `${(+(s["audio.tempo"] ?? 1)).toFixed(2)}×`;
+  if (!holdActive("audio.key")) $("now-key-val").textContent = fmtKey(s["audio.key"] ?? 0);
+  // melody (guide vocal): On/Off toggle
+  const melodyMuted = !!s["guide.vocal.mute"];
+  const mt = $("now-melody-toggle");
+  mt.classList.toggle("off", melodyMuted);
+  mt.textContent = melodyMuted ? "Off" : "On";
   uiTick();
 }
 

@@ -267,7 +267,8 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 Turn on **⚙ → Sources → Remote** and a **QR code + room code** appear on the queue panel. Guests
 scan the QR with their phones (same network) to open **`/remote`**. Scanning auto-connects; anyone
 typing the URL by hand enters the **room code** shown on screen. Four tabs:
-- **Now** — the current song with play/pause, next, seek, and **key / tempo / volume**.
+- **Now** — the current song with play/pause, next, seek, **key / tempo / volume**, and a **guide
+  vocal** On/Muted toggle so a singer can silence the melody guide from their phone.
 - **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
 - **Queue** — the live queue with an "added by" name, plus remove / reorder.
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size, and

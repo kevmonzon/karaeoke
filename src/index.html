@@ -116,31 +116,45 @@
 
       <div id="offset-toast" class="offset-toast"></div>
 
-      <div id="seek-track" class="seek-track"><div id="seekbar" class="seekbar"></div></div>
-      <div class="time"><span id="time-cur">0:00</span><span id="time-dur">0:00</span></div>
-
-      <div class="transport">
-        <button id="btn-play" class="primary" title="Play/Pause (Space)">▶</button>
-        <button id="btn-next" title="Next in queue">⏭</button>
-        <button id="btn-mic" class="mic-toggle" title="Microphone on/off">🎤</button>
+      <!-- seek bar with the current/total time inline on either side -->
+      <div class="seek-row">
+        <span id="time-cur" class="t-time">0:00</span>
+        <div id="seek-track" class="seek-track"><div id="seekbar" class="seekbar"></div></div>
+        <span id="time-dur" class="t-time">0:00</span>
       </div>
 
-      <div class="controls">
-        <div class="ctl">
-          <label>Key <em id="key-name"></em></label>
-          <div class="stepper">
-            <button id="key-down">−</button>
-            <span id="key-val">0</span>
-            <button id="key-up">＋</button>
+      <!-- one horizontal bar: transport ▏ Key ▏ Tempo ▏ Volume spread edge-to-edge.
+           .controls is display:contents on wide screens so its .ctl children join the
+           .playbar flex directly (even space-between); it regroups on phones. -->
+      <div class="playbar">
+        <div class="transport">
+          <button id="btn-play" class="primary" title="Play/Pause (Space)">▶</button>
+          <button id="btn-next" title="Next in queue">⏭</button>
+          <button id="btn-melody" class="melody-toggle" title="Melody guide on/off">🎵</button>
+          <button id="btn-mic" class="mic-toggle" title="Microphone on/off">🎤</button>
+        </div>
+
+        <div class="controls">
+          <div class="ctl">
+            <label>Key <em id="key-name"></em></label>
+            <div class="stepper">
+              <button id="key-down">−</button>
+              <span id="key-val">0</span>
+              <button id="key-up">＋</button>
+            </div>
           </div>
-        </div>
-        <div class="ctl">
-          <label>Tempo <span id="tempo-val">1.00×</span></label>
-          <input id="tempo" type="range" min="0.5" max="1.5" step="0.01" value="1" />
-        </div>
-        <div class="ctl">
-          <label>Volume</label>
-          <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
+          <div class="ctl">
+            <label>Tempo</label>
+            <div class="stepper">
+              <button id="tempo-down">−</button>
+              <span id="tempo-val">1.00×</span>
+              <button id="tempo-up">＋</button>
+            </div>
+          </div>
+          <div class="ctl">
+            <label>Volume</label>
+            <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
+          </div>
         </div>
       </div>
     </section>
@@ -150,12 +164,10 @@
       <h3>Queue <span id="queue-count" class="muted"></span></h3>
       <!-- Phone-remote QR (shown only while remote.enabled; see app.js refreshRemoteQr). -->
       <div id="remote-qr" class="remote-qr">
+        <div class="remote-qr-title">📱 Scan to control from your phone</div>
         <div id="remote-qr-code" class="remote-qr-code" aria-label="Remote-control QR code"></div>
-        <div class="remote-qr-meta">
-          <div class="remote-qr-title">📱 Scan to control from your phone</div>
-          <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
-          <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a>
-        </div>
+        <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
+        <div class="remote-qr-urlrow">URL <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a></div>
       </div>
       <ul id="queue-list" class="queue-list"></ul>
       <p class="hint">Double-click a song to play now · ＋ to queue · Space to play/pause</p>

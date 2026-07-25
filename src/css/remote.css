@@ -148,6 +148,11 @@ body.connected .gate { display: none; }
 .now-mix .stepper { display: flex; gap: 8px; }
 .now-mix .stepper button { width: 42px; height: 42px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--ink); font-size: 20px; cursor: pointer; }
+/* Guide-vocal mute pill: lit (On) by default, dimmed when muted */
+.gv-toggle { min-width: 76px; height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--accent-2);
+  background: var(--panel-2); color: var(--ink); font-size: 15px; cursor: pointer; }
+.gv-toggle.off { opacity: .5; border-color: var(--line); }
+.gv-toggle:active { transform: scale(.96); }
 
 /* Singer badge on the queue "now" card */
 .q-now-card .by { color: var(--accent-2); }
