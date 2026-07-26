@@ -15,6 +15,14 @@
  */
 
 import { KeyShiftChain } from "./pitch-chain.js";
+import { cachedArrayBuffer } from "./asset-cache.js";
+
+// Blob MIME by extension (a typed blob is safest for the media element, though it also sniffs).
+const AUDIO_MIME = {
+  mp3: "audio/mpeg", wav: "audio/wav", flac: "audio/flac", m4a: "audio/mp4", mp4a: "audio/mp4",
+  aac: "audio/aac", opus: "audio/ogg", oga: "audio/ogg", ogg: "audio/ogg", weba: "audio/webm", mp4: "audio/mp4",
+};
+const mimeForUrl = (u) => AUDIO_MIME[(u.split("?")[0].split(".").pop() || "").toLowerCase()] || "";
 
 export class AudioFileEngine {
   /**
@@ -34,18 +42,17 @@ export class AudioFileEngine {
   }
 
   // --- loading --------------------------------------------------------------
-  /** Fetch the whole file into an in-memory BLOB URL and point the element at it,
-   *  rather than letting the element stream over HTTP. Karaoke audio files are small,
-   *  and this makes loading + seeking reliable regardless of the server's HTTP
-   *  range/keep-alive behavior (some setups stall a media element's byte-range
-   *  streaming even though fetch() of the same URL works fine). Falls back to direct
-   *  streaming if the fetch fails. */
+  /** Load the whole file into an in-memory BLOB URL and point the element at it, rather
+   *  than letting the element stream over HTTP. Goes through `cachedArrayBuffer` so the
+   *  file is stored in Cache Storage (same cache as the SoundFont + kar_raw MIDI) — a
+   *  repeat play is instant + offline. Karaoke audio files are small, and the blob also
+   *  makes loading + seeking reliable regardless of the server's HTTP range/keep-alive
+   *  behavior. Falls back to direct streaming if the fetch fails. */
   async load(url) {
     this._revokeObjUrl();
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error("audio " + resp.status);
-      this._objUrl = URL.createObjectURL(await resp.blob());
+      const buf = await cachedArrayBuffer(url); // cache-first (Cache Storage), like MIDI + soundfont
+      this._objUrl = URL.createObjectURL(new Blob([buf], { type: mimeForUrl(url) }));
       this.el.src = this._objUrl;
     } catch (_) {
       this.el.src = url; // fallback: let the element stream it directly
