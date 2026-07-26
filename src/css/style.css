@@ -132,8 +132,8 @@ body.video-mode.chords-on .chords,
 body.video-mode .midi-mixer,
 body.video-mode.midi-mode .midi-mixer,
 body.video-mode .lyrics-wrap { display: none; }
-/* Key transpose is inert for video (no note data) — dim the control. */
-body.video-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
+/* Key ± IS live for video now — it pitch-shifts the video's audio via the shared
+   KeyShiftChain (the key-name badge stays blank; there's no detected key). */
 
 /* YOUTUBE karaoke (BYOC): the official YouTube embed fills the freed middle only in
    youtube-mode — same footprint as the VIDEO picture. */

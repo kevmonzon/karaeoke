@@ -17,7 +17,15 @@
  *   offsetMs < 0  → sound leads the picture
  * i.e. audioTime = pictureTime − offsetMs/1000 (clamped ≥ 0). We re-align on
  * load/seek/offset-change and gently correct drift while playing.
+ *
+ * KEY / VOLUME: the sound element (#kva) is routed through the shared KeyShiftChain
+ * (pitch-chain.js) so a video can be transposed in real time (stereo) and boosted past
+ * 100%. The chain is an effect in the graph — it doesn't touch the element's clock, so
+ * the offset/drift sync below is unaffected. #kva still STREAMS over HTTP (videos are
+ * large); only its decoded output is tapped into WebAudio.
  */
+
+import { KeyShiftChain } from "./pitch-chain.js";
 
 const DRIFT_TOLERANCE = 0.08; // seconds of picture↔sound drift we allow before nudging
 
@@ -25,10 +33,12 @@ export class VideoEngine {
   /**
    * @param {HTMLVideoElement} videoEl  the picture element (#kv), kept muted
    * @param {HTMLAudioElement} audioEl  the sound element (#kva)
+   * @param {import('./audio.js').AudioEngine} audioEngine  shared engine (context + worklet)
    */
-  constructor(videoEl, audioEl) {
+  constructor(videoEl, audioEl, audioEngine) {
     this.video = videoEl;
     this.audio = audioEl;
+    this.chain = new KeyShiftChain(audioEngine); // key-shift + >100% volume on #kva
     this._offsetSec = 0;
     this._volume = 0.9;
     this._rate = 1;
@@ -50,7 +60,9 @@ export class VideoEngine {
     this.video.src = url;
     this.audio.src = url;
     this.video.playbackRate = this.audio.playbackRate = this._rate;
-    this.audio.volume = Math.min(1, this._volume);
+    // Once routed through the chain the GainNode owns the level (element stays at 1) —
+    // clamping here too would double-attenuate. Only clamp while still on the bare element.
+    this.audio.volume = this.chain.wired ? 1 : Math.min(1, this._volume);
   }
 
   /** Detach sources (called when switching away to a MIDI song) — frees decoders. */
@@ -65,6 +77,8 @@ export class VideoEngine {
   // --- transport ------------------------------------------------------------
   async play() {
     await this._ready();      // wait for the freshly-set src so play() isn't aborted
+    const wired = await this.chain.ensure(this.audio); // route #kva through WebAudio (key + volume)
+    if (wired) { this.audio.volume = 1; this.chain.setVolume(this._volume); } // level → the chain gain
     this._resyncAudio();
     try { await this.video.play(); } catch (_) {} // muted picture → autoplay allowed
     try { await this.audio.play(); } catch (_) {} // sound needs a prior user gesture
@@ -115,10 +129,16 @@ export class VideoEngine {
     this._resyncAudio();
   }
 
-  /** A bare <video>/<audio> can't boost past 100%; clamp to 1. */
+  /** KEY change = real (stereo) pitch-shift of the sound, via the shared chain. */
+  setKey(semitones) { this.chain.setKey(semitones); }
+  get key() { return this.chain.key; }
+
+  /** Once routed through the chain, volume goes through the GainNode (to 200%); until then
+   *  a bare media element can't boost past 100%, so clamp. */
   setVolume(v) {
     this._volume = v;
-    this.audio.volume = Math.max(0, Math.min(1, v));
+    this.chain.setVolume(v);
+    this.audio.volume = this.chain.wired ? 1 : Math.max(0, Math.min(1, v));
   }
   get volume() { return this._volume; }
 

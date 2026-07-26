@@ -45,7 +45,7 @@ your local library plays offline after first-run setup.
 | 🎸 | **Chords** — an auto-detected guitar chord lane above the lyrics, scrolling in time (MIDI songs) |
 | 🎛️ | **MIDI mode** — a per-channel mixer (16 channels: volume, mute/solo, live VU) for the current MIDI song |
 | 🎼 | **Key detection** + **transpose**, **tempo**, **volume**, all persisted |
-| 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files and they play full-stage alongside the MIDI songs |
+| 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files; play full-stage with real-time **key change** + volume >100% |
 | 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with scrolling lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
 | 🌄 | **Background video** layer behind the lyrics (or an animated gradient) |
@@ -272,7 +272,10 @@ reset per song.
 A video song plays **full-stage** (the MIDI-only surfaces hide themselves). Transport,
 seeking, queue, tempo, volume, and the mic all work. Because a karaoke video has its lyrics
 **baked into the picture**, the **lyric offset shifts the video's audio** (not the picture)
-so you can line the sound up to the on-screen words.
+so you can line the sound up to the on-screen words. The **Key ±** control now **transposes the
+video's audio in real time** (in stereo), and the **volume can go past 100%**. *(Transposing adds
+~30–40 ms of audio latency — nudge the lyric offset if you need perfect lip-sync; at Key 0 there's
+no added latency.)*
 
 ### 🌐 YouTube karaoke (BYOC)
 **On by default**, but the app stays offline-first in practice — it queries YouTube **only when your

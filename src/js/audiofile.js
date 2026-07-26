@@ -2,21 +2,19 @@
  * audiofile.js — AudioFileEngine: the playback path for AUDIO karaoke songs
  * (a recorded audio file + a separate lyric sidecar).
  *
- * Unlike VideoEngine (a bare media element), this routes the <audio> through
- * WebAudio so we get two things a plain element can't: volume >100% (a GainNode)
- * and on-the-fly KEY change (the shared `pitch-shift` worklet). The graph lives on
- * the SAME AudioContext as the synth + mic (audio.ensureContext()):
+ * Unlike a bare media element, this routes the <audio> through WebAudio (the shared
+ * KeyShiftChain — see pitch-chain.js) so we get two things a plain element can't:
+ * volume >100% (a GainNode) and an on-the-fly stereo KEY change (the `pitch-shift`
+ * worklet, bypassed at Key 0). The graph lives on the SAME AudioContext as the synth +
+ * mic (audio.ensureContext()).
  *
- *   <audio> ─► MediaElementSource ─► [pitch-shift, bypassed at Key 0] ─► Gain ─► destination
- *
- * It exposes the same transport surface as AudioEngine/VideoEngine (so app.js drives
- * it through the one `media` handle) PLUS setKey(semitones). The lyric OFFSET is NOT
- * handled here — the lyrics are a separate rendered surface, so the offset moves the
- * lyric time in app.js (the MIDI way); setOffset() is a no-op.
+ * It exposes the same transport surface as AudioEngine/VideoEngine (so app.js drives it
+ * through the one `media` handle) PLUS setKey(semitones). The lyric OFFSET is NOT handled
+ * here — the lyrics are a separate rendered surface, so the offset moves the lyric time in
+ * app.js (the MIDI way); setOffset() is a no-op.
  */
 
-const WORKLET_URL = "./js/worklets/mic-dsp.js";
-const clampKey = (s) => Math.max(-12, Math.min(12, s | 0));
+import { KeyShiftChain } from "./pitch-chain.js";
 
 export class AudioFileEngine {
   /**
@@ -26,77 +24,13 @@ export class AudioFileEngine {
   constructor(audioEl, audioEngine) {
     this.el = audioEl;
     this.engine = audioEngine;
-    this._volume = 0.9;
+    this.chain = new KeyShiftChain(audioEngine); // WebAudio pitch/volume chain
     this._rate = 1;
-    this._key = 0;
-
-    this._wired = false;
-    this._routeMode = null; // "bypass" | "pitch"
-    this._objUrl = null;    // in-memory blob URL for the current file
-    this.ctx = null;
-    this.src = null;   // MediaElementAudioSourceNode (once per element)
-    this.pitch = null; // pitch-shift worklet node
-    this.gain = null;  // dedicated gain → destination
+    this._objUrl = null; // in-memory blob URL for the current file
 
     this.el.preload = "auto";
-    this.el.volume = 1;                 // level is controlled by the GainNode
+    this.el.volume = 1;                 // level is controlled by the chain's GainNode once wired
     try { this.el.preservesPitch = true; } catch (_) {} // tempo must not change pitch
-  }
-
-  // --- WebAudio wiring (lazy, on first play) --------------------------------
-  async _wire() {
-    if (this._wired) return;
-    const ctx = await this.engine.ensureContext();
-    this.ctx = ctx;
-    // Resume BEFORE routing the element into the graph. A MediaElementSource tied to a
-    // SUSPENDED context stalls the element's load (readyState stuck at HAVE_NOTHING), so
-    // the context must be running when createMediaElementSource() is called.
-    try { await ctx.resume(); } catch (_) {}
-    // shared one-time worklet load (mic uses the same module → never double-add)
-    let hasWorklet = true;
-    try { await this.engine.ensureWorkletModule(WORKLET_URL); }
-    catch (_) { hasWorklet = false; }
-
-    this.src = ctx.createMediaElementSource(this.el);
-    this.gain = ctx.createGain();
-    this.gain.gain.value = this._volume;
-    this.gain.connect(ctx.destination);
-
-    if (hasWorklet) {
-      try {
-        this.pitch = new AudioWorkletNode(ctx, "pitch-shift", {
-          outputChannelCount: [2], channelCount: 2, channelCountMode: "explicit",
-        });
-      } catch (_) { this.pitch = null; } // no re-key available → always bypass
-    }
-    this._wired = true;
-    this._applyKey(); // establish initial routing (bypass at Key 0)
-  }
-
-  _route(mode) {
-    if (!this._wired) return;
-    try { this.src.disconnect(); } catch (_) {}
-    if (this.pitch) { try { this.pitch.disconnect(); } catch (_) {} }
-    if (mode === "pitch" && this.pitch) {
-      this.src.connect(this.pitch);
-      this.pitch.connect(this.gain);
-    } else {
-      this.src.connect(this.gain); // pristine stereo passthrough
-      mode = "bypass";
-    }
-    this._routeMode = mode;
-  }
-
-  _applyKey() {
-    if (!this._wired) return;
-    if (this._key === 0 || !this.pitch) {
-      if (this._routeMode !== "bypass") this._route("bypass");
-      return;
-    }
-    const p = this.pitch.parameters;
-    p.get("enabled").value = 1;
-    p.get("ratio").value = Math.pow(2, this._key / 12);
-    if (this._routeMode !== "pitch") this._route("pitch"); // only re-route on mode change (no click)
   }
 
   // --- loading --------------------------------------------------------------
@@ -134,9 +68,9 @@ export class AudioFileEngine {
 
   // --- transport ------------------------------------------------------------
   async play() {
-    await this._wire();
-    try { await this.ctx.resume(); } catch (_) {} // context may be suspended if audio is the FIRST thing played
-    await this._ready();                          // wait for the freshly-set src so play() isn't aborted
+    const wired = await this.chain.ensure(this.el); // resumes ctx + routes the element (resilient)
+    if (wired) this.el.volume = 1;                  // level is the chain gain's job once wired
+    await this._ready();                            // wait for the freshly-set src so play() isn't aborted
     try { await this.el.play(); } catch (_) {}
   }
 
@@ -168,19 +102,16 @@ export class AudioFileEngine {
   }
 
   // --- performance controls -------------------------------------------------
-  /** KEY change = real pitch-shift (stereo). Clamped to ±12 semitones (worklet ratio 0.5–2). */
-  setKey(semitones) {
-    this._key = clampKey(semitones);
-    this._applyKey();
-  }
-  get key() { return this._key; }
+  /** KEY change = real pitch-shift (stereo, via the shared chain). */
+  setKey(semitones) { this.chain.setKey(semitones); }
+  get key() { return this.chain.key; }
 
-  /** GainNode → can boost past 100% (unlike a bare media element). */
+  /** Volume via the chain's GainNode (to 200%); falls back to the bare element until wired. */
   setVolume(v) {
-    this._volume = v;
-    if (this.gain) this.gain.gain.value = Math.max(0, v);
+    this.chain.setVolume(v); // store + apply on the gain if wired
+    this.el.volume = this.chain.wired ? 1 : Math.max(0, Math.min(1, v));
   }
-  get volume() { return this._volume; }
+  get volume() { return this.chain.volume; }
 
   setTempo(rate) {
     this._rate = rate;

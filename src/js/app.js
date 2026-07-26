@@ -78,7 +78,7 @@ async function boot() {
   mic = new MicEngine(audio, settings);
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
   chordEngine = new ChordEngine($("chords"), { simplify: settings.get("chords.simplify") });
-  video = new VideoEngine($("kv"), $("kva")); // VIDEO-song playback (picture + offset audio)
+  video = new VideoEngine($("kv"), $("kva"), audio); // VIDEO-song playback (picture + offset audio; key-shift via shared chain)
   youtube = new YouTubeEngine($("ytplayer")); // YOUTUBE-song playback (credentialless iframe)
   audioFile = new AudioFileEngine($("kaudio"), audio); // AUDIO-song playback (WebAudio + pitch-shift)
   youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
@@ -159,7 +159,8 @@ function applyAudioSettings() {
     audio.setTempo(tempo);
     audio.applyTranspose(settings.get("audio.key"));
   }
-  if (video) { video.setVolume(vol); video.setTempo(tempo); }
+  // VIDEO songs: volume + tempo, and the Key control drives a real (stereo) pitch-shift of the audio.
+  if (video) { video.setVolume(vol); video.setTempo(tempo); video.setKey(settings.get("audio.key")); }
   if (youtube) { youtube.setVolume(vol); youtube.setTempo(tempo); }
   // AUDIO songs: volume + tempo, and the Key control drives a real (stereo) pitch-shift.
   if (audioFile) { audioFile.setVolume(vol); audioFile.setTempo(tempo); audioFile.setKey(settings.get("audio.key")); }
@@ -885,6 +886,7 @@ async function playVideo(song) {
   video.setOffset(settings.get("lyrics.offsetMs") || 0);
   video.setVolume(settings.get("audio.volume"));
   video.setTempo(settings.get("audio.tempo"));
+  video.setKey(settings.get("audio.key")); // apply the current transpose to the video's audio
   video.load(url);
   bgv.onSongStart();
   setStatus(`Now playing: ${song.code} — ${song.name}`);
