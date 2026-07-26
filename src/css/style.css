@@ -154,6 +154,19 @@ body.youtube-mode.midi-mode .midi-mixer,
 body.youtube-mode .lyrics-wrap { display: none; }
 body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
 
+/* AUDIO karaoke (recorded audio + a lyric sidecar): unlike video/youtube it KEEPS the
+   scrolling lyric surface and the Key control (Key pitch-shifts the audio) — it only
+   hides the NOTE-derived surfaces (pitch guide / chords / channel mixer), which need MIDI
+   data. #kaudio is just the sound (no layout). Mirrors the video-mode `.guide-on` override
+   trick so the guide stays hidden even while its toggle is ON. */
+.kaudio { display: none; }
+body.audio-mode .pitch-guide,
+body.audio-mode.guide-on .pitch-guide,
+body.audio-mode .chords,
+body.audio-mode.chords-on .chords,
+body.audio-mode .midi-mixer,
+body.audio-mode.midi-mode .midi-mixer { display: none; }
+
 /* Library */
 /* Search row + pills scale with the display-size profile (--ui-scale), like the song rows. */
 .search-row { display: flex; gap: calc(8px * var(--ui-scale)); padding: calc(12px * var(--ui-scale)); align-items: center; }
@@ -466,7 +479,8 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .transport .melody-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
 /* Melody is MIDI-only — no melody channel in a baked video/YouTube song, so dim + disable it there. */
 body.video-mode .transport .melody-toggle,
-body.youtube-mode .transport .melody-toggle { opacity: .4; pointer-events: none; }
+body.youtube-mode .transport .melody-toggle,
+body.audio-mode .transport .melody-toggle { opacity: .4; pointer-events: none; }
 
 /* Bluetooth mode dims the mic controls */
 body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }

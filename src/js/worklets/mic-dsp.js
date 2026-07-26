@@ -63,55 +63,78 @@ class PitchShiftProcessor extends AudioWorkletProcessor {
     // transitions → less warble), at the cost of a little more latency. N = 2·G.
     this.N = 6144;            // ring buffer size
     this.G = 3072;            // grain length (samples)
-    this.buf = new Float32Array(this.N);
-    this.wp = 0;              // write pointer
-    this.rp = 0;             // read offset behind write (grain phase), 0..G
+    // PER-CHANNEL state (lazily grown to the live input channel count): the mic
+    // feeds 1 channel (behaves exactly as the old mono shifter); a stereo music
+    // file feeds 2, and each channel shifts through its OWN ring buffer + grain
+    // phase so the stereo image is preserved (no L→mono collapse).
+    this.bufs = []; // Float32Array[N] per channel
+    this.wps = [];  // write pointer per channel
+    this.rps = [];  // grain phase (read offset behind write, 0..G) per channel
   }
 
-  _read(pos) {
+  _ensure(nCh) {
+    while (this.bufs.length < nCh) {
+      this.bufs.push(new Float32Array(this.N));
+      this.wps.push(0);
+      this.rps.push(0);
+    }
+  }
+
+  _read(buf, pos) {
     // fractional read with wrap + linear interpolation
     let p = pos % this.N;
     if (p < 0) p += this.N;
     const i0 = Math.floor(p);
     const i1 = (i0 + 1) % this.N;
     const f = p - i0;
-    return this.buf[i0] * (1 - f) + this.buf[i1] * f;
+    return buf[i0] * (1 - f) + buf[i1] * f;
   }
 
   process(inputs, outputs, params) {
     const input = inputs[0];
     const output = outputs[0];
-    if (!input || !input[0]) return true;
-    const inCh = input[0];
-    const n = inCh.length;
+    if (!input || input.length === 0 || !input[0] || input[0].length === 0) return true;
+    const nCh = input.length;
+    const n = input[0].length;
     const enabled = params.enabled[0] > 0.5;
     const ratio = params.ratio[0];
+    const shifting = enabled && Math.abs(ratio - 1) >= 1e-3;
     const G = this.G;
     const TWO_PI = Math.PI * 2;
+    this._ensure(nCh);
 
     for (let i = 0; i < n; i++) {
-      this.buf[this.wp] = inCh[i];
+      // write this sample into every input channel's ring buffer
+      for (let c = 0; c < nCh; c++) this.bufs[c][this.wps[c]] = input[c][i];
 
-      let out;
-      if (!enabled || Math.abs(ratio - 1) < 1e-3) {
-        out = inCh[i];
-      } else {
+      // produce each output channel from its (or the last available) input channel
+      for (let oc = 0; oc < output.length; oc++) {
+        const c = oc < nCh ? oc : nCh - 1;
+        if (!shifting) {
+          output[oc][i] = input[c] ? input[c][i] : 0;
+          continue;
+        }
         // two grains, half a grain apart, Hann-windowed, crossfaded
-        const d1 = this.rp;
-        const d2 = (this.rp + G / 2) % G;
-        const s1 = this._read(this.wp - d1);
-        const s2 = this._read(this.wp - d2);
+        const buf = this.bufs[c];
+        const wp = this.wps[c];
+        const rp = this.rps[c];
+        const d1 = rp;
+        const d2 = (rp + G / 2) % G;
+        const s1 = this._read(buf, wp - d1);
+        const s2 = this._read(buf, wp - d2);
         const w1 = 0.5 * (1 - Math.cos((TWO_PI * d1) / G));
         const w2 = 0.5 * (1 - Math.cos((TWO_PI * d2) / G));
-        out = s1 * w1 + s2 * w2;
-
-        // advance grain phase so playback pitch = ratio
-        this.rp += 1 - ratio;
-        this.rp = ((this.rp % G) + G) % G;
+        output[oc][i] = s1 * w1 + s2 * w2;
       }
 
-      for (let c = 0; c < output.length; c++) output[c][i] = out;
-      this.wp = (this.wp + 1) % this.N;
+      // advance write pointer (+ grain phase while shifting) once per input channel
+      for (let c = 0; c < nCh; c++) {
+        if (shifting) {
+          this.rps[c] += 1 - ratio;
+          this.rps[c] = ((this.rps[c] % G) + G) % G;
+        }
+        this.wps[c] = (this.wps[c] + 1) % this.N;
+      }
     }
     return true;
   }

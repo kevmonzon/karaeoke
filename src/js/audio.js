@@ -57,6 +57,21 @@ export class AudioEngine {
     return this.ctx;
   }
 
+  /**
+   * Add an AudioWorklet module to the shared context AT MOST ONCE. A module that
+   * calls registerProcessor() a second time throws "already registered", so the
+   * mic and the audio-file engine (which share mic-dsp.js) must both route through
+   * here rather than each calling addModule() independently.
+   */
+  async ensureWorkletModule(url) {
+    await this.ensureContext();
+    this._workletModules = this._workletModules || new Map();
+    if (!this._workletModules.has(url)) {
+      this._workletModules.set(url, this.ctx.audioWorklet.addModule(url));
+    }
+    return this._workletModules.get(url);
+  }
+
   async init(onProgress = () => {}, soundfontUrl = SOUNDFONT_URL) {
     if (this.ready) return;
 

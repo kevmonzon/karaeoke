@@ -11,12 +11,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { snapNote, detectKey, keyName, extractMelody } from "../src/js/melody.js";
-import { parseMidi, makeTickToSeconds } from "../src/js/lyrics.js";
+import { parseMidi, makeTickToSeconds, buildLines } from "../src/js/lyrics.js";
 import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuffix } from "../src/js/chords.js";
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 import { matchesQuery } from "../src/js/settings-ui.js";
 import { pickRemoteBaseUrl } from "../src/js/remote-host.js";
+import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile } from "../src/js/lyrics-formats.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -424,4 +425,105 @@ test("pickRemoteBaseUrl: loopback page origin falls back to the server LAN URL",
 });
 test("pickRemoteBaseUrl: loopback + no LAN URL yields empty string", () => {
   assert.equal(pickRemoteBaseUrl("", "http://localhost:8080", ""), "");
+});
+
+// --- Catalog.lyricsUrl (AUDIO sidecar) --------------------------------------
+test("Catalog.lyricsUrl: percent-encodes the sidecar path; null when absent", () => {
+  assert.equal(
+    Catalog.lyricsUrl({ lyrics: "audio_lyrics/9700 - Adele - Hello.lrc" }),
+    "/audio_lyrics/9700%20-%20Adele%20-%20Hello.lrc",
+  );
+  assert.equal(Catalog.lyricsUrl({ file: "audio_lyrics/x.mp3" }), null); // no lyrics field
+  assert.equal(Catalog.lyricsUrl({ lyrics: null }), null);
+});
+
+// --- Catalog.load merges the 3rd (audio) catalog ----------------------------
+test("Catalog.load: merges the audio catalog, tags kind/id audio:<code>, keeps lyrics", async () => {
+  const restore = stubFetch({
+    "/catalog.json": [{ code: 1, name: "M", type: "MIDI", file: "kar_raw/1.mid" }],
+    "/catalog-audio.json": [
+      { code: 1, name: "A", type: "AUDIO", file: "audio_lyrics/1.mp3", lyrics: "audio_lyrics/1.lrc" },
+    ],
+  });
+  const c = new Catalog();
+  const n = await c.load();
+  restore();
+  assert.equal(n, 2);
+  assert.equal(c.getById("audio:1").kind, "audio");
+  assert.equal(c.getById("audio:1").lyrics, "audio_lyrics/1.lrc");
+  assert.equal(c.getById("midi:1").name, "M");   // MIDI + AUDIO share code 1, distinct ids
+  assert.equal(c.get(1).kind, "midi");           // MIDI still wins numeric lookup
+});
+
+// --- lyrics-formats: LRC ----------------------------------------------------
+test("parseLrc: line timestamps become timed lines (synced)", () => {
+  const { lines, synced } = parseLrc("[ti:x]\n[00:12.00]hello world\n[00:15.50]next line");
+  assert.equal(synced, true);
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].start, 12);
+  assert.equal(lines[0].syllables[0].text, "hello world");
+  assert.equal(lines[1].start, 15.5);
+});
+
+test("parseLrc: enhanced <mm:ss.xx> word timing → per-word syllables", () => {
+  const { lines } = parseLrc("[00:10.00]<00:10.00>I <00:10.50>was <00:11.00>here");
+  assert.equal(lines[0].syllables.length, 3);
+  assert.equal(lines[0].syllables[0].time, 10);
+  assert.equal(lines[0].syllables[1].time, 10.5);
+  assert.equal(lines[0].syllables[2].text, "here");
+});
+
+test("parseLrc: [offset] shifts every time exactly once", () => {
+  const { lines } = parseLrc("[offset:+200]\n[00:12.00]hi");
+  assert.equal(Math.round(lines[0].start * 1000), 12200);
+  assert.equal(Math.round(lines[0].syllables[0].time * 1000), 12200);
+});
+
+test("parseLrc: one line, multiple timestamps → repeated lines", () => {
+  const { lines } = parseLrc("[00:05.00][00:09.00]chorus");
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines.map((l) => l.start), [5, 9]);
+});
+
+// --- lyrics-formats: VTT / SRT ----------------------------------------------
+test("parseVtt: cue start times, tags stripped", () => {
+  const { lines, synced } = parseVtt("WEBVTT\n\n00:00:12.000 --> 00:00:15.000\nHello <b>there</b>");
+  assert.equal(synced, true);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].start, 12);
+  assert.equal(lines[0].syllables[0].text, "Hello there");
+});
+
+test("parseSrt: comma-millis timing + mm:ss forms", () => {
+  const { lines } = parseSrt("1\n00:00:12,000 --> 00:00:15,000\nline one\n\n2\n00:00:15,500 --> 00:00:18,000\nline two");
+  assert.deepEqual(lines.map((l) => l.start), [12, 15.5]);
+  assert.equal(lines[1].syllables[0].text, "line two");
+});
+
+// --- lyrics-formats: plain text + dispatch ----------------------------------
+test("parsePlainText: keeps non-empty lines, flags synced:false", () => {
+  const { lines, synced } = parsePlainText("one\n\n  two  \nthree");
+  assert.equal(synced, false);
+  assert.deepEqual(lines.map((l) => l.syllables[0].text), ["one", "two", "three"]);
+});
+
+test("linesFromLyricFile: dispatches by extension (leading dot optional)", () => {
+  assert.equal(linesFromLyricFile("lrc", "[00:01.00]x").synced, true);
+  assert.equal(linesFromLyricFile(".srt", "1\n00:00:01,000 --> 00:00:02,000\nx").synced, true);
+  assert.equal(linesFromLyricFile("txt", "a\nb").synced, false);
+  assert.equal(linesFromLyricFile("unknown", "a\nb").synced, false); // fallback → plain text
+});
+
+// --- buildLines exported (lyrics-only .kar/.mid sidecar path) ----------------
+test("buildLines: groups KAR syllables into a timed line", () => {
+  const t2s = (tick) => tick / 1000; // trivial tick→sec for the test
+  const events = [
+    { tick: 0, type: 0x05, text: "Hel" },
+    { tick: 500, type: 0x05, text: "lo" },
+    { tick: 1000, type: 0x05, text: "/world" },
+  ];
+  const lines = buildLines(events, t2s);
+  assert.equal(lines.length, 2);
+  assert.deepEqual(lines[0].syllables.map((s) => s.text), ["Hel", "lo"]);
+  assert.equal(lines[1].syllables[0].text, "world");
 });

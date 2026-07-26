@@ -18,11 +18,12 @@ const $ = (id) => document.getElementById(id);
 const rowH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || 46;
 const OVERSCAN = 5;      // extra rows above/below the viewport
 
-// Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube.
+// Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube · 🎵 audio.
 const KIND_ICON = {
   video:   { glyph: "🎞️", cls: "vid", title: "Video" },
   youtube: { glyph: "🌐", cls: "yt",  title: "YouTube" },
   midi:    { glyph: "🎤", cls: "kar", title: "MIDI" },
+  audio:   { glyph: "🎵", cls: "aud", title: "Audio + lyrics" },
 };
 const kindIcon = (kind) => KIND_ICON[kind] || KIND_ICON.midi;
 const kindSpan = (s) => {

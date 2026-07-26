@@ -46,6 +46,7 @@ your local library plays offline after first-run setup.
 | 🎛️ | **MIDI mode** — a per-channel mixer (16 channels: volume, mute/solo, live VU) for the current MIDI song |
 | 🎼 | **Key detection** + **transpose**, **tempo**, **volume**, all persisted |
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files and they play full-stage alongside the MIDI songs |
+| 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with scrolling lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
 | 🌄 | **Background video** layer behind the lyrics (or an animated gradient) |
 | 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
@@ -90,7 +91,7 @@ On the **first** run it automatically (only downloading what's missing):
   *(these are already committed; this is just a fallback)*
 - ⬇️ fetches a free **General MIDI SoundFont** (GeneralUser GS, ~31 MB) → `data/soundfont.sf2`
 - 🗂️ builds **`catalog.json`** from whatever songs are in `data/kar_raw/`
-- 🗂️ creates `data/videos/` and builds **`catalog-video.json`** (empty if you have no videos yet)
+- 🗂️ creates `data/videos/` + `data/audio_lyrics/` and builds **`catalog-video.json`** / **`catalog-audio.json`** (empty if you have none yet)
 
 **3. Your browser opens automatically** at:
 
@@ -130,8 +131,8 @@ docker compose up --build          # then open http://localhost:8080/
 
 `docker-compose.yml` mounts the host's `./data` directory into the container, so the same
 song library, soundfont, and catalogs are used. The image stays small and immutable — add
-songs by dropping them in `./data/kar_raw` (or `./data/videos`) on the host and rebuilding
-the catalog. Override the data location with the **`KARAEOKE_DATA_DIR`** env var.
+songs by dropping them in `./data/kar_raw` (or `./data/videos`, `./data/audio_lyrics`) on the host
+and rebuilding the catalog. Override the data location with the **`KARAEOKE_DATA_DIR`** env var.
 
 > On first boot the container fills any missing pieces into `/data` (the soundfont download
 > needs network once) — pre-populate `./data/soundfont.sf2` so the container needs no
@@ -163,19 +164,34 @@ Drop `.mp4` / `.webm` / `.ogg` / `.mov` / `.m4v` files into **`data/videos/`**, 
 grammar (shorter forms like `{code} - {title}` also work; files with no leading code are
 kept too, using the filename as the title). They appear in the same list marked **🎞️**.
 
-### 5.3 Rebuild the catalog
+### 5.3 Audio + lyrics → `data/audio_lyrics/`
 
-Two ways — both scan `kar_raw/` **and** `videos/` and refresh the library:
+Have a recorded track and a lyric file? Drop **two files that share the same name** into
+**`data/audio_lyrics/`** — the audio (`.mp3` / `.wav` / `.flac` / `.m4a` / `.opus` / …) and a
+matching lyric **sidecar**:
+
+- lyric formats: **`.lrc`** (synced; supports per-word timing for the wipe), a **lyrics-only
+  `.kar` / `.mid`**, **`.vtt` / `.srt`** subtitles, or plain **`.txt`**.
+- e.g. `9700 - Adele - Hello - International - AUDIO.mp3` **+** `9700 - Adele - Hello - International - AUDIO.lrc`
+
+They appear marked **🎵** and play full-stage **with scrolling lyrics**. The **Key** control
+pitch-shifts the audio in real time (in stereo), and volume can go past 100%. (An audio file with
+no sidecar still plays — just without lyrics.)
+
+### 5.4 Rebuild the catalog
+
+Two ways — both scan `kar_raw/`, `videos/` **and** `audio_lyrics/` and refresh the library:
 
 - **In the app:** ⚙ → **Library → ↻ Rebuild Catalog**. The list reloads live.
 - **From the command line:**
   ```bash
   python tools/build-catalog.py          # rebuild catalog.json from kar_raw/
   python tools/build-video-catalog.py    # rebuild catalog-video.json from videos/
+  python tools/build-audio-catalog.py    # rebuild catalog-audio.json from audio_lyrics/
   ```
-  Both scan their folders offline and rewrite the catalogs in place.
+  Each scans its folder offline and rewrites the catalog in place.
 
-### 5.4 Bring your own songs
+### 5.5 Bring your own songs
 
 This project ships **no song content**. Drop your own karaoke files into the data
 folders and rebuild:
@@ -184,6 +200,8 @@ folders and rebuild:
   `"{code} - {artist} - {title} - {lang} - {type}.mid"`), then
   `python tools/build-catalog.py`.
 - **Video** → `data/videos/` (`.mp4`/`.webm`/…), then `python tools/build-video-catalog.py`.
+- **Audio + lyrics** → `data/audio_lyrics/` (an audio file + a matching-name `.lrc`/`.kar`/`.vtt`/
+  `.txt` sidecar), then `python tools/build-audio-catalog.py`.
 
 `catalog.json` is regenerated locally and is intentionally **git-ignored** — it is a
 compilation of your own library, not something the repo distributes.
@@ -393,13 +411,16 @@ karaoke-clone/
 │   ├── serve.py              ← the local server + first-run setup   ← START HERE
 │   ├── serve-lan.sh         ← LAN launcher
 │   ├── build-catalog.py      ← (re)build catalog.json from data/kar_raw/
-│   └── build-video-catalog.py← (re)build catalog-video.json from data/videos/
+│   ├── build-video-catalog.py← (re)build catalog-video.json from data/videos/
+│   └── build-audio-catalog.py← (re)build catalog-audio.json from data/audio_lyrics/
 │
 ├── data/                     ← ALL your content — the mounted volume in Docker
 │   ├── catalog.json          ← MIDI song library (rebuilt locally)        [git-ignored]
 │   ├── catalog-video.json    ← video song library (rebuilt locally)      [git-ignored]
+│   ├── catalog-audio.json    ← audio+lyrics song library (rebuilt locally) [git-ignored]
 │   ├── kar_raw/          ← MIDI/KAR song files (compressed MIDI)   [git-ignored]
 │   ├── videos/               ← video-karaoke files                     [git-ignored]
+│   ├── audio_lyrics/         ← audio files + matching lyric sidecars    [git-ignored]
 │   ├── soundfont.sf2         ← General MIDI SoundFont (~31 MB, auto-fetched) [git-ignored]
 │   ├── manifest.json         ← bgv clip list (auto-written each start)  [git-ignored]
 │   └── bgv/                  ← drop background videos here             [git-ignored]
@@ -412,8 +433,8 @@ karaoke-clone/
     ├── config.js             ← DEFAULT_CONFIG (editable defaults)
     ├── css/style.css · css/remote.css
     ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
-    ├── js/                   ← app modules (app, catalog, audio, video, youtube, lyrics, mic, melody,
-    │                            remote-host, remote [phone], asset-cache, …)
+    ├── js/                   ← app modules (app, catalog, audio, video, youtube, audiofile, lyrics,
+    │                            lyrics-formats, mic, melody, remote-host, remote [phone], asset-cache, …)
     └── vendor/               ← SpessaSynth engine + pako + qrcode (committed)
 ```
 

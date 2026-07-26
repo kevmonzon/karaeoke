@@ -152,7 +152,7 @@ function buildTickToSeconds(tempoMap, ppqn, isSmpte) {
 // KAR conventions: '/' = new line, '\' = new paragraph, '@' lines = metadata.
 // ----------------------------------------------------------------------------
 
-function buildLines(lyricEvents, tickToSeconds) {
+export function buildLines(lyricEvents, tickToSeconds) {
   const has05 = lyricEvents.some((e) => e.type === 0x05);
   const src = lyricEvents.filter((e) => (has05 ? e.type === 0x05 : e.type === 0x01));
 
@@ -271,7 +271,16 @@ export class LyricsEngine {
 
   load(parsed) {
     const t2s = buildTickToSeconds(parsed.tempoMap, parsed.ppqn, parsed.isSmpte);
-    this.rawLines = buildLines(parsed.lyricEvents, t2s);
+    return this.loadLines(buildLines(parsed.lyricEvents, t2s));
+  }
+
+  /**
+   * Load pre-built raw lines directly (used by the AUDIO source's sidecar formats —
+   * .lrc/.vtt/.srt/.txt via lyrics-formats.js, or a lyrics-only .kar/.mid via
+   * buildLines). Shape: [{ start, end, syllables:[{ time, text }] }].
+   */
+  loadLines(rawLines) {
+    this.rawLines = Array.isArray(rawLines) ? rawLines : [];
     this.hasLyrics = this.rawLines.length > 0;
     this._rebuild();
     return this.hasLyrics;

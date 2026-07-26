@@ -18,6 +18,7 @@ export const DEFAULT_CONFIG = {
   data: {
     catalogUrl:      "/catalog.json",       // MIDI/KAR song catalog
     videoCatalogUrl: "/catalog-video.json", // video-karaoke catalog (optional; may be absent)
+    audioCatalogUrl: "/catalog-audio.json", // audio+lyrics catalog (optional; may be absent)
     soundfontUrl:    "/soundfont.sf2",      // General MIDI SoundFont (~31 MB)
     bgvDir:          "/bgv/",               // background-video clips folder (bare names resolve here)
     bgvManifestUrl:  "/manifest.json",      // background-video clip list (written by serve.py)

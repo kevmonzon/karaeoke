@@ -1,9 +1,10 @@
 /*
  * catalog.js — loads the song library and provides search/lookup.
  *
- * Two sources are merged into one list:
+ * Three sources are merged into one list:
  *   /catalog.json        → MIDI/KAR songs   (tagged kind:"midi")
  *   /catalog-video.json  → video songs      (tagged kind:"video", may be absent)
+ *   /catalog-audio.json  → audio+lyrics     (tagged kind:"audio", may be absent)
  * Each record has the catalog schema + a `file` path, and gets:
  *   { code, name, artistName, langName, type, file, kind, id }
  * where `id = `${kind}:${code}`` — a stable identity so a MIDI song and a video
@@ -18,17 +19,20 @@ export class Catalog {
   }
 
   /**
-   * Load and merge the MIDI catalog and (if present) the video catalog.
-   * The video catalog is optional: a 404 or parse error is non-fatal.
+   * Load and merge the MIDI catalog and (if present) the video + audio catalogs.
+   * The video/audio catalogs are optional: a 404 or parse error is non-fatal.
+   * `audioUrl` defaults so callers that pass only (midi, video) still get audio songs.
    * @returns total number of songs loaded.
    */
-  async load(midiUrl = "/catalog.json", videoUrl = "/catalog-video.json") {
+  async load(midiUrl = "/catalog.json", videoUrl = "/catalog-video.json", audioUrl = "/catalog-audio.json") {
     const midi = await fetchArray(midiUrl, /*required*/ true);
     const video = await fetchArray(videoUrl, /*required*/ false);
+    const audioSongs = await fetchArray(audioUrl, /*required*/ false);
 
     this.songs = [
       ...midi.map((s) => tag(s, "midi")),
       ...video.map((s) => tag(s, "video")),
+      ...audioSongs.map((s) => tag(s, "audio")),
     ];
 
     this.byCode.clear();
@@ -92,6 +96,12 @@ export class Catalog {
   static fileUrl(song) {
     if (!song || !song.file) return null;
     return "/" + song.file.split("/").map(encodeURIComponent).join("/");
+  }
+
+  /** Build a fetchable URL for an AUDIO song's lyric sidecar (null if none). */
+  static lyricsUrl(song) {
+    if (!song || !song.lyrics) return null;
+    return "/" + song.lyrics.split("/").map(encodeURIComponent).join("/");
   }
 
   /**

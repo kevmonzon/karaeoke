@@ -15,7 +15,9 @@ import { Catalog } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
-import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
+import { AudioFileEngine } from "./audiofile.js";
+import { parseMidi, LyricsEngine, buildLines, makeTickToSeconds } from "./lyrics.js";
+import { linesFromLyricFile } from "./lyrics-formats.js";
 import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
 import { BackgroundVideo } from "./bgv.js";
@@ -29,14 +31,14 @@ import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
 // Source-kind icon shown in the now-playing header (in place of the dial number).
-const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
+const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐", audio: "🎵" };
 const npIcon = (kind) => NP_ICON[kind] || "🎵";
 
 // --- singletons -------------------------------------------------------------
 const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
-let lyrics, bgv, mic, pitchGuide, video, youtube, chordEngine; // created at boot (need the DOM)
+let lyrics, bgv, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
 let remoteHost;                  // host↔phone relay driver (created at boot)
@@ -46,7 +48,7 @@ let queue = [];
 let queueBy = [];                // parallel to `queue`: who queued each song (phone nickname, or "")
 let current = null;
 let currentBy = "";              // who queued the NOW-PLAYING song via the remote ("" if host-added)
-let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE)
+let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE, audioFile=AUDIO)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
 let recent = []; // recently-played song ids, most-recent first
 let userPaused = false;   // true only when the user paused (the auto-advance exception)
@@ -57,6 +59,7 @@ let favoritesMode = false; // "Favorites" view toggle
 let favorites = new Set(); // starred song ids (persisted separately from the session)
 let lastParsed = null;
 let currentKey = null;
+let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
 let currentMelodyChannel = -1;
 let scoreHit = 0, scoreVoiced = 0;
 
@@ -77,6 +80,7 @@ async function boot() {
   chordEngine = new ChordEngine($("chords"), { simplify: settings.get("chords.simplify") });
   video = new VideoEngine($("kv"), $("kva")); // VIDEO-song playback (picture + offset audio)
   youtube = new YouTubeEngine($("ytplayer")); // YOUTUBE-song playback (credentialless iframe)
+  audioFile = new AudioFileEngine($("kaudio"), audio); // AUDIO-song playback (WebAudio + pitch-shift)
   youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
   youtube.onEnded = () => { if (media === youtube) endOfSong(); };   // unload on end → no suggested-videos screen
   youtube.onError = (code) => onYoutubeError(code);                  // embed-blocked/unavailable → skip + remember
@@ -102,7 +106,7 @@ async function boot() {
   bgv.init();
 
   try {
-    const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"));
+    const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
     loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
     loadBlockedYoutube(); // hide videos that previously failed to embed
@@ -157,6 +161,8 @@ function applyAudioSettings() {
   }
   if (video) { video.setVolume(vol); video.setTempo(tempo); }
   if (youtube) { youtube.setVolume(vol); youtube.setTempo(tempo); }
+  // AUDIO songs: volume + tempo, and the Key control drives a real (stereo) pitch-shift.
+  if (audioFile) { audioFile.setVolume(vol); audioFile.setTempo(tempo); audioFile.setKey(settings.get("audio.key")); }
 }
 
 function onSettingChanged(path) {
@@ -831,8 +837,10 @@ async function ensureEngine() {
 async function playNow(song, by = "") {
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
+  pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
   if (song.kind === "youtube") return playYoutube(song);
   if (song.kind === "video") return playVideo(song);
+  if (song.kind === "audio") return playAudio(song);
   return playMidi(song);
 }
 
@@ -857,7 +865,9 @@ function hideMidiSurfaces() {
 async function playVideo(song) {
   audio.pause();            // silence the synth if a MIDI song was playing
   youtube.unload();         // stop any YouTube video that was playing
+  audioFile.unload();       // …and any audio song
   document.body.classList.remove("youtube-mode");
+  document.body.classList.remove("audio-mode");
   media = video;
   current = song;
   userPaused = false;
@@ -882,13 +892,112 @@ async function playVideo(song) {
   setPlayIcon();
 }
 
+// Hide the NOTE-derived surfaces (pitch guide / chords / channel mixer) + reset note
+// state, WITHOUT touching the lyric surface or the now-playing header. Used by the AUDIO
+// path, which keeps the scrolling lyrics (from a sidecar) but has no MIDI note data.
+function hideNoteSurfaces() {
+  clearTimeout(playDelayTimer);
+  clearTimeout(tcTimer);
+  if (pitchGuide) pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
+  if (chordEngine) chordEngine.clear();
+  if (midiMixer) midiMixer.clear();
+  currentMelodyChannel = -1;
+  lastParsed = null;
+  currentKey = null;
+}
+
+// AUDIO song: a recorded audio file + a separate lyric sidecar. Routed through WebAudio
+// (AudioFileEngine) so the Key control pitch-shifts the audio in stereo and volume can
+// exceed 100%. KEEPS the scrolling lyric surface (loaded from the sidecar); hides the
+// note-derived surfaces (guide/chords/mixer) which need MIDI data. Offset moves the
+// LYRIC time (handled in the rAF loop), not the audio.
+async function playAudio(song) {
+  audio.pause();            // silence the synth if a MIDI song was playing
+  video.unload();           // …and any video
+  youtube.unload();         // …and any YouTube video
+  document.body.classList.remove("video-mode");
+  document.body.classList.remove("youtube-mode");
+  media = audioFile;
+  current = song;
+  userPaused = false;
+  autoAdvancing = false;
+  document.body.classList.add("audio-mode");
+  hideNoteSurfaces();       // guide/chords/mixer off; note state reset (lyrics kept)
+  updateKeyDisplay();       // no detected key → blanks the badge (the ± stepper still shows the number)
+  lib.setNowPlaying(song);
+  pushRecent(song);
+  $("np-title").textContent = song.name || "(untitled)";
+  $("np-artist").textContent = song.artistName || "";
+  $("np-code").textContent = npIcon(song.kind); // source icon instead of the dial number
+
+  const url = Catalog.fileUrl(song);
+  audioFile.setVolume(settings.get("audio.volume"));
+  audioFile.setTempo(settings.get("audio.tempo"));
+  audioFile.setKey(settings.get("audio.key"));
+  await audioFile.load(url);   // fetch the audio into an in-memory blob (reliable load/seek)
+  await loadAudioLyrics(song); // fetch + parse the sidecar into the lyric surface
+  bgv.onSongStart();
+  showTitleCard(song);
+  setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
+  await audioFile.play();
+  setPlayIcon();
+}
+
+// Load an AUDIO song's lyric sidecar into the LyricsEngine. Handles the timed text
+// formats (.lrc/.vtt/.srt), plain .txt (unsynced → spread across the duration once known),
+// and a lyrics-only .kar/.mid (reuse the SMF parser). A missing/failed sidecar is non-fatal.
+async function loadAudioLyrics(song) {
+  const badge = $("lyric-badge");
+  const url = Catalog.lyricsUrl(song);
+  if (!url) { lyrics.clear(); badge.textContent = "no lyrics"; return; }
+  const ext = (song.lyrics.split(".").pop() || "").toLowerCase();
+  try {
+    if (ext === "kar" || ext === "mid" || ext === "midi") {
+      const raw = await cachedArrayBuffer(url);   // may be raw-deflate compressed (like kar_raw)
+      const parsed = parseMidi(toMidiBytes(raw).slice(0));
+      badge.textContent = lyrics.load(parsed) ? "" : "no lyrics";
+    } else {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`sidecar ${res.status}`);
+      const { lines, synced } = linesFromLyricFile(ext, await res.text());
+      if (!synced) {
+        distributeLineTimes(lines, audioFile.duration); // duration may be 0 here → refined in tick
+        pendingUnsyncedLines = lines;
+      }
+      badge.textContent = lyrics.loadLines(lines) ? (synced ? "" : "unsynced") : "no lyrics";
+    }
+  } catch (e) {
+    console.warn("Lyric sidecar failed:", e);
+    lyrics.clear();
+    badge.textContent = "no lyrics";
+  }
+}
+
+// Spread unsynced lyric lines evenly across the song (a small lead-in, then paced to
+// the end) so a plain-text sidecar still scrolls. Falls back to ~1s/line if no duration.
+function distributeLineTimes(lines, duration) {
+  const n = lines.length;
+  if (!n) return;
+  const d = duration && isFinite(duration) && duration > 0 ? duration : n;
+  const lead = Math.min(3, d * 0.05);
+  const span = Math.max(0, d - lead);
+  for (let i = 0; i < n; i++) {
+    const t = lead + (i / n) * span;
+    lines[i].start = t;
+    lines[i].end = t;
+    if (lines[i].syllables[0]) lines[i].syllables[0].time = t;
+  }
+}
+
 // YOUTUBE song (BYOC): no synth/soundfont, no lyric parsing — the official YouTube IFrame
 // player fills the stage. Mirrors playVideo. Offset/key/guide/auto-tune don't apply (the
 // lyrics are baked into the video), so the MIDI-only surfaces stay hidden.
 async function playYoutube(song) {
   audio.pause();            // silence the synth if a MIDI song was playing
   video.unload();           // …and any video
+  audioFile.unload();       // …and any audio song
   document.body.classList.remove("video-mode");
+  document.body.classList.remove("audio-mode");
   media = youtube;
   current = song;
   userPaused = false;
@@ -917,8 +1026,10 @@ async function playMidi(song) {
   if (!(await ensureEngine())) return;
   video.unload();          // stop any video that was playing
   youtube.unload();        // …and any YouTube video
+  audioFile.unload();      // …and any audio song
   document.body.classList.remove("video-mode");
   document.body.classList.remove("youtube-mode");
+  document.body.classList.remove("audio-mode");
   media = audio;
   current = song;
   userPaused = false;
@@ -1000,15 +1111,27 @@ function tick() {
   updateStageBanner(); // singer + "up next" (last 20 s) — change-guarded, cheap
   if (current && media) {
     const isMidi = media === audio;
+    const isAudioFile = media === audioFile;
     const t = media.currentTime;   // active-engine playback time
     const d = media.duration;
 
-    // MIDI-only stage work: lyric sync, pitch guide, scoring, auto-tune. (For a
-    // VIDEO song the lyrics are baked into the picture and there's no note data.)
+    // Lyric sync runs for MIDI *and* AUDIO songs — both show the scrolling lyric
+    // surface (a VIDEO/YouTube song bakes the lyrics into the picture, so it's skipped).
+    if (isMidi || isAudioFile) {
+      const gt = t + (settings.get("lyrics.offsetMs") || 0) / 1000;
+      lyrics.update(gt);
+    }
+    // Unsynced sidecar (.txt): once the real duration is known, spread the lines across it.
+    if (isAudioFile && pendingUnsyncedLines && d > 0) {
+      distributeLineTimes(pendingUnsyncedLines, d);
+      lyrics.loadLines(pendingUnsyncedLines);
+      pendingUnsyncedLines = null;
+    }
+
+    // MIDI-only stage work: pitch guide, chords, mixer, scoring, auto-tune (needs note data).
     if (isMidi) {
       const offset = (settings.get("lyrics.offsetMs") || 0) / 1000;
-      const gt = t + offset;          // visual time — drives lyrics, the guide AND chords
-      lyrics.update(gt);
+      const gt = t + offset;          // visual time — drives the guide AND chords
       if (settings.get("chords.enabled")) chordEngine.update(gt);
 
       // MIDI mode: paint the per-channel VU meters from the live audio levels.
@@ -1293,8 +1416,11 @@ function clearStage() {
   $("title-card").classList.remove("show");
   document.body.classList.remove("video-mode"); // leave the clean video stage
   document.body.classList.remove("youtube-mode");
+  document.body.classList.remove("audio-mode");
+  pendingUnsyncedLines = null;
   if (video) video.unload();
   if (youtube) youtube.unload();
+  if (audioFile) audioFile.unload();
   if (lib) lib.setNowPlaying(null);
 }
 
@@ -1321,7 +1447,7 @@ function updateMelodyToggle() {
 async function onRebuild() {
   const res = await (await fetch("/api/rebuild-catalog", { method: "POST" })).json();
   if (!res.ok) return { ok: false, error: res.error };
-  const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"));
+  const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
   lib.renderList(catalog.search($("search").value));
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };

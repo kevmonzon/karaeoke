@@ -84,6 +84,11 @@
       <video id="kv" class="kv" muted playsinline></video>
       <audio id="kva" class="kva"></audio>
 
+      <!-- AUDIO karaoke: a recorded audio file (its lyrics come from a separate sidecar,
+           shown on the normal lyric surface). Routed through WebAudio by AudioFileEngine so
+           the Key control pitch-shifts it (stereo) and volume can exceed 100%. No layout. -->
+      <audio id="kaudio" class="kaudio"></audio>
+
       <!-- YOUTUBE karaoke (BYOC): the official YouTube IFrame player. Must be a
            `credentialless` iframe so the cross-origin-isolated (COEP) page is allowed to
            embed YouTube, which ships no CORP/COEP — see src/js/youtube.js. Fills the middle
@@ -410,6 +415,11 @@
           <input id="set-remote-url" type="text" class="set-text" placeholder="auto-detect" />
         </label>
         <div class="hint sub">Shows a QR on the queue panel; phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
+      </section>
+
+      <section>
+        <h4>Audio songs <em class="muted">(audio + lyrics)</em></h4>
+        <div class="hint sub">Drop a recorded audio file (<code>.mp3/.wav/.flac/.m4a/.opus…</code>) plus a matching-name lyric sidecar (<code>.lrc</code>, <code>.kar/.mid</code>, <code>.vtt/.srt</code>, or <code>.txt</code>) into <code>data/audio_lyrics/</code>, then Rebuild. The <strong>Key</strong> control pitch-shifts these in real time; timed lyrics scroll like a MIDI song.</div>
       </section>
 
       <section>

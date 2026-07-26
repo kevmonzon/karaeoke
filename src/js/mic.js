@@ -68,7 +68,7 @@ export class MicEngine {
     try { await ctx.resume(); } catch (_) {}
 
     if (!this._workletsLoaded) {
-      await ctx.audioWorklet.addModule(WORKLET_URL);
+      await this.audio.ensureWorkletModule(WORKLET_URL); // shared one-time load (also used by audiofile.js)
       this._workletsLoaded = true;
     }
 

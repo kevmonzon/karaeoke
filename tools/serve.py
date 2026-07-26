@@ -59,17 +59,19 @@ ASSETS = os.path.join(SRC, "assets")
 DATA_DIR = os.path.abspath(os.environ.get("KARAEOKE_DATA_DIR") or os.path.join(APP_DIR, "data"))
 BGV_DIR = os.path.join(DATA_DIR, "bgv")
 VIDEOS_DIR = os.path.join(DATA_DIR, "videos")        # karaoke VIDEO songs (parallel to kar_raw/)
+AUDIO_DIR = os.path.join(DATA_DIR, "audio_lyrics")   # AUDIO songs: audio file + a lyrics sidecar
 DOWNLOADS_DIR = os.path.join(DATA_DIR, "kar_raw")  # compressed-MIDI song payloads
 CATALOG_PATH = os.path.join(DATA_DIR, "catalog.json")
 VIDEO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-video.json")
+AUDIO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-audio.json")
 # Shared blocklist of YouTube videoIds that can't be embedded (owner-disabled / removed). Clients
 # report them via POST /api/youtube-block; /api/youtube-search filters them out for EVERY user.
 YOUTUBE_BLOCKLIST_PATH = os.path.join(DATA_DIR, "youtube-blocklist.json")
 VIDEO_EXTS = (".mp4", ".webm", ".ogg", ".mov")
 
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
-DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/bgv/")
-DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/soundfont.sf2", "/manifest.json")
+DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/bgv/", "/audio_lyrics/")
+DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/catalog-audio.json", "/soundfont.sf2", "/manifest.json")
 
 # --- SpessaSynth engine ---
 # These 4 files are VENDORED into the repo under src/vendor/ (see src/vendor/README.md
@@ -154,6 +156,7 @@ def setup() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)  # kar_raw/
     os.makedirs(VIDEOS_DIR, exist_ok=True)
+    os.makedirs(AUDIO_DIR, exist_ok=True)      # audio_lyrics/
     os.makedirs(BGV_DIR, exist_ok=True)
 
     # 1) engine files (vendored + committed; warn if a checkout is somehow missing them)
@@ -213,6 +216,17 @@ def setup() -> None:
             print("catalog-video.json missing and video builder not found — no videos listed.")
     else:
         print("catalog-video.json: present ✓")
+
+    # 5) catalog-audio.json (AUDIO) — parallel catalog for drop-in audio+lyrics songs.
+    if not os.path.exists(AUDIO_CATALOG_PATH):
+        abuilder = os.path.join(HERE, "build-audio-catalog.py")
+        if os.path.exists(abuilder):
+            print("Building catalog-audio.json from audio_lyrics/ …")
+            os.system(f'"{sys.executable}" "{abuilder}" --audio-dir "{AUDIO_DIR}" --out "{AUDIO_CATALOG_PATH}"')
+        else:
+            print("catalog-audio.json missing and audio builder not found — no audio songs listed.")
+    else:
+        print("catalog-audio.json: present ✓")
     print()
 
 
@@ -488,6 +502,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".mov": "video/quicktime",
         ".ogg": "video/ogg",
         ".ogv": "video/ogg",
+        # audio karaoke payloads (served from audio_lyrics/). NOTE: .ogg is claimed
+        # above for video — use .oga/.opus for audio-only Ogg.
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".flac": "audio/flac",
+        ".m4a": "audio/mp4",
+        ".mp4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".opus": "audio/ogg",
+        ".oga": "audio/ogg",
+        ".weba": "audio/webm",
     }
 
     # Speak HTTP/1.1 so a reverse proxy / cloudflared can keep the origin connection
@@ -633,6 +658,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/rebuild-catalog":
             builder = os.path.join(HERE, "build-catalog.py")
             vbuilder = os.path.join(HERE, "build-video-catalog.py")
+            abuilder = os.path.join(HERE, "build-audio-catalog.py")
             try:
                 subprocess.run([sys.executable, builder,
                                 "--downloads-dir", DOWNLOADS_DIR, "--out", CATALOG_PATH],
@@ -640,6 +666,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if os.path.exists(vbuilder):
                     subprocess.run([sys.executable, vbuilder,
                                     "--videos-dir", VIDEOS_DIR, "--out", VIDEO_CATALOG_PATH],
+                                   cwd=APP_DIR, timeout=180, capture_output=True, check=True)
+                if os.path.exists(abuilder):
+                    subprocess.run([sys.executable, abuilder,
+                                    "--audio-dir", AUDIO_DIR, "--out", AUDIO_CATALOG_PATH],
                                    cwd=APP_DIR, timeout=180, capture_output=True, check=True)
                 with open(CATALOG_PATH, encoding="utf-8") as fh:
                     n = len(json.load(fh))
@@ -649,7 +679,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         vn = len(json.load(fh))
                 except (FileNotFoundError, json.JSONDecodeError):
                     pass
-                self._send_json({"ok": True, "records": n, "videoRecords": vn})
+                an = 0
+                try:
+                    with open(AUDIO_CATALOG_PATH, encoding="utf-8") as fh:
+                        an = len(json.load(fh))
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+                self._send_json({"ok": True, "records": n, "videoRecords": vn, "audioRecords": an})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
             return

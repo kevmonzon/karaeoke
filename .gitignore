@@ -2,13 +2,15 @@
 # the volume — soundfont is auto-refetched by first-run setup, catalog.json is rebuilt.
 /data/kar_raw
 /data/videos
+/data/audio_lyrics
 /data/bgv
 /data/soundfont.sf2
 /data/manifest.json
 # The catalogs are compilations of your own (possibly third-party/ripped) library —
-# do NOT publish them. Both rebuild locally from data/kar_raw/ and data/videos/.
+# do NOT publish them. They rebuild locally from data/kar_raw/, data/videos/, data/audio_lyrics/.
 /data/catalog.json
 /data/catalog-video.json
+/data/catalog-audio.json
 # Runtime-accumulated shared blocklist of un-embeddable YouTube videoIds (deployment-specific).
 /data/youtube-blocklist.json
 /_memory
