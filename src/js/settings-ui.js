@@ -22,6 +22,7 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 const SETTINGS_SCHEMA = [
   // display size / profile
   { id: "set-screen", path: "ui.screen", type: "select" },
+  { id: "set-theme", path: "ui.theme", type: "select" },
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
   { id: "set-bt", path: "bt.enabled", type: "check" },
@@ -92,6 +93,7 @@ const SETTINGS_SCHEMA = [
 // a control without an entry is still searchable by its label + section titles.
 const SEARCH_KEYWORDS = {
   "set-screen": "tv television display size screen distance responsive scale zoom big large",
+  "set-theme": "dark light color theme appearance mode night day",
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",

@@ -100,6 +100,7 @@ async function boot() {
   applyMidiMode();
   applyRemoteMode();
   applyScreenProfile();  // set the display-size profile before first paint of the list/guide
+  applyTheme();          // color theme: dark / light / auto (follows the OS)
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
@@ -197,6 +198,7 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
   if (path === "*" || path === "ui.screen") applyScreenProfile();
+  if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*") settingsUI.syncSettingsUI();
 }
 
@@ -225,6 +227,14 @@ function applyScreenProfile() {
     if (lib) lib.refresh();          // --row-h changed → re-measure the virtualized list
     if (pitchGuide) pitchGuide.resize();
   });
+}
+// Host color theme. "auto" follows the OS (prefers-color-scheme); "dark"/"light" force it.
+// tokens.css reads :root[data-theme]; removing the attribute = auto.
+function applyTheme() {
+  const t = settings.get("ui.theme");
+  const el = document.documentElement;
+  if (t === "dark" || t === "light") el.dataset.theme = t;
+  else el.removeAttribute("data-theme");
 }
 // Re-evaluate the auto profile as the window crosses a breakpoint (debounced); also re-fit
 // the title card, whose 50vh height (and so its title size) changes with the viewport.

@@ -105,7 +105,9 @@ export const DEFAULT_CONFIG = {
   //   "phone" | "tablet" | "computer" | "tv" → force that profile (e.g. pick "tv" for big,
   //                 read-at-a-distance text when casting to a television). A large screen
   //                 (~1800px+) auto-detects as "tv" — switch to "computer" if it's a desktop monitor.
-  ui: { library: true, queue: true, playback: true, screen: "auto" },
+  //   theme = the color theme: "auto" (follow the device / OS preference), "dark", or "light".
+  //           The whole player is designed for both; "auto" tracks prefers-color-scheme live.
+  ui: { library: true, queue: true, playback: true, screen: "auto", theme: "auto" },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).
