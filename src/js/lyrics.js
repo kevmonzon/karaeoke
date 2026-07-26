@@ -166,6 +166,10 @@ function buildLines(lyricEvents, tickToSeconds) {
     if (text == null || text[0] === "@") continue;
     const time = tickToSeconds(ev.tick);
     text = text.replace(/\r\n|\r|\n/g, "/");
+    // Strip stray '^' markers some KAR files embed in the syllable text (a caret
+    // not meant to be shown). Done before break handling so a '^' in front of a
+    // '/' line-break can't hide the break. Empty leftovers are dropped below.
+    text = text.replace(/\^/g, "");
 
     let breakBefore = false;
     while (text[0] === "/" || text[0] === "\\") { breakBefore = true; text = text.slice(1); }
