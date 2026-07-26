@@ -12,6 +12,10 @@ Scans kar_raw/, parses each filename, and emits one record per file
 
 Filenames follow this convention:
     {code} - {artistName} - {name} - {langName} - {type}.{ext}
+Tolerant fallback: if the strict 5-field grammar doesn't match but a leading
+integer code is present, the remainder is still parsed (missing langName -> '',
+missing type -> 'MIDI') so real-world filenames catalog instead of being dropped.
+Only files with no leading dial code are skipped.
 
 Idempotent: safe to re-run. Writes catalog.json atomically (temp file + replace).
 
@@ -53,7 +57,10 @@ def parse_filename(filename: str):
     '1 - Bryan Chong - Tahan - International - MIDI.mid'
       -> {code:1, artistName:'Bryan Chong', name:'Tahan',
           langName:'International', type:'MIDI'}
-    Returns None if the name doesn't match the grammar.
+    Strict 5-field grammar first; a lenient fallback keeps shorter
+    '{code} - …' filenames so a missing langName/type degrades gracefully
+    (langName -> '', type -> 'MIDI') instead of the song being dropped.
+    Returns None only when there is no leading integer code at all.
     """
     base, _ext = os.path.splitext(filename)
 
@@ -64,13 +71,25 @@ def parse_filename(filename: str):
     rest = m.group(2)
 
     parts = rest.split(" - ")
-    if len(parts) < 4:
-        return None
-
-    type_ = parts[-1].strip()
-    lang = parts[-2].strip()
-    artist = parts[0].strip()
-    name = " - ".join(parts[1:-2]).strip()  # everything between artist and lang
+    if len(parts) >= 4:
+        # back-anchored full grammar: code - artist - name - lang - type
+        # (a " - " inside the title stays safe -- name is the re-joined middle)
+        type_ = parts[-1].strip()
+        lang = parts[-2].strip()
+        artist = parts[0].strip()
+        name = " - ".join(parts[1:-2]).strip()
+    elif len(parts) == 3:
+        # code - artist - name - lang   (type missing -> default MIDI)
+        artist, name, lang = parts[0].strip(), parts[1].strip(), parts[2].strip()
+        type_ = "MIDI"
+    elif len(parts) == 2:
+        # code - artist - name         (lang + type missing)
+        artist, name, lang = parts[0].strip(), parts[1].strip(), ""
+        type_ = "MIDI"
+    else:
+        # just a title after the code
+        artist, name, lang = "", rest.strip(), ""
+        type_ = "MIDI"
 
     return {
         "code": code,
