@@ -53,9 +53,11 @@
                  placeholder="Search by title or artist…" autocomplete="off" />
           <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
         </div>
-        <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
-        <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
-        <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
+        <div class="seg-filter" role="group" aria-label="Filters">
+          <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
+          <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
+          <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
+        </div>
       </div>
       <ul id="song-list" class="song-list" role="list" aria-label="Song library"></ul>
     </section>

@@ -181,6 +181,12 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 .pill-btn:hover { color: var(--ink); border-color: var(--accent-2); }
 .pill-btn.active { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 .pill-btn:disabled { opacity: .4; cursor: not-allowed; } /* e.g. 🌐 YouTube on a non-Chromium browser */
+/* The ★ ⟲ 🌐 filters grouped into one segmented control (redesign). Buttons keep
+   their ids/handlers; the container just unifies them visually. */
+.seg-filter { display: inline-flex; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: calc(3px * var(--ui-scale)); gap: 2px; flex: none; }
+.seg-filter .pill-btn { border: 0; background: none; }
+.seg-filter .pill-btn:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
+.seg-filter .pill-btn.active { background: var(--accent-2); color: #04231f; }
 /* text input in the ⚙ panel (e.g. YouTube append-keyword) */
 .set-text {
   width: 130px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
