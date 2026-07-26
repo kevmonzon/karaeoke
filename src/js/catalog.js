@@ -38,6 +38,11 @@ export class Catalog {
     this.byCode.clear();
     this.byId.clear();
     for (const s of this.songs) {
+      // Duplicate dial codes are allowed (several files can share a code). The FIRST record
+      // keeps the plain `kind:code` id (stable for saved sessions/favorites); a later collision
+      // is disambiguated by file path so it stays a distinct, resolvable song (mirrors the
+      // blank-code handling in tag() — see §5.10).
+      if (this.byId.has(s.id)) s.id = `${s.kind}:${s.file || s.name}`;
       this.byId.set(s.id, s);
       // Blank codes (untitled drop-in videos) aren't dialable — keep them out of byCode.
       const codeKey = String(s.code);

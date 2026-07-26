@@ -108,17 +108,20 @@ def parse_filename(filename: str):
 
 def index_audio(audio_dir: str, rel_base: str):
     """Scan audio_lyrics/ once, grouping files by basename (name minus extension).
-    Returns (records_by_code, no_code, collisions, lyric_only).
+    Returns (coded, no_code, dup_codes, lyric_only).
       - each basename with an audio file -> one record, `lyrics` attached if a sidecar exists
+      - EVERY coded record is kept (duplicate dial codes allowed — a code isn't a unique key;
+        identity is resolved app-side by `id`). `dup_codes` is informational only.
       - a basename with only a lyric file -> counted in `lyric_only` (skipped)
       - `no_code` holds records for audio files with no leading dial code (kept, blank code)."""
-    records_by_code = {}
+    coded = []
     no_code = []
-    collisions = []
+    dup_codes = []
     lyric_only = []
+    seen_codes = set()
 
     if not os.path.isdir(audio_dir):
-        return records_by_code, no_code, collisions, lyric_only
+        return coded, no_code, dup_codes, lyric_only
 
     # basename -> {"audio": [fnames], "lyric": [fnames]}
     groups: dict[str, dict[str, list]] = {}
@@ -162,12 +165,12 @@ def index_audio(audio_dir: str, rel_base: str):
         if g["lyric"]:
             rec["lyrics"] = os.path.join(rel_base, pick_lyric(g["lyric"])).replace(os.sep, "/")
 
-        if rec["code"] in records_by_code:
-            collisions.append((rec["code"], audio_fname))
-            continue
-        records_by_code[rec["code"]] = rec
+        if rec["code"] in seen_codes:
+            dup_codes.append((rec["code"], audio_fname))
+        seen_codes.add(rec["code"])
+        coded.append(rec)
 
-    return records_by_code, no_code, collisions, lyric_only
+    return coded, no_code, dup_codes, lyric_only
 
 
 def write_json_atomic(path: str, data) -> None:
@@ -199,19 +202,20 @@ def main() -> int:
         return 0
 
     print(f"Scanning audio     : {args.audio_dir}")
-    by_code, no_code, collisions, lyric_only = index_audio(args.audio_dir, rel_base)
-    print(f"  coded songs      : {len(by_code)}")
-    with_lyrics = sum(1 for r in list(by_code.values()) + no_code if r.get("lyrics"))
+    coded, no_code, dup_codes, lyric_only = index_audio(args.audio_dir, rel_base)
+    print(f"  coded songs      : {len(coded)}")
+    with_lyrics = sum(1 for r in coded + no_code if r.get("lyrics"))
     print(f"  with lyrics      : {with_lyrics}")
     if no_code:
         print(f"  no-code (kept)   : {len(no_code)}  e.g. {[r['name'] for r in no_code[:3]]}")
     if lyric_only:
         print(f"  lyric-only (skip): {len(lyric_only)}  e.g. {lyric_only[:3]}")
-    if collisions:
-        print(f"  duplicate codes  : {len(collisions)}  e.g. {collisions[:3]}")
+    if dup_codes:
+        print(f"  shared codes (kept): {len(dup_codes)}  e.g. {dup_codes[:3]}")
 
-    # Coded records first (sorted by code), then no-code records (sorted by title).
-    songs = sorted(by_code.values(), key=lambda r: r["code"])
+    # Coded records first (stable sort by code → same-code songs keep scan order),
+    # then no-code records (sorted by title).
+    songs = sorted(coded, key=lambda r: r["code"])
     songs += sorted(no_code, key=lambda r: r["name"].lower())
     write_json_atomic(args.out, songs)
 

@@ -221,6 +221,24 @@ test("Catalog.load: blank-code videos get distinct file-based ids (no clobber)",
   assert.equal(c.get(""), undefined); // blank codes aren't dialable
 });
 
+test("Catalog.load: songs that SHARE a dial code are all kept, with distinct ids", async () => {
+  const restore = stubFetch({
+    "/catalog.json": [
+      { code: 5, name: "A", type: "MIDI", file: "kar_raw/5 - X - A.mid" },
+      { code: 5, name: "B", type: "MIDI", file: "kar_raw/5 - Y - B.mid" },
+    ],
+  });
+  const c = new Catalog();
+  const n = await c.load();
+  restore();
+  assert.equal(n, 2);                            // BOTH kept — no drop on a shared code
+  assert.equal(c.search("5").length, 2);         // both searchable by that code
+  assert.equal(c.getById("midi:5").name, "A");   // first keeps the plain kind:code id (back-compat)
+  assert.equal(c.getById("midi:kar_raw/5 - Y - B.mid").name, "B"); // dupe → file-path id
+  assert.notEqual(c.songs[0].id, c.songs[1].id); // distinct → highlight/favorites/session work
+  assert.equal(c.get(5).name, "A");              // numeric dial-search resolves to the first match
+});
+
 test("Catalog.load: a missing/invalid video catalog is non-fatal", async () => {
   const restore = stubFetch({
     "/catalog.json": [{ code: 5, name: "Solo", type: "MIDI", file: "kar_raw/5.mid" }],

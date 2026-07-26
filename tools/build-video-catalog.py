@@ -98,15 +98,18 @@ def parse_filename(filename: str):
 
 
 def index_videos(videos_dir: str, rel_base: str):
-    """Scan videos/ once. Returns (records_by_code, no_code, collisions).
-    `no_code` holds records for files with no leading dial code — kept (not skipped)
-    with a blank code and the filename (sans extension) as the title."""
-    records_by_code = {}
+    """Scan videos/ once. Returns (coded, no_code, dup_codes).
+    `coded` holds EVERY file with a leading dial code (duplicate codes are kept, not
+    skipped — a code isn't a unique key; identity is resolved app-side by `id`). `no_code`
+    holds files with no leading code — blank code, filename as the title. `dup_codes` is
+    informational only."""
+    coded = []
     no_code = []
-    collisions = []
+    dup_codes = []
+    seen_codes = set()
 
     if not os.path.isdir(videos_dir):
-        return records_by_code, no_code, collisions
+        return coded, no_code, dup_codes
 
     for fname in sorted(os.listdir(videos_dir)):
         full = os.path.join(videos_dir, fname)
@@ -134,12 +137,12 @@ def index_videos(videos_dir: str, rel_base: str):
             continue
 
         rec["file"] = rel
-        if rec["code"] in records_by_code:
-            collisions.append((rec["code"], fname))
-            continue
-        records_by_code[rec["code"]] = rec
+        if rec["code"] in seen_codes:
+            dup_codes.append((rec["code"], fname))
+        seen_codes.add(rec["code"])
+        coded.append(rec)
 
-    return records_by_code, no_code, collisions
+    return coded, no_code, dup_codes
 
 
 def write_json_atomic(path: str, data) -> None:
@@ -171,15 +174,16 @@ def main() -> int:
         return 0
 
     print(f"Scanning videos    : {args.videos_dir}")
-    by_code, no_code, collisions = index_videos(args.videos_dir, rel_base)
-    print(f"  coded files      : {len(by_code)}")
+    coded, no_code, dup_codes = index_videos(args.videos_dir, rel_base)
+    print(f"  coded files      : {len(coded)}")
     if no_code:
         print(f"  no-code (kept)   : {len(no_code)}  e.g. {[r['name'] for r in no_code[:3]]}")
-    if collisions:
-        print(f"  duplicate codes  : {len(collisions)}  e.g. {collisions[:3]}")
+    if dup_codes:
+        print(f"  shared codes (kept): {len(dup_codes)}  e.g. {dup_codes[:3]}")
 
-    # Coded records first (sorted by code), then no-code records (sorted by title).
-    songs = sorted(by_code.values(), key=lambda r: r["code"])
+    # Coded records first (stable sort by code → same-code songs keep scan order),
+    # then no-code records (sorted by title).
+    songs = sorted(coded, key=lambda r: r["code"])
     songs += sorted(no_code, key=lambda r: r["name"].lower())
     write_json_atomic(args.out, songs)
 

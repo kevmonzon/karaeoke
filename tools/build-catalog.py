@@ -103,13 +103,17 @@ def parse_filename(filename: str):
 def index_downloads(downloads_dir: str, rel_base: str):
     """
     Scan downloads/ once. Return:
-      records_by_code : {code -> parsed record (with 'file' relative path)}
-      unparsed        : [filenames that didn't match the grammar]
-    First file wins per code; later collisions are reported.
+      records  : [parsed record (with 'file' relative path)] — EVERY parsed file, in scan order
+      unparsed : [filenames that didn't match the grammar]
+      dup_codes: [(code, filename)] where a dial code repeats — KEPT (not skipped), reported only
+    Duplicate dial codes are allowed: a code is not a unique key, so every song is emitted.
+    Identity is resolved app-side by `id` (kind:code, disambiguated by file path on a collision —
+    see catalog.js / §5.10). Numeric dial-search still resolves to the first match.
     """
-    records_by_code = {}
+    records = []
     unparsed = []
-    collisions = []
+    dup_codes = []
+    seen_codes = set()
 
     entries = sorted(os.listdir(downloads_dir))
     for fname in entries:
@@ -126,15 +130,13 @@ def index_downloads(downloads_dir: str, rel_base: str):
             unparsed.append(fname)
             continue
 
-        rel = os.path.join(rel_base, fname).replace(os.sep, "/")
-        rec["file"] = rel
+        rec["file"] = os.path.join(rel_base, fname).replace(os.sep, "/")
+        if rec["code"] in seen_codes:
+            dup_codes.append((rec["code"], fname))
+        seen_codes.add(rec["code"])
+        records.append(rec)
 
-        if rec["code"] in records_by_code:
-            collisions.append((rec["code"], fname))
-            continue
-        records_by_code[rec["code"]] = rec
-
-    return records_by_code, unparsed, collisions
+    return records, unparsed, dup_codes
 
 
 def write_json_atomic(path: str, data) -> None:
@@ -165,14 +167,15 @@ def main() -> int:
     rel_base = os.path.relpath(args.downloads_dir, out_dir).replace(os.sep, "/")
 
     print(f"Scanning songs     : {args.downloads_dir}")
-    by_code, unparsed, collisions = index_downloads(args.downloads_dir, rel_base)
-    print(f"  parsed files     : {len(by_code)}")
+    records, unparsed, dup_codes = index_downloads(args.downloads_dir, rel_base)
+    print(f"  parsed files     : {len(records)}")
     if unparsed:
         print(f"  unparsed (skipped): {len(unparsed)}  e.g. {unparsed[:3]}")
-    if collisions:
-        print(f"  duplicate codes  : {len(collisions)}  e.g. {collisions[:3]}")
+    if dup_codes:
+        print(f"  shared codes (kept): {len(dup_codes)}  e.g. {dup_codes[:3]}")
 
-    songs = sorted(by_code.values(), key=lambda r: r["code"])
+    # Stable sort by code keeps same-code songs in scan (filename) order.
+    songs = sorted(records, key=lambda r: r["code"])
     source = "local"
 
     # catalog.json = a bare array of records (each with the added local `file` path),
