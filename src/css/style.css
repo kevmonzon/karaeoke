@@ -457,19 +457,24 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 
 /* Title card — song title/artist/key over the LYRICS AREA, then fades to the lyrics */
 .lyrics-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
+/* ~50% of the screen height, centered on the stage column (overflows the shorter
+   lyrics-wrap). Stays in-column so it never covers the song list / queue. The TITLE is
+   auto-sized by JS (fitTitleCard) to the largest font that fills this fixed height without
+   truncating — so a short title is huge and a long one shrinks to fit, using the space. */
 .title-card {
-  position: absolute; inset: 0; z-index: 3; border-radius: 12px;
+  position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
+  overflow: hidden; z-index: 3; border-radius: 12px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 6px; text-align: center; padding: 20px;
+  gap: 10px; text-align: center; padding: 24px;
   background: rgba(8, 10, 18, .82); backdrop-filter: blur(4px);
   opacity: 0; pointer-events: none; transition: opacity .6s ease;
 }
 .title-card.show { opacity: 1; }
-.tc-code { color: var(--accent-2); font-size: calc(22px * var(--ui-scale)); font-weight: 800; font-variant-numeric: tabular-nums; }
-.tc-title { font-size: calc(clamp(28px, 5vw, 58px) * var(--ui-scale)); font-weight: 800; line-height: 1.1; max-width: 92%; }
-.tc-artist { font-size: calc(clamp(16px, 2.6vw, 26px) * var(--ui-scale)); color: var(--muted); }
-.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(15px, 2vw, 20px) * var(--ui-scale)); }
-.tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(15px * var(--ui-scale)); }
+/* font-size here is only a pre-JS fallback; fitTitleCard() overrides it inline to fill the card. */
+.tc-title { font-size: calc(clamp(32px, 6vw, 64px) * var(--ui-scale)); font-weight: 800; line-height: 1.08; max-width: 96%; }
+.tc-artist { font-size: calc(clamp(20px, 3.4vw, 36px) * var(--ui-scale)); color: var(--muted); }
+.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(18px, 2.6vw, 28px) * var(--ui-scale)); }
+.tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(18px * var(--ui-scale)); }
 .tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
 /* Mic toggle in the transport row */

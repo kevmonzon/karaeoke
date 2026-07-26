@@ -226,11 +226,12 @@ function applyScreenProfile() {
     if (pitchGuide) pitchGuide.resize();
   });
 }
-// Re-evaluate the auto profile as the window crosses a breakpoint (debounced).
+// Re-evaluate the auto profile as the window crosses a breakpoint (debounced); also re-fit
+// the title card, whose 50vh height (and so its title size) changes with the viewport.
 let _screenResizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(_screenResizeTimer);
-  _screenResizeTimer = setTimeout(applyScreenProfile, 150);
+  _screenResizeTimer = setTimeout(() => { applyScreenProfile(); fitTitleCard(); }, 150);
 });
 
 function applyUiCollapse() {
@@ -1371,14 +1372,34 @@ function showTitleCard(song) {
   clearTimeout(tcTimer);
   const secs = settings.get("titleCard.seconds") || 0;
   if (secs <= 0) { tc.classList.remove("show"); return; }
-  $("tc-code").textContent = `#${song.code}`;
   $("tc-title").textContent = song.name || "";
   $("tc-artist").textContent = song.artistName || "";
   $("tc-singer").textContent = currentBy ? `🎤 ${currentBy}` : ""; // who queued it (remote only)
   $("tc-key").textContent = currentKey && currentKey.source !== "none" && settings.get("key.showBadge")
     ? keyName(currentKey.keyPc, currentKey.mode) : "";
   tc.classList.add("show");
+  fitTitleCard(); // auto-size the title to fill the card without truncating
   tcTimer = setTimeout(() => tc.classList.remove("show"), secs * 1000);
+}
+
+// Grow the title to the largest font that still fits the whole title card (title + artist +
+// singer + key), so it fills the ~50vh card's vertical space without ever truncating. Binary
+// search on px; checks BOTH dimensions (a big short title must not overflow the width either).
+function fitTitleCard() {
+  const card = $("title-card"), title = $("tc-title");
+  if (!card || !title || !title.textContent || !card.classList.contains("show")) return;
+  const st = title.style;
+  const fits = () => card.scrollHeight <= card.clientHeight && card.scrollWidth <= card.clientWidth;
+  let lo = 14, hi = Math.min(240, Math.round(card.clientHeight));
+  st.fontSize = hi + "px";
+  if (!fits()) {
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2;
+      st.fontSize = mid + "px";
+      if (fits()) lo = mid; else hi = mid;
+    }
+    st.fontSize = Math.floor(lo) + "px";
+  }
 }
 
 // Singer + "up next" banner above the melody guide. Shows the current singer (only when the
