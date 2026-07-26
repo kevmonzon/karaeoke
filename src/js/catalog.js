@@ -11,6 +11,28 @@
  * song that happen to share a dial `code` never clobber one another.
  */
 
+// Above this many matches, skip the relevance sort and return in catalog order — keeps a
+// broad single-word query (thousands of hits) snappy per keystroke. Narrow (multi-token)
+// queries — the ones ranking actually helps — are well under this.
+const SEARCH_RANK_CAP = 2000;
+
+/** Relevance score for a matched song (higher = better). Title hits weigh more than artist;
+ *  exact / prefix / whole-query-in-title get bonuses; shorter titles win ties. */
+export function scoreMatch(song, q, tokens) {
+  const name = (song.name || "").toLowerCase();
+  const artist = (song.artistName || "").toLowerCase();
+  let sc = 0;
+  if (name === q) sc += 100;                 // exact title
+  else if (name.startsWith(q)) sc += 40;     // title starts with the whole query
+  else if (name.includes(q)) sc += 20;       // whole query somewhere in the title
+  if (name.startsWith(tokens[0])) sc += 10;  // title starts with the first word
+  for (const t of tokens) {
+    if (name.includes(t)) sc += 4;           // each word in the title
+    else if (artist.includes(t)) sc += 2;    // …or the artist
+  }
+  return sc - name.length * 0.002;           // tie-break: prefer tighter titles
+}
+
 export class Catalog {
   constructor() {
     this.songs = [];
@@ -69,32 +91,43 @@ export class Catalog {
   }
 
   /**
-   * Search by code (exact prefix) or title/artist/lang substring.
-   * The list UI is virtualized, so the default cap is high (return all matches);
-   * callers that only want the top hit pass `limit = 1`.
+   * Search the library. A **pure number** is a dial-code prefix (unchanged). Anything else
+   * is **token-AND**: the query is split into words and a song matches when EVERY word appears
+   * somewhere in its title / artist / language / code — so a query can span fields and word
+   * order doesn't matter ("beer itchyworms" → "Beer" by "The Itchyworms"; "itchy beer" too).
+   * Matches are then relevance-ranked (title hits > artist, exact/prefix > contains). The list
+   * UI is virtualized, so the default cap is high; callers wanting the top hit pass `limit = 1`.
    */
   search(query, limit = 100000) {
     const q = query.trim().toLowerCase();
     if (!q) return this.songs.slice(0, limit);
 
-    const isNumeric = /^\d+$/.test(q);
-    const out = [];
-    for (const s of this.songs) {
-      let hit;
-      if (isNumeric) {
-        hit = String(s.code).startsWith(q);
-      } else {
-        hit =
-          (s.name && s.name.toLowerCase().includes(q)) ||
-          (s.artistName && s.artistName.toLowerCase().includes(q)) ||
-          (s.langName && s.langName.toLowerCase().includes(q));
+    // Pure numeric → dial-code prefix (fast path, first matches win).
+    if (/^\d+$/.test(q)) {
+      const out = [];
+      for (const s of this.songs) {
+        if (String(s.code).startsWith(q)) { out.push(s); if (out.length >= limit) break; }
       }
-      if (hit) {
-        out.push(s);
-        if (out.length >= limit) break;
-      }
+      return out;
     }
-    return out;
+
+    // Token-AND substring across the precomputed haystack.
+    const tokens = q.split(/\s+/).filter(Boolean);
+    const matches = [];
+    for (const s of this.songs) {
+      const hay = s._search || "";
+      let ok = true;
+      for (let i = 0; i < tokens.length; i++) {
+        if (!hay.includes(tokens[i])) { ok = false; break; }
+      }
+      if (ok) matches.push(s);
+    }
+
+    // Relevance-rank the matched subset (cheap; skipped for very broad result sets to stay snappy).
+    if (matches.length > 1 && matches.length <= SEARCH_RANK_CAP) {
+      matches.sort((a, b) => scoreMatch(b, q, tokens) - scoreMatch(a, q, tokens));
+    }
+    return matches.length > limit ? matches.slice(0, limit) : matches;
   }
 
   /** Build a fetchable URL for a song's local file (paths may contain spaces). */
@@ -139,6 +172,9 @@ function tag(song, kind) {
   song.kind = kind;
   const key = (song.code === "" || song.code == null) ? (song.file || song.name) : song.code;
   song.id = `${kind}:${key}`;
+  // Precomputed lowercased haystack (title + artist + lang + code) for token search —
+  // built once at load so a keystroke over 60k+ songs doesn't re-lowercase every field.
+  song._search = `${song.name || ""} ${song.artistName || ""} ${song.langName || ""} ${song.code ?? ""}`.toLowerCase();
   return song;
 }
 

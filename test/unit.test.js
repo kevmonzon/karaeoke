@@ -239,6 +239,50 @@ test("Catalog.load: songs that SHARE a dial code are all kept, with distinct ids
   assert.equal(c.get(5).name, "A");              // numeric dial-search resolves to the first match
 });
 
+// --- Catalog.search (token-AND across fields + ranking) ---------------------
+async function loadCatalog(songs) {
+  const restore = stubFetch({ "/catalog.json": songs });
+  const c = new Catalog();
+  await c.load();
+  restore();
+  return c;
+}
+
+test("Catalog.search: token-AND matches across fields, order-independent (beer itchyworms)", async () => {
+  const c = await loadCatalog([
+    { code: 10, name: "Beer", artistName: "The Itchyworms", langName: "OPM", type: "MIDI", file: "kar_raw/10.mid" },
+    { code: 11, name: "Pariwara", artistName: "The Itchyworms", langName: "OPM", type: "MIDI", file: "kar_raw/11.mid" },
+    { code: 12, name: "Beer Belly", artistName: "Someone Else", langName: "Intl", type: "MIDI", file: "kar_raw/12.mid" },
+  ]);
+  assert.equal(c.search("beer itchyworms").length, 1);          // spans title + artist
+  assert.equal(c.search("beer itchyworms")[0].name, "Beer");
+  assert.equal(c.search("itchyworms beer").length, 1);          // word order doesn't matter
+  assert.equal(c.search("itchy beer")[0].name, "Beer");         // partial tokens
+  assert.equal(c.search("itchyworms").length, 2);               // artist-only → both Itchyworms songs
+  assert.equal(c.search("beer nomatch").length, 0);             // every token must hit
+});
+
+test("Catalog.search: ranks exact/prefix title above looser matches", async () => {
+  const c = await loadCatalog([
+    { code: 1, name: "Better Days", artistName: "X", type: "MIDI", file: "kar_raw/1.mid" },
+    { code: 2, name: "Bet", artistName: "Y", type: "MIDI", file: "kar_raw/2.mid" },
+    { code: 3, name: "You Bet Your Life", artistName: "Z", type: "MIDI", file: "kar_raw/3.mid" },
+  ]);
+  const r = c.search("bet");
+  assert.equal(r.length, 3);          // all contain "bet"
+  assert.equal(r[0].name, "Bet");     // exact title ranked first
+});
+
+test("Catalog.search: numeric query is a dial-code prefix; empty → all", async () => {
+  const c = await loadCatalog([
+    { code: 5, name: "Five", artistName: "A", type: "MIDI", file: "kar_raw/5.mid" },
+    { code: 51, name: "FiftyOne", artistName: "B", type: "MIDI", file: "kar_raw/51.mid" },
+  ]);
+  assert.equal(c.search("5").length, 2);              // prefix 5 → 5 and 51
+  assert.equal(c.search("51")[0].name, "FiftyOne");
+  assert.equal(c.search("").length, 2);               // empty → all
+});
+
 test("Catalog.load: a missing/invalid video catalog is non-fatal", async () => {
   const restore = stubFetch({
     "/catalog.json": [{ code: 5, name: "Solo", type: "MIDI", file: "kar_raw/5.mid" }],
