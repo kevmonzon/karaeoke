@@ -1,34 +1,25 @@
 /* Ka-Rae-oke — offline karaoke styling */
+/* Palette + scale now come from tokens.css (loaded first, see index.html). The app's
+   legacy variable names are ALIASED to the semantic tokens so every existing rule keeps
+   working while the redesign migrates surface-by-surface — and the whole app inherits
+   both themes + the distance-aware --scale ramp for free. tokens.css owns
+   --bg / --sung / --unsung, --row-h, the column widths, and the per-[data-screen] scale. */
 :root {
-  --bg: #0b0d14;
-  --panel: #141824;
-  --panel-2: #1b2030;
-  --ink: #eef2ff;
-  --muted: #8b93ab;
-  --accent: #ff3d81;
-  --accent-2: #37e0c8;
-  --sung: #ffd23f;
-  --unsung: #7b84a0;
-  --line: #262c3d;
+  --panel: var(--surface-1);
+  --panel-2: var(--surface-2);
+  --ink: var(--text);
+  --muted: var(--text-muted);
+  --accent: var(--brand);
+  --accent-2: var(--brand-2);
+  --line: var(--border);
   --line-width: 90%;
   --font-scale: 1;
-  /* Display-size profile knobs (set per [data-screen] below; app.js picks the profile). --ui-scale
-     multiplies the distance-read type; --row-h is the virtualized song-row height (library-ui reads it). */
-  --ui-scale: 1;
-  --row-h: 46px;
-  --lib-w: 340px;   /* library column width (wider on TV so big titles are readable) */
-  --queue-w: 320px; /* queue column width */
+  --ui-scale: var(--scale);   /* legacy name → the new distance-aware ramp (tokens.css) */
 }
-/* Display-size profiles — phone / tablet / computer / TV. app.js sets <html data-screen> from the
-   window size (or the ⚙ override). The stage (lyrics/chords/now-playing) scales for couch distance. */
-html[data-screen="phone"]    { --ui-scale: 0.9; --row-h: 50px; }
-html[data-screen="tablet"]   { --ui-scale: 1.0; --row-h: 54px; }
-html[data-screen="computer"] { --ui-scale: 1.0; --row-h: 46px; }  /* = today's desktop look */
-html[data-screen="tv"]       { --ui-scale: 1.8; --row-h: 92px; --lib-w: 580px; --queue-w: 420px; }  /* big, read-at-a-distance (tall enough for the 1.8× two-line rows; wider columns so titles fit) */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
-  background: radial-gradient(1200px 600px at 70% -10%, #1a2036 0%, var(--bg) 55%);
+  background: radial-gradient(1200px 600px at 70% -10%, var(--surface-2) 0%, var(--bg) 55%);
   color: var(--ink);
   font: 15px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
   display: flex; flex-direction: column;
@@ -38,7 +29,7 @@ body {
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 18px; border-bottom: 1px solid var(--line);
-  background: rgba(10,12,20,.6); backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(6px);
 }
 .brand { font-weight: 800; letter-spacing: .5px; font-size: 20px; }
 .brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */

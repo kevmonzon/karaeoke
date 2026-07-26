@@ -6,6 +6,9 @@
   <title>Ka-Rae-oke — Karaoke</title>
   <!-- 🎤 favicon as an inline SVG data-URI (no external file, works offline). -->
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>" />
+  <!-- Design tokens (redesign): single source for palette, type, scale, both themes.
+       Loaded BEFORE style.css so the app's legacy variable names can alias the tokens. -->
+  <link rel="stylesheet" href="./css/tokens.css" />
   <link rel="stylesheet" href="./css/style.css" />
 
   <!-- pako (UMD) — song payloads may be raw-deflate-compressed MIDI; we inflate
