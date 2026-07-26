@@ -55,6 +55,16 @@ body.queue-collapsed .queue { display: none; }
 body.pb-collapsed .seek-row,
 body.pb-collapsed .playbar { display: none; }
 
+/* Focus mode — distraction-free full-stage lyrics (10-foot). Hides the browse + queue
+   panels so the stage fills the width; the topbar recedes but stays reachable (hover /
+   Esc to exit). Placed after the collapse rules so it wins on grid-template-columns. */
+body.focus-mode .library,
+body.focus-mode .queue { display: none; }
+body.focus-mode .layout { grid-template-columns: 1fr; }
+body.focus-mode .stage { grid-column: 1; }
+body.focus-mode .topbar { opacity: .5; transition: opacity .25s var(--ease); }
+body.focus-mode .topbar:hover { opacity: 1; }
+
 /* Layout */
 .layout {
   flex: 1; display: grid; grid-template-columns: var(--lib-w) 1fr var(--queue-w);
@@ -586,6 +596,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   body.lib-collapsed .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   body.queue-collapsed .layout,
   body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 1fr; }
+  body.focus-mode .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; } /* full stage on narrow too */
 
   .library { min-height: 0; }
   .stage { padding: 14px; }

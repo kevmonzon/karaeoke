@@ -1279,6 +1279,25 @@ function wireUI() {
       fsBtn.title = document.fullscreenElement ? "Exit full screen" : "Full screen";
     });
   }
+
+  // Focus mode — a distraction-free full-stage lyrics view (10-foot). Hides the browse +
+  // queue panels; the topbar stays so you can exit (Esc also exits). Re-measures the
+  // virtual list + guide because the stage width changes.
+  const focusBtn = $("btn-focus");
+  const setFocus = (on) => {
+    document.body.classList.toggle("focus-mode", on);
+    if (focusBtn) {
+      focusBtn.classList.toggle("active", on);
+      focusBtn.title = on ? "Exit focus mode (Esc)" : "Focus mode — hide panels for a full-screen lyrics view (Esc to exit)";
+    }
+    requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); });
+  };
+  if (focusBtn) focusBtn.onclick = () => setFocus(!document.body.classList.contains("focus-mode"));
+  document.addEventListener("keydown", (e) => {
+    // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    if (e.key === "Escape" && !typing && document.body.classList.contains("focus-mode")) setFocus(false);
+  });
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
       const hits = catalog.search(search.value, 1);
