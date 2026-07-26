@@ -1,0 +1,189 @@
+/* ============================================================================
+ * tokens.css — Ka-Rae-oke design tokens (UI/UX redesign, redesign/ui-ux branch)
+ *
+ * The SINGLE source of truth for the design system, consumed by BOTH the host
+ * player (style.css) and the phone remote (remote.css). Everything downstream
+ * references these custom properties — never a raw hex.
+ *
+ * Layers:
+ *   1. Primitives  — theme-agnostic scales (brand hues, space, radius, type, motion).
+ *   2. Semantic    — intent tokens (--bg, --surface-*, --text, --brand…) that FLIP per theme.
+ *   3. Themes      — dark (default, the neon world) + a designed light theme.
+ *   4. Scale ramp  — --scale (fluid type multiplier) with a distance-aware TV ramp
+ *                    and the ⚙ Display-size override (data-screen).
+ *
+ * Design-only: no behavior. See docs/redesign/README.md.
+ * ========================================================================== */
+
+:root {
+  /* ---- 1. PRIMITIVES ---------------------------------------------------- */
+
+  /* Brand hues (raw — the palette Rae asked to keep). Semantic --brand* below
+     picks per-theme variants so the accents stay legible on both grounds. */
+  --pink: #ff3d81;
+  --teal: #37e0c8;
+  --gold: #ffd23f;              /* the sung-syllable wipe — reserved, used once */
+
+  /* Space — 4px base. Kills scattered magic numbers. */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
+  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
+
+  /* Radius */
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-pill: 999px;
+
+  /* Motion — reuse the app's existing easing; animate transform/opacity only. */
+  --ease: cubic-bezier(.33, 0, .1, 1);
+  --dur-fast: 120ms; --dur-base: 220ms; --dur-slow: 450ms;
+
+  /* Type — system fonts only (no vendored webfonts; buildless). */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Fluid type tiers — clamp(min, viewport-blend, max) × the --scale ramp.
+     Replaces the old per-screen `calc(px * --ui-scale)` sprinkled everywhere. */
+  --t-display: calc(clamp(2rem,   1.1rem + 4.2vw, 4rem)   * var(--scale));
+  --t-lyric:   calc(clamp(1.35rem, 0.95rem + 2.4vw, 2.6rem) * var(--scale));
+  --t-h1:      calc(clamp(1.3rem, 1.1rem + 1vw,   1.9rem) * var(--scale));
+  --t-h2:      calc(clamp(1.1rem, 1rem + .6vw,    1.4rem) * var(--scale));
+  --t-h3:      calc(clamp(.95rem, .9rem + .3vw,   1.1rem) * var(--scale));
+  --t-body:    calc(1rem      * var(--scale));
+  --t-label:   calc(.8125rem  * var(--scale));  /* 13px */
+  --t-tiny:    calc(.6875rem  * var(--scale));  /* 11px */
+
+  /* Density — row heights / control sizing (was the per-screen --row-h constants).
+     library-ui.js reads --row-h; keep that name. */
+  --row-h: 46px;
+  --control-h: 40px;
+  --touch: 44px;                /* minimum touch target */
+
+  /* Column widths (docked rails on a wide desktop). */
+  --lib-w: 340px;
+  --queue-w: 320px;
+
+  /* ---- 4. SCALE RAMP (default; overridden below) ----------------------- */
+  --scale: 1;
+}
+
+/* ============================================================================
+ * 2 + 3. SEMANTIC TOKENS per THEME
+ * Dark is the default (the product's neon world). Light is designed, not
+ * inverted — aligned with the remote's light palette, brand hues darkened for
+ * WCAG-AA on white. Group dark on :root + [data-theme="dark"] so a forced-dark
+ * beats the light @media; light lives in the @media block AND [data-theme="light"].
+ * ========================================================================== */
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #0b0d14;
+  --surface-0: #10131f;
+  --surface-1: #141824;
+  --surface-2: #1b2030;
+  --border: #262c3d;
+  --border-soft: #1d2231;
+  --text: #eef2ff;
+  --text-muted: #8b93ab;
+  --text-dim: #5b627a;
+
+  --brand: var(--pink);
+  --brand-ink: #ffffff;         /* text/glyph on a brand fill */
+  --brand-2: var(--teal);
+  --brand-2-ink: #05201c;
+
+  --sung: var(--gold);          /* karaoke wipe (foreground) */
+  --unsung: #7b84a0;
+
+  --scrim: rgba(5, 6, 10, .62); /* dim behind sheets/overlays (never over lyrics) */
+  --focus: var(--teal);
+
+  --ok: #37e0c8; --warn: #f5c451; --bad: #ff5a6a;
+
+  --elev-1: 0 8px 24px -12px rgba(0, 0, 0, .5);
+  --elev-2: 0 24px 60px -20px rgba(0, 0, 0, .6);
+
+  color-scheme: dark;
+}
+
+/* Light — applies when the OS prefers light AND the user hasn't forced dark. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f6fa;
+    --surface-0: #ffffff;
+    --surface-1: #ffffff;
+    --surface-2: #eef1f7;
+    --border: #d9deea;
+    --border-soft: #e6e9f2;
+    --text: #131722;
+    --text-muted: #5c667e;
+    --text-dim: #97a0b5;
+
+    --brand: #e21e6b;           /* pink, darkened → AA on white */
+    --brand-ink: #ffffff;
+    --brand-2: #0f8576;         /* teal, darkened → AA on white */
+    --brand-2-ink: #ffffff;
+
+    --sung: #b8730a;            /* amber → readable wipe on a light stage */
+    --unsung: #aeb4c6;
+
+    --scrim: rgba(20, 24, 34, .32);
+    --focus: #0f8576;
+
+    --ok: #0f8576; --warn: #b7791f; --bad: #d64550;
+
+    --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
+    --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
+
+    color-scheme: light;
+  }
+}
+
+/* Forced light (user toggle) — wins even under an OS dark preference. */
+:root[data-theme="light"] {
+  --bg: #f5f6fa;
+  --surface-0: #ffffff;
+  --surface-1: #ffffff;
+  --surface-2: #eef1f7;
+  --border: #d9deea;
+  --border-soft: #e6e9f2;
+  --text: #131722;
+  --text-muted: #5c667e;
+  --text-dim: #97a0b5;
+
+  --brand: #e21e6b;
+  --brand-ink: #ffffff;
+  --brand-2: #0f8576;
+  --brand-2-ink: #ffffff;
+
+  --sung: #b8730a;
+  --unsung: #aeb4c6;
+
+  --scrim: rgba(20, 24, 34, .32);
+  --focus: #0f8576;
+
+  --ok: #0f8576; --warn: #b7791f; --bad: #d64550;
+
+  --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
+  --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
+
+  color-scheme: light;
+}
+
+/* ============================================================================
+ * 4. SCALE RAMP — one fluid mechanism, no discrete "mode" multiplier.
+ *   • Default (auto): --scale ramps up on large viewports so a far TV gets big,
+ *     10-foot type — a smooth ramp, not a separate stylesheet path.
+ *   • Override: the ⚙ Display-size setting stamps [data-screen] and wins
+ *     (higher specificity than the bare :root ramp), for when Auto guesses wrong.
+ * ========================================================================== */
+@media (min-width: 1500px) { :root { --scale: 1.12; } }
+@media (min-width: 1900px) { :root { --scale: 1.32; } }
+@media (min-width: 2500px) { :root { --scale: 1.6; } }
+
+:root[data-screen="phone"]    { --scale: 0.92; --row-h: 50px; }
+:root[data-screen="tablet"]   { --scale: 1.0;  --row-h: 54px; }
+:root[data-screen="computer"] { --scale: 1.0;  --row-h: 46px; }
+:root[data-screen="tv"]       { --scale: 1.7;  --row-h: 88px; --lib-w: 580px; --queue-w: 420px; }
+
+/* Respect reduced-motion at the token layer too (components read --dur-*). */
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+}
