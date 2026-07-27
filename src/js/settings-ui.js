@@ -320,6 +320,11 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       updateMicBtn();
     });
 
+    // Reset just the lyric offset to 0 (settings.set fans out to applyVisualSettings;
+    // syncSettingsUI moves the slider + "0 ms" label back).
+    const rOff = $("reset-offset");
+    if (rOff) rOff.onclick = () => { settings.set("lyrics.offsetMs", 0); syncSettingsUI(); };
+
     $("settings-reset").onclick = () => {
       settings.reset();                 // clears karaeoke.settings.v1 → re-applies defaults + syncs controls
       const s = $("set-search");

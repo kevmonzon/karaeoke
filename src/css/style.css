@@ -652,6 +652,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .reset-btn { width: 100%; padding: 11px; border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 13px/1 var(--font-sans); }
 .reset-btn:hover { background: var(--brand); color: var(--brand-ink); }
+/* Reset-offset sits inline in the Lyrics section; give it the row's bottom rhythm so it
+   isn't flush against the next control (the hint above already provides the top gap). */
+#reset-offset { margin-bottom: var(--s-3); }
 
 /* Danger zone: the full "Erase all app data" factory reset. */
 .danger-zone { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--border-soft); }
