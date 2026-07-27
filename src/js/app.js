@@ -435,7 +435,7 @@ let remoteLanUrl = null; // server-detected LAN base (fetched once, cached)
 async function refreshRemoteQr(on) {
   const box = $("remote-qr");
   if (!box) return;
-  if (!on) { box.classList.remove("show"); return; }
+  if (!on) { box.classList.remove("show"); renderQr($("focus-qr"), ""); return; }
   if (remoteLanUrl == null) {
     try {
       const d = await (await fetch("/api/remote/info")).json();
@@ -449,6 +449,7 @@ async function refreshRemoteQr(on) {
   const link = $("remote-qr-url");
   if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
   renderQr($("remote-qr-code"), url);
+  renderQr($("focus-qr"), url); // same QR mirrored into the focus-mode overlay (CSS gates visibility)
   box.classList.add("show");
 }
 
