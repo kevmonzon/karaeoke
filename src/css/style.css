@@ -337,6 +337,8 @@ button.fav.on { color: #ffce3a; }
 .np-artist { color: var(--muted); font-size: calc(14px * var(--ui-scale)); }
 .badge { font-size: calc(11px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
 .badge:empty { display: none; }
+/* Queued-song count: same pill as .badge, teal fill to tie it to the queue / "up next". */
+.queue-count { flex: none; background: var(--brand-2); font-weight: 700; letter-spacing: .3px; }
 
 /* Source icon on each song row (and queue item): 🎤 MIDI · 🎞️ video. */
 .kind {

@@ -76,6 +76,10 @@
         <span id="now-singer" class="now-singer"></span>
         <span id="np-key" class="np-key"></span>
         <span id="lyric-badge" class="badge"></span>
+        <!-- Queued-song count (far right): "⏭ N", hidden when the queue is empty. Updated
+             (change-guarded) in updateStageBanner. Especially useful when the queue panel is
+             hidden (focus mode / phone). -->
+        <span id="queue-count" class="badge queue-count" title="Songs queued"></span>
         <!-- "Up next" (last ~20 s) — a pill that OVERLAYS the now-playing bar (absolute, so it never
              reflows the lyrics); collapses when empty. Populated only for phone-queued songs. -->
         <div id="up-next" class="up-next"></div>

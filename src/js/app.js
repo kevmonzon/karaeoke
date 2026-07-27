@@ -1488,12 +1488,18 @@ function fitTitleCard() {
 // Singer + "up next" banner above the melody guide. Shows the current singer (only when the
 // playing song was queued from the remote) and, in the last 20 s, the next queued song + singer.
 // Change-guarded so it's cheap to call every frame from the rAF loop.
-let _bannerNow = null, _bannerUp = null;
+let _bannerNow = null, _bannerUp = null, _queueCount = null;
 function updateStageBanner() {
   const nowEl = $("now-singer"), upEl = $("up-next");
   if (!nowEl || !upEl) return;
   const nowText = current && currentBy ? `🎤 ${currentBy}` : "";
   if (nowText !== _bannerNow) { nowEl.textContent = nowText; _bannerNow = nowText; }
+  // Queued-song count chip (far right of the bar): "⏭ N", hidden when empty (:empty in CSS).
+  const qEl = $("queue-count");
+  if (qEl) {
+    const qText = queue.length ? `⏭ ${queue.length}` : "";
+    if (qText !== _queueCount) { qEl.textContent = qText; _queueCount = qText; }
+  }
   let upName = "", upWho = "";
   if (current && media && media.duration > 0 && queue.length) {
     const remaining = media.duration - media.currentTime;
