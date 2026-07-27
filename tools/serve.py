@@ -41,7 +41,6 @@ import socketserver
 import sys
 import threading
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -49,10 +48,8 @@ import webbrowser
 HERE = os.path.dirname(os.path.abspath(__file__))   # …/tools (this script lives in tools/)
 # The static app (code). Override with KARAEOKE_APP_DIR; defaults to the project root.
 APP_DIR = os.path.abspath(os.environ.get("KARAEOKE_APP_DIR") or os.path.dirname(HERE))
-ROOT = APP_DIR                                       # back-compat alias: the app/web root
 SRC = os.path.join(APP_DIR, "src")
 VENDOR = os.path.join(SRC, "vendor")
-ASSETS = os.path.join(SRC, "assets")
 
 # All mutable/user data lives under DATA_DIR — mount this as a volume in Docker.
 # Defaults to <project>/data; override with KARAEOKE_DATA_DIR (e.g. /data in a container).
@@ -151,6 +148,19 @@ def _valid_soundfont(path: str) -> bool:
         return False
 
 
+def _run_builder(builder: str, *args: str) -> None:
+    """Run a catalog builder as a subprocess (not os.system — no shell parsing, so paths with
+    spaces/quotes are safe on every platform) and surface failures instead of swallowing them."""
+    try:
+        subprocess.run([sys.executable, builder, *args],
+                       cwd=APP_DIR, timeout=180, capture_output=True, check=True)
+    except subprocess.CalledProcessError as exc:
+        err = (exc.stderr or b"").decode("utf-8", "replace").strip()[:400]
+        print(f"  ! builder failed ({os.path.basename(builder)}): {err or exc}")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"  ! builder could not run ({os.path.basename(builder)}): {exc}")
+
+
 def setup() -> None:
     os.makedirs(VENDOR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -200,7 +210,7 @@ def setup() -> None:
         builder = os.path.join(HERE, "build-catalog.py")
         if os.path.exists(builder):
             print("Building catalog.json from kar_raw/ …")
-            os.system(f'"{sys.executable}" "{builder}" --downloads-dir "{DOWNLOADS_DIR}" --out "{CATALOG_PATH}"')
+            _run_builder(builder, "--downloads-dir", DOWNLOADS_DIR, "--out", CATALOG_PATH)
         else:
             print("catalog.json missing and builder script not found — search will be empty.")
     else:
@@ -211,7 +221,7 @@ def setup() -> None:
         vbuilder = os.path.join(HERE, "build-video-catalog.py")
         if os.path.exists(vbuilder):
             print("Building catalog-video.json from videos/ …")
-            os.system(f'"{sys.executable}" "{vbuilder}" --videos-dir "{VIDEOS_DIR}" --out "{VIDEO_CATALOG_PATH}"')
+            _run_builder(vbuilder, "--videos-dir", VIDEOS_DIR, "--out", VIDEO_CATALOG_PATH)
         else:
             print("catalog-video.json missing and video builder not found — no videos listed.")
     else:
@@ -222,7 +232,7 @@ def setup() -> None:
         abuilder = os.path.join(HERE, "build-audio-catalog.py")
         if os.path.exists(abuilder):
             print("Building catalog-audio.json from audio_lyrics/ …")
-            os.system(f'"{sys.executable}" "{abuilder}" --audio-dir "{AUDIO_DIR}" --out "{AUDIO_CATALOG_PATH}"')
+            _run_builder(abuilder, "--audio-dir", AUDIO_DIR, "--out", AUDIO_CATALOG_PATH)
         else:
             print("catalog-audio.json missing and audio builder not found — no audio songs listed.")
     else:
@@ -377,6 +387,11 @@ def _youtube_search(query: str, max_results: int = 20):
 # server is a keyed relay: the code is the routing key AND a soft gate (a wrong code
 # hits no live room → rejected). In-memory only; a room vanishes when its host stops
 # pushing (ROOM_TTL). Multiple hosts on one server each get their own room.
+# Serializes /api/rebuild-catalog so a burst of requests can't spawn concurrent builder
+# subprocesses (unauthenticated endpoint → cheap CPU/process-DoS guard). non-blocking:
+# a request that finds a build already running is rejected with 409 rather than queued.
+_rebuild_lock = threading.Lock()
+
 _remote_lock = threading.Lock()
 _rooms: dict = {}             # roomCode(upper) -> {rev, ts, now, queue, settings, commands:[], seq}
 REMOTE_CMD_TYPES = frozenset((
@@ -423,6 +438,7 @@ def _room_add_command(room, cmd) -> int:
     if not room:
         return 0
     with _remote_lock:
+        _gc_rooms_locked()    # reclaim dead rooms even when no host is pushing anymore
         r = _rooms.get(room)
         if not r or r["ts"] < int(time.time()) - ROOM_TTL:
             return 0          # no live host for this code → reject
@@ -469,6 +485,7 @@ def _room_state(code, since) -> dict:
     if not room:
         return {"ok": False, "error": "no-room"}
     with _remote_lock:
+        _gc_rooms_locked()    # guests poll this ~1/s → reclaims rooms after all hosts go silent
         r = _rooms.get(room)
         if not r or r["ts"] < int(time.time()) - ROOM_TTL:
             return {"ok": False, "error": "no-room"}
@@ -532,18 +549,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Pretty route: /remote → the mobile control page (served from APP_DIR/src).
         if path in ("/remote", "/remote/"):
             self.path = "/remote.html"
-        # Remote-relay read endpoints (before static/range handling).
-        elif path.startswith("/api/remote/"):
-            return self._handle_remote_get(path)
-        # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
-        # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
+        # The whole body is under the BrokenPipe guard: a phone dropping mid-poll (frequent
+        # on the /api/remote/state loop) or a client aborting a 32 MB soundfont is the client's
+        # doing, not ours — drop the connection quietly instead of logging a traceback per drop.
         try:
+            # Remote-relay read endpoints (before static/range handling).
+            if path.startswith("/api/remote/"):
+                return self._handle_remote_get(path)
+            # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
+            # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
             if self.headers.get("Range") and self._serve_range():
                 return
             super().do_GET()
         except (BrokenPipeError, ConnectionResetError):
-            # Client/tunnel hung up mid-transfer (e.g. an aborted 32 MB soundfont) — not
-            # our failure; drop the connection quietly instead of spewing a traceback.
             self.close_connection = True
 
     def _handle_remote_get(self, path):
@@ -656,6 +674,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         raw = self.rfile.read(length) if length else b""
 
         if path == "/api/rebuild-catalog":
+            if not _rebuild_lock.acquire(blocking=False):
+                self._send_json({"ok": False, "error": "rebuild already in progress"}, 409)
+                return
             builder = os.path.join(HERE, "build-catalog.py")
             vbuilder = os.path.join(HERE, "build-video-catalog.py")
             abuilder = os.path.join(HERE, "build-audio-catalog.py")
@@ -688,6 +709,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._send_json({"ok": True, "records": n, "videoRecords": vn, "audioRecords": an})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
+            finally:
+                _rebuild_lock.release()
             return
         if path == "/api/remote/host":
             # Host pushes its room's snapshot + drains that room's commands. Body:
@@ -715,8 +738,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Keyless YouTube search proxy. Body: {"q": "<query>"} → {"ok", "items":[…]}.
             # Errors are non-fatal (200 with empty items) so the UI just shows nothing.
             try:
-                query = (json.loads(raw or b"{}").get("q") or "").strip()
-                items = _youtube_search(query, 20) if query else []
+                body = json.loads(raw or b"{}")
+                query = (body.get("q") or "").strip()
+                try:
+                    n = int(body.get("maxResults") or 20)
+                except (TypeError, ValueError):
+                    n = 20
+                n = max(1, min(50, n))  # clamp so a caller can't request an unbounded scrape
+                items = _youtube_search(query, n) if query else []
                 self._send_json({"ok": True, "items": items})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "items": [], "error": str(exc)[:200]})

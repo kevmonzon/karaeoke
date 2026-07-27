@@ -27,13 +27,10 @@ Stdlib only (no pip install needed). Python 3.7+
 from __future__ import annotations
 
 import argparse
-import glob
-import json
 import os
-import re
 import sys
-import tempfile
-import time
+
+from catalog_common import IGNORE_NAMES, parse_filename, write_json_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # …/tools
 ROOT = os.path.dirname(HERE)                         # project root (parent of tools/)
@@ -42,62 +39,10 @@ DATA_DIR = os.path.abspath(os.environ.get("KARAEOKE_DATA_DIR") or os.path.join(R
 DEFAULT_DOWNLOADS = os.path.join(DATA_DIR, "kar_raw")
 DEFAULT_OUT = os.path.join(DATA_DIR, "catalog.json")
 
-# Non-song files that live in kar_raw/ and must never become catalog records.
-IGNORE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
-
-# Filename grammar. code is a leading integer; the trailing " - <lang> - <type>"
-# is anchored from the RIGHT so that a " - " inside a song title never corrupts
-# the code / langName / type fields. Whatever remains in the middle is the artist
-# (first chunk) and the name (the rest, re-joined) -- robust to future titles.
-_LEADING_CODE = re.compile(r"^(\d+)\s*-\s*(.*)$", re.DOTALL)
-
-
-def parse_filename(filename: str):
-    """
-    '1 - Bryan Chong - Tahan - International - MIDI.mid'
-      -> {code:1, artistName:'Bryan Chong', name:'Tahan',
-          langName:'International', type:'MIDI'}
-    Strict 5-field grammar first; a lenient fallback keeps shorter
-    '{code} - …' filenames so a missing langName/type degrades gracefully
-    (langName -> '', type -> 'MIDI') instead of the song being dropped.
-    Returns None only when there is no leading integer code at all.
-    """
-    base, _ext = os.path.splitext(filename)
-
-    m = _LEADING_CODE.match(base)
-    if not m:
-        return None
-    code = int(m.group(1))
-    rest = m.group(2)
-
-    parts = rest.split(" - ")
-    if len(parts) >= 4:
-        # back-anchored full grammar: code - artist - name - lang - type
-        # (a " - " inside the title stays safe -- name is the re-joined middle)
-        type_ = parts[-1].strip()
-        lang = parts[-2].strip()
-        artist = parts[0].strip()
-        name = " - ".join(parts[1:-2]).strip()
-    elif len(parts) == 3:
-        # code - artist - name - lang   (type missing -> default MIDI)
-        artist, name, lang = parts[0].strip(), parts[1].strip(), parts[2].strip()
-        type_ = "MIDI"
-    elif len(parts) == 2:
-        # code - artist - name         (lang + type missing)
-        artist, name, lang = parts[0].strip(), parts[1].strip(), ""
-        type_ = "MIDI"
-    else:
-        # just a title after the code
-        artist, name, lang = "", rest.strip(), ""
-        type_ = "MIDI"
-
-    return {
-        "code": code,
-        "name": name,
-        "artistName": artist,
-        "langName": lang,
-        "type": type_,
-    }
+# Payload extensions in kar_raw/ (raw-DEFLATE MIDI/KAR). Whitelisting keeps stray
+# non-payloads (e.g. an interrupted download's `.part`) out of the catalog — matching
+# how the video/audio builders filter by extension.
+MIDI_EXTS = (".mid", ".midi", ".kar")
 
 
 def index_downloads(downloads_dir: str, rel_base: str):
@@ -124,8 +69,10 @@ def index_downloads(downloads_dir: str, rel_base: str):
             continue
         if fname.startswith("_failures-"):  # downloader's own log files
             continue
+        if not fname.lower().endswith(MIDI_EXTS):  # skip non-payloads (e.g. a `.part`)
+            continue
 
-        rec = parse_filename(fname)
+        rec = parse_filename(fname)  # default_type "MIDI" (grammar may still carry a type)
         if rec is None:
             unparsed.append(fname)
             continue
@@ -137,18 +84,6 @@ def index_downloads(downloads_dir: str, rel_base: str):
         records.append(rec)
 
     return records, unparsed, dup_codes
-
-
-def write_json_atomic(path: str, data) -> None:
-    d = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".catalog-", suffix=".tmp", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
 
 
 def main() -> int:

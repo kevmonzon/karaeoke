@@ -28,6 +28,7 @@ let lastOk = 0;          // last successful poll time (connection health)
 let ytOn = false;        // include YouTube results in search
 let seeking = false;     // true while the user drags the seek slider (don't fight them)
 let pollTimer = null;
+let uiTimer = null;      // smooth-progress ticker (paired with pollTimer; both cleared on leave)
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -81,6 +82,11 @@ function wireGate() {
 
 function showGate(msg) {
   room = "";
+  // Tear down the poll/tick loop and drop the stale snapshot, so a left room's progress
+  // bar stops extrapolating behind the gate and re-entry starts clean.
+  clearInterval(pollTimer); clearInterval(uiTimer);
+  pollTimer = uiTimer = null;
+  state = null; lastRev = -1;
   document.body.classList.remove("connected");
   $("gate-err").textContent = msg || "";
   $("gate-code").focus();
@@ -95,7 +101,7 @@ function enterRoom(code) {
   poll();
   if (!pollTimer) {
     pollTimer = setInterval(poll, 1000);   // pull host state
-    setInterval(uiTick, 250);              // smooth now-playing progress between polls
+    uiTimer = setInterval(uiTick, 250);    // smooth now-playing progress between polls
   }
 }
 
@@ -123,7 +129,7 @@ function applyPrefs() {
 // Relay I/O (all scoped to the room)
 // ---------------------------------------------------------------------------
 async function poll() {
-  if (!room) return;
+  if (!room || document.hidden) return; // don't poll a backgrounded phone (battery/network)
   try {
     const res = await fetch(`/api/remote/state?room=${room}&since=${Math.max(0, lastRev)}`);
     const d = await res.json();
@@ -131,7 +137,7 @@ async function poll() {
     if (d && d.error === "no-room") {
       // The host stopped pushing (tab closed / server restart) — stay on the code and keep
       // polling; the room resumes when the host comes back. renderConn shows "waiting".
-      state = null; renderNow(); renderQueue();
+      state = null; renderNow(); renderQueue(); renderSettingsMirror();
     } else if (d && d.ok && !d.unchanged) {
       state = d; lastRev = d.rev; stamp = performance.now();
       reconcile(); // drop optimistic overrides the host has now caught up to

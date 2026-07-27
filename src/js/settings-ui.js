@@ -25,7 +25,8 @@ const SETTINGS_SCHEMA = [
   { id: "set-theme", path: "ui.theme", type: "select" },
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
-  { id: "set-bt", path: "bt.enabled", type: "check" },
+  { id: "set-bt", path: "bt.enabled", type: "check" }, // lives in the Display category in index.html
+
   { id: "set-smooth", path: "lyrics.smooth", type: "check" },
   { id: "set-lines", path: "lyrics.lineCount", type: "range", fmt: (v) => `${v}` },
   { id: "set-merge", path: "lyrics.mergeLines", type: "range", fmt: (v) => `${v}` },
@@ -141,9 +142,10 @@ export function matchesQuery(text, query) {
  * @param {object} deps.settings   the Settings store
  * @param {object} deps.mic        the MicEngine (enable button + status)
  * @param {()=>Promise<{ok:boolean, records?:number, error?:string}>} deps.onRebuild
+ * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
  */
-export function createSettingsUI({ settings, mic, onRebuild }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -302,12 +304,14 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
       btn.disabled = false; btn.textContent = orig;
     };
 
-    $("mic-enable").onclick = async () => {
+    // Delegate to the app's single mic path (same Bluetooth-mode guard as the transport
+    // button); fall back to a local toggle if no handler was injected.
+    $("mic-enable").onclick = onToggleMic || (async () => {
       $("mic-status").textContent = mic.enabled ? "Stopping…" : "Requesting microphone…";
       if (mic.enabled) mic.disable();
       else await mic.enable();
       updateMicBtn();
-    };
+    });
 
     $("settings-reset").onclick = () => { settings.reset(); };
   }

@@ -41,11 +41,10 @@ Stdlib only. Python 3.7+
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import re
 import sys
-import tempfile
+
+from catalog_common import IGNORE_NAMES, parse_filename, write_json_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # …/tools
 ROOT = os.path.dirname(HERE)                         # project root (parent of tools/)
@@ -60,50 +59,6 @@ AUDIO_EXTS = (".mp3", ".wav", ".flac", ".m4a", ".aac", ".opus", ".oga", ".ogg", 
 LYRIC_EXTS = (".lrc", ".kar", ".mid", ".midi", ".vtt", ".srt", ".txt")
 # Lower number = higher priority when a basename has more than one sidecar.
 LYRIC_PRIORITY = {".lrc": 0, ".kar": 1, ".mid": 1, ".midi": 1, ".vtt": 2, ".srt": 2, ".txt": 3}
-
-# Non-song files that may live in audio_lyrics/ and must never become records.
-IGNORE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store", "manifest.json"}
-
-# Leading integer code, then the rest (same anchor as the other builders).
-_LEADING_CODE = re.compile(r"^(\d+)\s*-\s*(.*)$", re.DOTALL)
-
-
-def parse_filename(filename: str):
-    """
-    '9700 - Adele - Hello - International - AUDIO.mp3'
-      -> {code:9700, artistName:'Adele', name:'Hello',
-          langName:'International', type:'AUDIO'}
-    Strict grammar first; a lenient fallback keeps `{code} - anything` files.
-    Returns None only when there is no leading integer code at all.
-    """
-    base, _ext = os.path.splitext(filename)
-
-    m = _LEADING_CODE.match(base)
-    if not m:
-        return None
-    code = int(m.group(1))
-    rest = m.group(2)
-
-    parts = rest.split(" - ")
-    if len(parts) >= 4:
-        # back-anchored, exactly like the other builders (a " - " inside the title is safe)
-        lang = parts[-2].strip()
-        artist = parts[0].strip()
-        name = " - ".join(parts[1:-2]).strip()  # everything between artist and lang
-    elif len(parts) == 3:
-        artist, name, lang = parts[0].strip(), parts[1].strip(), parts[2].strip()
-    elif len(parts) == 2:
-        artist, name, lang = parts[0].strip(), parts[1].strip(), ""
-    else:
-        artist, name, lang = "", rest.strip(), ""
-
-    return {
-        "code": code,
-        "name": name,
-        "artistName": artist,
-        "langName": lang,
-        "type": "AUDIO",  # always — the folder already tells us it's an audio song
-    }
 
 
 def index_audio(audio_dir: str, rel_base: str):
@@ -149,7 +104,7 @@ def index_audio(audio_dir: str, rel_base: str):
             continue
 
         audio_fname = sorted(g["audio"])[0]  # first by name if several audio files share a stem
-        rec = parse_filename(audio_fname)
+        rec = parse_filename(audio_fname, force_type="AUDIO")  # folder already tells us it's audio
         audio_rel = os.path.join(rel_base, audio_fname).replace(os.sep, "/")
 
         if rec is None:
@@ -173,18 +128,6 @@ def index_audio(audio_dir: str, rel_base: str):
     return coded, no_code, dup_codes, lyric_only
 
 
-def write_json_atomic(path: str, data) -> None:
-    d = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".catalog-audio-", suffix=".tmp", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=1)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build/refresh catalog-audio.json.")
     ap.add_argument("--audio-dir", default=DEFAULT_AUDIO,
@@ -197,7 +140,7 @@ def main() -> int:
 
     if not os.path.isdir(args.audio_dir):
         print(f"audio dir not found ({args.audio_dir}) - writing empty catalog-audio.json")
-        write_json_atomic(args.out, [])
+        write_json_atomic(args.out, [], prefix=".catalog-audio-")
         print(f"Written  : {args.out}  (0 records)")
         return 0
 
@@ -217,7 +160,7 @@ def main() -> int:
     # then no-code records (sorted by title).
     songs = sorted(coded, key=lambda r: r["code"])
     songs += sorted(no_code, key=lambda r: r["name"].lower())
-    write_json_atomic(args.out, songs)
+    write_json_atomic(args.out, songs, prefix=".catalog-audio-")
 
     print("\n===== Summary =====")
     print(f"Records  : {len(songs)}")

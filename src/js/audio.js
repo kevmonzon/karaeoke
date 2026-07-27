@@ -41,10 +41,6 @@ export class AudioEngine {
   }
 
   /**
-   * One-time init. Must be called from a user gesture (AudioContext autoplay policy).
-   * @param {(msg:string, frac?:number)=>void} onProgress
-   */
-  /**
    * Create the AudioContext + master gain only (no soundfont). Cheap; lets the
    * mic share one context without paying for the 30 MB SoundFont load.
    */
@@ -67,11 +63,20 @@ export class AudioEngine {
     await this.ensureContext();
     this._workletModules = this._workletModules || new Map();
     if (!this._workletModules.has(url)) {
-      this._workletModules.set(url, this.ctx.audioWorklet.addModule(url));
+      // Drop the entry if the load rejects, so a transient failure isn't cached forever
+      // (a later call can retry) — resolved loads stay memoised.
+      const p = this.ctx.audioWorklet.addModule(url)
+        .catch((e) => { this._workletModules.delete(url); throw e; });
+      this._workletModules.set(url, p);
     }
     return this._workletModules.get(url);
   }
 
+  /**
+   * One-time full init: AudioContext + SpessaSynth worklet + SoundFont + Sequencer.
+   * Must be called from a user gesture (AudioContext autoplay policy).
+   * @param {(msg:string, frac?:number)=>void} onProgress
+   */
   async init(onProgress = () => {}, soundfontUrl = SOUNDFONT_URL) {
     if (this.ready) return;
 

@@ -94,13 +94,27 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     viewport.replaceChildren(frag); // rows are the ul's only children; height is from ::after
   }
 
+  // Set the ::after scroll-height var from the CURRENT row height. Must run whenever
+  // --row-h changes (display-size profile switch) as well as when the list changes,
+  // or the scroll extent desyncs from the absolutely-positioned rows.
+  function setScrollHeight() {
+    viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
+  }
+
   function renderList(newSongs) {
     songs = newSongs;
-    viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
+    setScrollHeight();
     viewport.scrollTop = 0;
     renderWindow();
     const lc = $("list-count");
     if (lc) lc.textContent = songs.length.toLocaleString();
+  }
+
+  // Re-measure the row height and repaint — for un-collapsing and, crucially, after a
+  // display-size profile switch changes --row-h (else --vlist-h stays at the old height).
+  function refresh() {
+    setScrollHeight();
+    renderWindow();
   }
 
   function selectRow(song) {
@@ -148,6 +162,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     getSelectedSong: () => selectedSong,
     getList: () => songs, // the currently-rendered list (used to skip to the next result)
     setNowPlaying,
-    refresh: renderWindow, // re-render the visible window (e.g. after un-collapsing)
+    refresh, // re-measure --vlist-h + re-render (un-collapse / profile switch)
   };
 }

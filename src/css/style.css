@@ -89,10 +89,13 @@ body.pb-collapsed .playbar { max-height: 0; opacity: 0; margin-top: 0; margin-bo
 
 /* Focus mode — distraction-free full-stage lyrics (10-foot). Hides the browse + queue
    panels so the stage fills the width; the topbar recedes but stays reachable (hover /
-   Esc to exit). Placed after the collapse rules so it wins on grid-template-columns. */
+   Esc to exit). The doubled `.focus-mode` raises specificity to (0,3,1) so it beats the
+   lib+queue both-collapsed rule above (0,3,1, but earlier in source) — otherwise, with
+   both panels collapsed, the grid stayed `0 1fr 0` and the stage was forced into the
+   0-width first column, collapsing the whole lyrics view. */
 body.focus-mode .library,
 body.focus-mode .queue { display: none; }
-body.focus-mode .layout { grid-template-columns: 1fr; }
+body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; }
 body.focus-mode .stage { grid-column: 1; }
 body.focus-mode .topbar { opacity: .5; transition: opacity .25s var(--ease); }
 body.focus-mode .topbar:hover { opacity: 1; }

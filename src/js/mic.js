@@ -122,10 +122,9 @@ export class MicEngine {
 
   /** Re-acquire the stream (needed when AEC/NS/AGC constraints change). */
   async reacquire() {
-    if (!this.enabled) return;
-    const wasEnabled = true;
+    if (!this.enabled) return; // nothing to re-acquire when the mic is off
     this.disable();
-    if (wasEnabled) await this.enable();
+    await this.enable();
   }
 
   _makeIR(ctx, seconds = 2.2, decay = 3) {

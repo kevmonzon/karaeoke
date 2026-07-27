@@ -74,8 +74,15 @@ export function parseMidi(arrayBuffer) {
       tick += delta;
 
       let status = u8(p);
-      if (status & 0x80) { p++; runningStatus = status; }
-      else status = runningStatus;
+      if (status & 0x80) {
+        p++;
+        // Running status carries over only for channel-voice messages (0x80–0xEF).
+        // System/meta/sysex bytes (>=0xF0) MUST clear it per the SMF spec, else a
+        // following running-status event would be misparsed as another meta event.
+        runningStatus = status < 0xf0 ? status : 0;
+      } else {
+        status = runningStatus;
+      }
 
       if (status === 0xff) {
         const metaType = u8(p++);

@@ -16,7 +16,7 @@ import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
 import { AudioFileEngine } from "./audiofile.js";
-import { parseMidi, LyricsEngine, buildLines, makeTickToSeconds } from "./lyrics.js";
+import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
 import { linesFromLyricFile } from "./lyrics-formats.js";
 import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
@@ -89,7 +89,7 @@ async function boot() {
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: toggleFavorite, isFavorite,
   });
-  settingsUI = createSettingsUI({ settings, mic, onRebuild });
+  settingsUI = createSettingsUI({ settings, mic, onRebuild, onToggleMic: toggleMic });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
@@ -196,7 +196,9 @@ function onSettingChanged(path) {
   }
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
-  if (path === "*" || path.startsWith("ui.")) applyUiCollapse();
+  // Only the panel-collapse booleans drive applyUiCollapse — not ui.screen / ui.theme
+  // (those have their own handlers below and don't need a virtual-list re-refresh).
+  if (path === "*" || /^ui\.(library|queue|playback)$/.test(path)) applyUiCollapse();
   if (path === "*" || path === "ui.screen") applyScreenProfile();
   if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*") settingsUI.syncSettingsUI();
@@ -730,10 +732,11 @@ async function youtubeSearch(query) {
   const url = settings.get("youtube.searchUrl") || "/api/youtube-search";
   const keyword = (settings.get("youtube.keyword") || "").trim();
   const q = keyword ? `${query} ${keyword}` : query;
+  const maxResults = settings.get("youtube.maxResults");
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q }),
+    body: JSON.stringify({ q, maxResults }),
   });
   const data = await res.json();
   return ((data && data.items) || [])
@@ -1339,14 +1342,7 @@ function wireUI() {
   // 🎵 melody toggle — flips the guide-vocal mute (melody channel audible on/off). Same setting
   // the ⚙ "Mute melody" checkbox and the phone remote drive, so all three stay in sync.
   $("btn-melody").onclick = () => settings.set("guide.vocal.mute", !settings.get("guide.vocal.mute"));
-  $("btn-mic").onclick = async () => {
-    if (settings.get("bt.enabled")) return; // mic disabled in Bluetooth mode
-    $("mic-status").textContent = mic.enabled ? "Stopping…" : "Requesting microphone…";
-    if (mic.enabled) mic.disable();
-    else await mic.enable();
-    settingsUI.updateMicBtn();
-    updateMicToggle();
-  };
+  $("btn-mic").onclick = toggleMic;
 
   // Bottom controls (persisted via settings)
   $("key-down").onclick = () => setKey(settings.get("audio.key") - 1);
@@ -1374,6 +1370,17 @@ function wireUI() {
   $("volume").value = settings.get("audio.volume");
   $("key-val").textContent = fmtKey(settings.get("audio.key"));
   updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
+}
+
+// Single mic enable/disable path shared by BOTH the transport 🎙 button and the ⚙ panel
+// button (passed in as onToggleMic), so the Bluetooth-mode guard can't diverge between them.
+async function toggleMic() {
+  if (settings.get("bt.enabled")) return; // mic is disabled in Bluetooth mode
+  $("mic-status").textContent = mic.enabled ? "Stopping…" : "Requesting microphone…";
+  if (mic.enabled) mic.disable();
+  else await mic.enable();
+  settingsUI.updateMicBtn();
+  updateMicToggle();
 }
 
 function setKey(semi) {

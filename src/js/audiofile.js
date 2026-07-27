@@ -127,7 +127,7 @@ export class AudioFileEngine {
   get tempo() { return this._rate; }
 
   /** No-op: the lyric offset moves the lyric TIME (app.js), not the audio. */
-  setOffset() {}
+  setOffset(_ms) {} // no-op: audio offset moves the lyric time in app.js, not the audio (surface parity)
 
   // --- state for the UI loop ------------------------------------------------
   get currentTime() { return this.el.currentTime || 0; }

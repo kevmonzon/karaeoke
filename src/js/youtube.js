@@ -109,6 +109,10 @@ export class YouTubeEngine {
       try { this.player.setVolume(this._ytVol()); } catch (_) {}
     } else {
       try { this.player.loadVideoById(videoId); } catch (_) {} // loadVideoById autoplays
+      // YouTube resets playback rate to 1 on each new video — re-assert the user's tempo
+      // (and volume) so they carry across songs instead of silently dropping.
+      try { this.player.setPlaybackRate(this._rate); } catch (_) {}
+      try { this.player.setVolume(this._ytVol()); } catch (_) {}
     }
   }
 
