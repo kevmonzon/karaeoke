@@ -298,13 +298,18 @@ button.fav.on { color: #ffce3a; }
 }
 .now-singer:empty { display: none; }
 /* "Up next" — a slim hint under the header; collapses when empty. */
+/* "Up next" — a teal-bordered PILL (matches the mockup): a mono eyebrow + the song. */
 .up-next {
-  color: var(--accent-2); font-size: calc(13px * var(--ui-scale));
-  padding: 8px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 10px;
+  margin-top: var(--s-2); padding: 8px 14px; max-width: 100%;
+  background: var(--surface-1); border: 1px solid color-mix(in srgb, var(--brand-2) 40%, transparent);
+  border-radius: var(--r-pill); white-space: nowrap; overflow: hidden;
 }
 .up-next:empty { display: none; }
+.up-next .up-lb { flex: none; font: 700 calc(10px * var(--ui-scale))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
+.up-next .up-song { min-width: 0; font-size: calc(13px * var(--ui-scale)); color: var(--text); overflow: hidden; text-overflow: ellipsis; }
 /* Slide in from the right when it appears (last ~20 s). Token duration → auto-disabled
-   under prefers-reduced-motion. Plays once each time the line gains content. */
+   under prefers-reduced-motion. Plays once each time the pill gains content. */
 .up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }
 @keyframes upNextIn { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
 

@@ -1453,15 +1453,24 @@ function updateStageBanner() {
   if (!nowEl || !upEl) return;
   const nowText = current && currentBy ? `🎤 ${currentBy}` : "";
   if (nowText !== _bannerNow) { nowEl.textContent = nowText; _bannerNow = nowText; }
-  let upText = "";
+  let upSong = "";
   if (current && media && media.duration > 0 && queue.length) {
     const remaining = media.duration - media.currentTime;
     if (remaining > 0 && remaining <= 20) {
       const who = queueBy[0];
-      upText = `⏭ Up next: ${queue[0].name || "(untitled)"}${who ? ` · ${who}` : ""}`;
+      upSong = `${queue[0].name || "(untitled)"}${who ? ` · ${who}` : ""}`;
     }
   }
-  if (upText !== _bannerUp) { upEl.textContent = upText; _bannerUp = upText; }
+  if (upSong !== _bannerUp) {
+    _bannerUp = upSong;
+    upEl.textContent = "";
+    if (upSong) {
+      // Pill = a mono "⏭ Up next" eyebrow + the song/singer (built as spans, no innerHTML).
+      const lab = document.createElement("span"); lab.className = "up-lb"; lab.textContent = "⏭ Up next";
+      const sp = document.createElement("span"); sp.className = "up-song"; sp.textContent = upSong;
+      upEl.append(lab, sp);
+    }
+  }
 }
 
 // Blank the stage (between songs / when nothing is playing).
