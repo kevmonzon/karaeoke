@@ -112,10 +112,10 @@ body.focus-mode.controls-hidden { cursor: none; }
 /* Phone-remote QR panel — hidden unless remote.enabled (JS adds .show). */
 .remote-qr { display: none; }
 .remote-qr.show {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  margin: 4px 0 12px; padding: 12px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  text-align: center;
+  display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
+  margin: 4px 0 var(--s-3); padding: var(--s-4);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--elev-1); text-align: center;
 }
 .remote-qr-code {
   flex: 0 0 auto; width: 116px; height: 116px;
@@ -280,7 +280,7 @@ button.fav:active { transform: scale(.85); }
 button.fav.on { color: #ffce3a; }
 
 /* Stage / now playing */
-.now-playing { display: flex; align-items: center; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.now-playing { display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
 
 /* Singer badge — sits in the now-playing header (was a separate banner row). */
 .now-singer {
@@ -301,7 +301,7 @@ button.fav.on { color: #ffce3a; }
 .np-code { font-size: calc(26px * var(--ui-scale)); line-height: 1; user-select: none; } /* source-kind icon */
 .np-code:empty { display: none; }
 .np-meta { flex: 1; min-width: 0; }
-.np-title { font-size: calc(20px * var(--ui-scale)); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.np-title { font-size: calc(21px * var(--ui-scale)); font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-artist { color: var(--muted); font-size: calc(14px * var(--ui-scale)); }
 .badge { font-size: calc(11px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
 .badge:empty { display: none; }
@@ -490,19 +490,20 @@ body.midi-mode .midi-mixer { display: grid; }
 /* Controls — dissolve the wrapper so its .ctl children spread within .playbar (regrouped on phones). */
 .controls { display: contents; }
 .ctl { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-.ctl label { color: var(--muted); font-size: calc(12px * var(--ui-scale)); text-transform: uppercase; letter-spacing: .5px; }
+.ctl label { color: var(--text-muted); font: 600 calc(11px * var(--ui-scale))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .14em; }
 .stepper { display: flex; align-items: center; gap: 10px; }
-.stepper button { width: calc(30px * var(--ui-scale)); height: calc(30px * var(--ui-scale)); border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; font-size: calc(15px * var(--ui-scale)); }
+.stepper button { width: calc(30px * var(--ui-scale)); height: calc(30px * var(--ui-scale)); border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-size: calc(15px * var(--ui-scale)); }
+.stepper button:hover { border-color: var(--brand-2); }
 .stepper span { min-width: 28px; text-align: center; font-weight: 700; font-size: calc(14px * var(--ui-scale)); font-variant-numeric: tabular-nums; }
 input[type=range] { width: 160px; accent-color: var(--accent); }
 
 /* Queue */
-.queue h3 { margin: 4px 6px 12px; font-size: calc(14px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; }
+.queue h3 { margin: 4px 4px 14px; font: 700 calc(12px * var(--ui-scale))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); }
 .muted { color: var(--muted); font-weight: 400; }
 /* Queue rows mirror the search-list .song layout (icon · title/artist · remove) and scale the same way. */
 .queue-list li { display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto; align-items: center; gap: calc(8px * var(--ui-scale));
-  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale)); border-radius: calc(10px * var(--ui-scale)); background: var(--panel); margin-bottom: calc(6px * var(--ui-scale)); border: 1px solid transparent; }
-.queue-list li:hover { border-color: var(--line); }
+  padding: calc(7px * var(--ui-scale)) calc(12px * var(--ui-scale)); border-radius: var(--r-md); background: var(--surface-1); margin-bottom: calc(6px * var(--ui-scale)); border: 1px solid transparent; }
+.queue-list li:hover { border-color: var(--border); }
 .qsong .kind { font-size: calc(18px * var(--ui-scale)); }
 .qsong .meta { display: flex; flex-direction: column; min-width: 0; }
 .qsong .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
