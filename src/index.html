@@ -67,22 +67,21 @@
     <section class="stage">
       <video id="bgv" class="bgv" muted loop playsinline></video>
 
+      <!-- Unified now-playing header: source icon · title/artist · singer · key · lyric badge.
+           (Merged with the former singer/up-next banner into one cohesive header.) -->
       <div class="now-playing">
         <span id="np-code" class="np-code"></span>
         <div class="np-meta">
           <div id="np-title" class="np-title">Select a song to begin</div>
           <div id="np-artist" class="np-artist"></div>
         </div>
+        <span id="now-singer" class="now-singer"></span>
         <span id="np-key" class="np-key"></span>
         <span id="lyric-badge" class="badge"></span>
       </div>
-
-      <!-- Singer + "up next" banner (above the melody guide). Populated only when songs
-           were queued from the phone remote; the up-next line shows in the last 20 s. -->
-      <div id="stage-banner" class="stage-banner">
-        <span id="now-singer" class="now-singer"></span>
-        <span id="up-next" class="up-next"></span>
-      </div>
+      <!-- "Up next" (shows in the last ~20 s) — a slim hint under the header; collapses when empty.
+           Populated only when songs were queued from a phone. -->
+      <div id="up-next" class="up-next"></div>
 
       <!-- VIDEO karaoke: #kv is the picture (muted); #kva carries the sound, its
            clock offset from the picture so the lyric-offset control moves the audio.
