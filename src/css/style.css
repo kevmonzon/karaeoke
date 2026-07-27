@@ -70,14 +70,22 @@ body {
 .toggles .gear:hover { opacity: 1; }
 #btn-focus, #btn-settings, #btn-fullscreen { margin-left: var(--s-2); }
 
-/* Collapsible panels (topbar toggles) */
+/* Collapsible panels (topbar toggles) — ANIMATED slide/fade (token durations, so they
+   auto-disable under prefers-reduced-motion). Library/queue animate their grid column to
+   0 while the panel fades + clips (min-width:0 lets the track actually reach 0); the
+   playback strip collapses its height so the stage reclaims the space. */
+.layout { transition: grid-template-columns var(--dur-base) var(--ease), margin-right var(--dur-base) var(--ease); }
+.library, .queue { overflow: hidden; min-width: 0; transition: opacity var(--dur-base) var(--ease); }
 body.lib-collapsed .layout { grid-template-columns: 0 1fr var(--queue-w); }
 body.queue-collapsed .layout { grid-template-columns: var(--lib-w) 1fr 0; }
 body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
-body.lib-collapsed .library { display: none; }
-body.queue-collapsed .queue { display: none; }
+body.lib-collapsed .library { opacity: 0; pointer-events: none; }
+body.queue-collapsed .queue { opacity: 0; pointer-events: none; }
+.seek-row { max-height: 64px; }
+.playbar { max-height: 220px; }
+.seek-row, .playbar { transition: max-height var(--dur-base) var(--ease), opacity var(--dur-fast) var(--ease), margin var(--dur-base) var(--ease); }
 body.pb-collapsed .seek-row,
-body.pb-collapsed .playbar { display: none; }
+body.pb-collapsed .playbar { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; pointer-events: none; }
 
 /* Focus mode — distraction-free full-stage lyrics (10-foot). Hides the browse + queue
    panels so the stage fills the width; the topbar recedes but stays reachable (hover /
@@ -295,6 +303,10 @@ button.fav.on { color: #ffce3a; }
   padding: 8px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .up-next:empty { display: none; }
+/* Slide in from the right when it appears (last ~20 s). Token duration → auto-disabled
+   under prefers-reduced-motion. Plays once each time the line gains content. */
+.up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }
+@keyframes upNextIn { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
 
 /* Fullscreen top-bar button active state (it lives outside .toggles). */
 .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
@@ -579,7 +591,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
    drawer so the lyrics are never covered. Below this width there isn't room, so the
    drawer overlays as before (you're configuring, not performing). */
 @media (min-width: 1100px) {
-  .layout, .topbar { transition: margin-right .22s var(--ease); }
+  .topbar { transition: margin-right var(--dur-base) var(--ease); } /* .layout owns its own transition (collapse section) */
   body.settings-open .layout,
   body.settings-open .topbar { margin-right: min(360px, 40vw); }
 }
@@ -674,7 +686,8 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
      two, and make sure a stale queue/playback collapse can't strand content. */
   #toggle-queue, #toggle-playback { display: none; }
   body.pb-collapsed .seek-row,
-  body.pb-collapsed .playbar { display: flex; }
+  body.pb-collapsed .playbar { max-height: none; opacity: 1; }
+  body.lib-collapsed .library { display: none; } /* on one column, fully remove it to reclaim the row */
   body.lib-collapsed .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   body.queue-collapsed .layout,
   body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 1fr; }
