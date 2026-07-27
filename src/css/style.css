@@ -570,9 +570,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 /* Settings drawer */
 .settings-panel {
   position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
-  background: var(--panel); border-left: 1px solid var(--line); z-index: 60;
-  display: flex; flex-direction: column; box-shadow: -18px 0 40px rgba(0,0,0,.4);
-  transition: transform .22s ease;
+  background: var(--surface-1); border-left: 1px solid var(--border); z-index: 60;
+  display: flex; flex-direction: column; box-shadow: var(--elev-2);
+  transition: transform .22s var(--ease);
 }
 .settings-panel.hidden { transform: translateX(102%); }
 /* Make room, don't cover: on a wide desktop the stage + topbar reflow beside the open
@@ -583,30 +583,43 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   body.settings-open .layout,
   body.settings-open .topbar { margin-right: min(360px, 40vw); }
 }
-.settings-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-bottom: 1px solid var(--line); }
-.settings-head h3 { margin: 0; font-size: 16px; letter-spacing: 1px; text-transform: uppercase; }
-.settings-body { padding: 16px 18px; overflow-y: auto; }
-.settings-body section { margin-bottom: 22px; }
-.settings-body h4 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent-2); }
-.settings-body .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; font-size: 13px; }
-.settings-body .row span { display: flex; justify-content: space-between; color: var(--ink); }
-.settings-body .row em { color: var(--muted); font-style: normal; font-variant-numeric: tabular-nums; }
-.settings-body .row input[type=range] { width: 100%; accent-color: var(--accent); }
+.settings-head { display: flex; align-items: center; justify-content: space-between; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-soft); }
+.settings-head h3 { margin: 0; font: 800 12px/1 var(--font-mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text); }
+.settings-body { padding: var(--s-4) var(--s-5); overflow-y: auto; }
+.settings-body section { margin-bottom: var(--s-6); }
+.settings-body h4 { margin: 0 0 var(--s-3); font: 700 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--brand-2); }
+.settings-body .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--s-3); font-size: 13px; }
+.settings-body .row span { display: flex; justify-content: space-between; align-items: center; color: var(--text); }
+.settings-body .row em { color: var(--text-muted); font-style: normal; font-variant-numeric: tabular-nums; }
+.settings-body .row input[type=range] { width: 100%; accent-color: var(--brand); }
 .settings-body .row.toggle { flex-direction: row; align-items: center; justify-content: space-between; }
-.settings-body .row.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
-.settings-body select {
-  background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
-  border-radius: 8px; padding: 5px 8px; font-size: 13px; cursor: pointer; min-width: 120px;
+/* Native checkboxes → the gallery toggle switch (cheap, token-driven). */
+.settings-body input[type=checkbox] {
+  appearance: none; -webkit-appearance: none; margin: 0; cursor: pointer; flex: none;
+  width: 42px; height: 24px; border-radius: var(--r-pill); position: relative;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
-.settings-body select:focus { outline: none; border-color: var(--accent-2); }
-.hint.sub { margin: -6px 0 14px; font-size: 11px; }
+.settings-body input[type=checkbox]::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.settings-body input[type=checkbox]:checked { background: color-mix(in srgb, var(--brand-2) 26%, transparent); border-color: var(--brand-2); }
+.settings-body input[type=checkbox]:checked::after { transform: translateX(18px); background: var(--brand-2); }
+.settings-body select {
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 120px;
+}
+.settings-body select:focus { outline: none; border-color: var(--brand-2); }
+.hint.sub { margin: -6px 0 var(--s-3); font-size: 11px; }
 #rebuild-status { margin: 8px 0 0; } /* sits below the rebuild button, not crammed against it */
 #rebuild-status:empty { margin: 0; }
-.hint kbd { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
-.reset-btn { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; font-size: 13px; }
-.reset-btn:hover { background: var(--accent); color: #fff; }
-.sub-h { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 6px 0 10px; border-top: 1px solid var(--line); padding-top: 12px; }
-.mic-btn { border-color: var(--accent-2); color: var(--accent-2); margin-bottom: 8px; }
+.hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+.reset-btn { width: 100%; padding: 11px; border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 13px/1 var(--font-sans); }
+.reset-btn:hover { background: var(--brand); color: var(--brand-ink); }
+.sub-h { font: 700 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); margin: 6px 0 10px; border-top: 1px solid var(--border-soft); padding-top: var(--s-3); }
+.mic-btn { border-color: var(--brand-2); color: var(--brand-2); margin-bottom: 8px; }
 
 /* ⚙ settings: search box + collapsible categories */
 .set-search { position: sticky; top: -16px; z-index: 2; display: flex; align-items: center; gap: 6px;
