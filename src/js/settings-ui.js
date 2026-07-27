@@ -278,10 +278,14 @@ export function createSettingsUI({ settings, mic, onRebuild }) {
     $("btn-settings").onclick = () => {
       syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
       $("settings-panel").classList.remove("hidden");
+      document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
       const s = $("set-search");
       if (s) setTimeout(() => s.focus(), 60); // after the slide-in
     };
-    $("settings-close").onclick = () => $("settings-panel").classList.add("hidden");
+    $("settings-close").onclick = () => {
+      $("settings-panel").classList.add("hidden");
+      document.body.classList.remove("settings-open");
+    };
 
     autoBind();
     wireSearch();

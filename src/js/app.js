@@ -1284,15 +1284,28 @@ function wireUI() {
   // queue panels; the topbar stays so you can exit (Esc also exits). Re-measures the
   // virtual list + guide because the stage width changes.
   const focusBtn = $("btn-focus");
+  // In focus mode the transport + topbar auto-hide after a few idle seconds (video-player
+  // style) and reappear on any pointer/key activity, for a clean 10-foot view.
+  let _ctlHideTimer;
+  const showControls = () => {
+    clearTimeout(_ctlHideTimer);
+    document.body.classList.remove("controls-hidden");
+    if (document.body.classList.contains("focus-mode"))
+      _ctlHideTimer = setTimeout(() => document.body.classList.add("controls-hidden"), 3000);
+  };
   const setFocus = (on) => {
     document.body.classList.toggle("focus-mode", on);
     if (focusBtn) {
       focusBtn.classList.toggle("active", on);
       focusBtn.title = on ? "Exit focus mode (Esc)" : "Focus mode — hide panels for a full-screen lyrics view (Esc to exit)";
     }
+    if (on) showControls();
+    else { clearTimeout(_ctlHideTimer); document.body.classList.remove("controls-hidden"); }
     requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); });
   };
   if (focusBtn) focusBtn.onclick = () => setFocus(!document.body.classList.contains("focus-mode"));
+  ["mousemove", "touchstart", "keydown", "click"].forEach((ev) =>
+    document.addEventListener(ev, () => { if (document.body.classList.contains("focus-mode")) showControls(); }, { passive: true }));
   document.addEventListener("keydown", (e) => {
     // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
