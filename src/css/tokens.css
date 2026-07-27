@@ -9,8 +9,8 @@
  *   1. Primitives  — theme-agnostic scales (brand hues, space, radius, type, motion).
  *   2. Semantic    — intent tokens (--bg, --surface-*, --text, --brand…) that FLIP per theme.
  *   3. Themes      — dark (default, the neon world) + a designed light theme.
- *   4. Scale ramp  — --scale (fluid type multiplier) with a distance-aware TV ramp
- *                    and the ⚙ Display-size override (data-screen).
+ *   4. Font size   — --scale (text/UI multiplier) set by the ⚙ Font size
+ *                    Small/Medium/Large (:root[data-fontsize]).
  *
  * Design-only: no behavior. See docs/redesign/README.md.
  * ========================================================================== */
@@ -168,20 +168,15 @@
 }
 
 /* ============================================================================
- * 4. SCALE RAMP — one fluid mechanism, no discrete "mode" multiplier.
- *   • Default (auto): --scale ramps up on large viewports so a far TV gets big,
- *     10-foot type — a smooth ramp, not a separate stylesheet path.
- *   • Override: the ⚙ Display-size setting stamps [data-screen] and wins
- *     (higher specificity than the bare :root ramp), for when Auto guesses wrong.
+ * 4. FONT SIZE — explicit Small / Medium / Large (⚙ → Display → Font size).
+ *   The ⚙ setting stamps :root[data-fontsize]; --scale drives the whole player's
+ *   text + controls (via --ui-scale), and --row-h keeps the virtual-list rows in
+ *   step. The Lyrics "Lyrics size" slider (--font-scale) fine-tunes lyrics on top.
+ *   (Replaced the old auto display-size profile + TV width-ramp — app.js.)
  * ========================================================================== */
-@media (min-width: 1500px) { :root { --scale: 1.12; } }
-@media (min-width: 1900px) { :root { --scale: 1.32; } }
-@media (min-width: 2500px) { :root { --scale: 1.6; } }
-
-:root[data-screen="phone"]    { --scale: 0.92; --row-h: 50px; }
-:root[data-screen="tablet"]   { --scale: 1.0;  --row-h: 54px; }
-:root[data-screen="computer"] { --scale: 1.0;  --row-h: 46px; }
-:root[data-screen="tv"]       { --scale: 1.7;  --row-h: 88px; --lib-w: 580px; --queue-w: 420px; }
+:root[data-fontsize="small"]  { --scale: 0.9; --row-h: 44px; }
+:root[data-fontsize="medium"] { --scale: 1.0; --row-h: 48px; }
+:root[data-fontsize="large"]  { --scale: 1.3; --row-h: 60px; --lib-w: 420px; --queue-w: 360px; }
 
 /* Respect reduced-motion at the token layer too (components read --dur-*). */
 @media (prefers-reduced-motion: reduce) {

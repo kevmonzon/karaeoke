@@ -83,14 +83,12 @@ export const DEFAULT_CONFIG = {
   //              (the same behavior focus mode always uses) and returns on pointer/key activity.
   //   autoHideSec = idle seconds before the playback controls fade — used in focus mode AND when
   //              `playback` is off. Reappear on any movement/keypress.
-  // `screen` = the display-size profile that scales the whole UI for readability:
-  //   "auto"     → detect from the window size (phone / tablet / computer / TV), live on resize
-  //   "phone" | "tablet" | "computer" | "tv" → force that profile (e.g. pick "tv" for big,
-  //                 read-at-a-distance text when casting to a television). A large screen
-  //                 (~1800px+) auto-detects as "tv" — switch to "computer" if it's a desktop monitor.
+  //   fontSize = overall text/UI size: "small" | "medium" | "large" (drives --ui-scale, i.e.
+  //              the whole player's text + controls). The Lyrics "Lyrics size" slider fine-tunes
+  //              just the lyrics on top of this.
   //   theme = the color theme: "auto" (follow the device / OS preference), "dark", or "light".
   //           The whole player is designed for both; "auto" tracks prefers-color-scheme live.
-  ui: { library: true, queue: true, playback: true, autoHideSec: 3, screen: "auto", theme: "auto" },
+  ui: { library: true, queue: true, playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto" },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).
@@ -131,7 +129,7 @@ export const DEFAULT_CONFIG = {
   guide: {
     enabled: true, // master toggle for the guide band
     windowSec: 5, // seconds of melody visible across the band
-    height: 150, // band height in px
+    height: 100, // band height in px
     channel: -1, // -1 = auto-detect the melody channel; 0–15 = manual override
     showMic: true, // overlay the singer's detected pitch (needs mic enabled)
     trail: true, // soft fading ribbon tracing where the voice has been

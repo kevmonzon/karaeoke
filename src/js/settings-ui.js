@@ -20,8 +20,8 @@ const pct = (v) => `${Math.round(v * 100)}%`;
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
 const SETTINGS_SCHEMA = [
-  // display size / profile
-  { id: "set-screen", path: "ui.screen", type: "select" },
+  // overall font size (small/medium/large) + color theme
+  { id: "set-fontsize", path: "ui.fontSize", type: "select" },
   { id: "set-theme", path: "ui.theme", type: "select" },
   // playback-controls overlay: always-show toggle + idle auto-hide duration
   { id: "set-playback", path: "ui.playback", type: "check" },
@@ -92,7 +92,7 @@ const SETTINGS_SCHEMA = [
 // them. Keyed by the control's (or action button's) element id. Optional sugar —
 // a control without an entry is still searchable by its label + section titles.
 const SEARCH_KEYWORDS = {
-  "set-screen": "tv television display size screen distance responsive scale zoom big large",
+  "set-fontsize": "font text size small medium large scale zoom big display readability",
   "set-theme": "dark light color theme appearance mode night day",
   "set-playback": "playback controls transport seek bar show hide always overlay dock",
   "set-autohide": "auto hide fade idle timeout duration seconds controls transport overlay",

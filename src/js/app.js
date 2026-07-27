@@ -97,7 +97,7 @@ async function boot() {
   applyChordSettings();
   applyMidiMode();
   applyRemoteMode();
-  applyScreenProfile();  // set the display-size profile before first paint of the list/guide
+  applyFontSize();       // set the Small/Medium/Large text scale before first paint of the list/guide
   applyTheme();          // color theme: dark / light / auto (follows the OS)
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
@@ -193,37 +193,27 @@ function onSettingChanged(path) {
   }
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
-  // Only the panel-collapse booleans drive applyUiCollapse — not ui.screen / ui.theme
+  // Only the panel-collapse booleans drive applyUiCollapse — not ui.fontSize / ui.theme
   // (those have their own handlers below and don't need a virtual-list re-refresh).
   if (path === "*" || /^ui\.(library|queue)$/.test(path)) applyUiCollapse();
   // "Always show playback controls" + its auto-hide duration re-arm the idle-hide timer.
   if (path === "*" || path === "ui.playback" || path === "ui.autoHideSec") applyControlsAutoHide();
-  if (path === "*" || path === "ui.screen") applyScreenProfile();
+  if (path === "*" || path === "ui.fontSize") applyFontSize();
   if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*") settingsUI.syncSettingsUI();
 }
 
-// Collapsible panels (song list / queue / playback controls), toggled from the top bar.
-// Display-size profile — scales the whole player for readability across phone / tablet /
-// computer / TV. "auto" derives it from the window width (live on resize); an explicit choice
-// forces it. Sets <html data-screen>, then re-measures the virtual list (row height changes via
-// the --row-h var) + the pitch-guide canvas. Big screens (~1800px+) read as "tv" by default.
-const SCREEN_PROFILES = new Set(["phone", "tablet", "computer", "tv"]);
-// Breakpoints aligned with the layout @media queries (560 / 900) so scaling + layout switch
-// together; ≥1800 reads as "tv" (big text) by default — override to "computer" for a big monitor.
-function detectScreen() {
-  const w = window.innerWidth || 1280;
-  if (w < 560) return "phone";
-  if (w < 900) return "tablet";
-  if (w < 1800) return "computer";
-  return "tv";
-}
-function applyScreenProfile() {
-  const pref = settings.get("ui.screen");
-  const profile = SCREEN_PROFILES.has(pref) ? pref : detectScreen();
+// Font size — an explicit Small / Medium / Large that scales the whole player text + controls
+// (drives --scale/--ui-scale + --row-h via :root[data-fontsize] in tokens.css). Replaced the
+// old auto display-size profile (phone/tablet/computer/tv width-detect + TV ramp). The Lyrics
+// "Lyrics size" slider (lyrics.fontScale) fine-tunes just the lyrics on top of this.
+const FONT_SIZES = new Set(["small", "medium", "large"]);
+function applyFontSize() {
+  const pref = settings.get("ui.fontSize");
+  const size = FONT_SIZES.has(pref) ? pref : "medium";
   const el = document.documentElement;
-  if (el.dataset.screen === profile) return; // no change → nothing to re-measure
-  el.dataset.screen = profile;
+  if (el.dataset.fontsize === size) return; // no change → nothing to re-measure
+  el.dataset.fontsize = size;
   requestAnimationFrame(() => {
     if (lib) lib.refresh();          // --row-h changed → re-measure the virtualized list
     if (pitchGuide) pitchGuide.resize();
@@ -237,26 +227,58 @@ function applyTheme() {
   if (t === "dark" || t === "light") el.dataset.theme = t;
   else el.removeAttribute("data-theme");
 }
-// Re-evaluate the auto profile as the window crosses a breakpoint (debounced); also re-fit
-// the title card, whose 50vh height (and so its title size) changes with the viewport.
+// On resize/rotate (debounced): re-sync the compact-layout panel toggles (the mobile
+// breakpoint is orientation-aware), re-fit the title card (its 50vh height changes with the
+// viewport), re-anchor the focus QR, and re-measure the virtual list + guide.
 let _screenResizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(_screenResizeTimer);
-  _screenResizeTimer = setTimeout(() => { applyScreenProfile(); fitTitleCard(); positionFocusQr(); }, 150);
+  _screenResizeTimer = setTimeout(() => {
+    // Focus mode is a 10-foot/desktop feature whose ◎ toggle is hidden on mobile — so if the
+    // viewport becomes mobile while it's on, force it off (else you're stuck in it with no exit).
+    if (isMobileWidth() && document.body.classList.contains("focus-mode")) setFocus(false);
+    fitTitleCard(); positionFocusQr(); applyPanelToggles();
+    if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize();
+  }, 150);
 });
 
+// Mobile (≤900px): the song list (🔍) and the queue (▦) are MUTUALLY EXCLUSIVE — screen
+// space is tight, so at most one is open at a time. Desktop keeps them independent
+// (persisted ui.library / ui.queue, 3-column). `mobilePanel` is the mobile-only open panel.
+let mobilePanel = "library"; // "library" | "queue" | "none" — only meaningful on mobile
+// "Compact" = phones/small screens (≤900px) OR a tablet in portrait (≤1024px) — matches the
+// CSS compact breakpoint. A tablet in landscape stays desktop (independent 3-column panels).
+const isMobileWidth = () => window.matchMedia("(max-width: 900px), (max-width: 1024px) and (orientation: portrait)").matches;
+
 function applyUiCollapse() {
-  const libOpen = settings.get("ui.library");
-  const qOpen = settings.get("ui.queue");
-  document.body.classList.toggle("lib-collapsed", !libOpen);
-  document.body.classList.toggle("queue-collapsed", !qOpen);
-  $("toggle-lib").classList.toggle("active", libOpen);
-  $("toggle-queue").classList.toggle("active", qOpen);
+  // Desktop 3-column collapse classes (read only by the >900px CSS).
+  document.body.classList.toggle("lib-collapsed", !settings.get("ui.library"));
+  document.body.classList.toggle("queue-collapsed", !settings.get("ui.queue"));
+  applyPanelToggles();
   // panels that regained size need a re-render / resize
   requestAnimationFrame(() => {
-    if (libOpen && lib) lib.refresh();
+    if (lib) lib.refresh();
     if (pitchGuide) pitchGuide.resize();
   });
+}
+
+// Reflect the list/queue open-state on the two top-bar buttons and, on mobile, on the
+// mutually-exclusive body.mobile-lib / body.mobile-queue classes. Called on collapse
+// changes and on resize (so crossing the 900px breakpoint re-syncs the buttons).
+function applyPanelToggles() {
+  const mobile = isMobileWidth();
+  document.body.classList.toggle("mobile-lib", mobile && mobilePanel === "library");
+  document.body.classList.toggle("mobile-queue", mobile && mobilePanel === "queue");
+  $("toggle-lib").classList.toggle("active", mobile ? mobilePanel === "library" : settings.get("ui.library"));
+  $("toggle-queue").classList.toggle("active", mobile ? mobilePanel === "queue" : settings.get("ui.queue"));
+}
+
+// Mobile toggle: open the tapped panel (closing the other), or close it if already open
+// (→ full-screen lyrics). Re-measures the virtual list + guide since the stage resizes.
+function toggleMobilePanel(which) {
+  mobilePanel = mobilePanel === which ? "none" : which;
+  applyPanelToggles();
+  requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); });
 }
 
 // Playback-controls auto-hide. The transport/seek dock is an overlay at the bottom of the
@@ -279,6 +301,21 @@ function showControls() {
 function applyControlsAutoHide() {
   if (autoHideActive()) showControls();
   else { clearTimeout(_ctlHideTimer); document.body.classList.remove("controls-hidden"); }
+}
+
+// Focus mode — a distraction-free full-stage lyrics view (10-foot). Toggles body.focus-mode,
+// syncs the ◎ button, arms the controls auto-hide, and re-measures the list + guide. Module
+// scope so the resize handler can force it off (the ◎ button is hidden on mobile, so entering
+// focus on desktop then resizing to mobile would otherwise strand you with no way to exit).
+function setFocus(on) {
+  document.body.classList.toggle("focus-mode", on);
+  const focusBtn = $("btn-focus");
+  if (focusBtn) {
+    focusBtn.classList.toggle("active", on);
+    focusBtn.title = on ? "Exit focus mode (Esc)" : "Focus mode — hide panels for a full-screen lyrics view (Esc to exit)";
+  }
+  applyControlsAutoHide(); // focus on → arm the timer; off → revert to the ui.playback state
+  requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); positionFocusQr(); });
 }
 
 // Bluetooth mode: BT output lags ~260 ms, so the lyrics/guide (synced to the app
@@ -1322,9 +1359,12 @@ function wireUI() {
   };
 
   // collapsible panels (playback-controls visibility is now a ⚙ → Display setting, not a
-  // top-bar toggle — see ui.playback / applyControlsAutoHide)
-  $("toggle-lib").onclick = () => settings.set("ui.library", !settings.get("ui.library"));
-  $("toggle-queue").onclick = () => settings.set("ui.queue", !settings.get("ui.queue"));
+  // top-bar toggle — see ui.playback / applyControlsAutoHide). On mobile the list + queue
+  // are mutually exclusive (toggleMobilePanel); on desktop they're independent settings.
+  $("toggle-lib").onclick = () =>
+    isMobileWidth() ? toggleMobilePanel("library") : settings.set("ui.library", !settings.get("ui.library"));
+  $("toggle-queue").onclick = () =>
+    isMobileWidth() ? toggleMobilePanel("queue") : settings.set("ui.queue", !settings.get("ui.queue"));
 
   // Full-screen toggle (top-right). Falls back silently if the browser refuses.
   const fsBtn = $("btn-fullscreen");
@@ -1340,21 +1380,9 @@ function wireUI() {
   }
 
   // Focus mode — a distraction-free full-stage lyrics view (10-foot). Hides the browse +
-  // queue panels; the topbar stays so you can exit (Esc also exits). Re-measures the
-  // virtual list + guide because the stage width changes.
+  // queue panels; the topbar stays so you can exit (Esc also exits, and resize-to-mobile
+  // forces it off since the ◎ button is hidden there). setFocus lives at module scope.
   const focusBtn = $("btn-focus");
-  // The transport dock (and, in focus mode, the topbar) auto-hide after a few idle seconds
-  // (video-player style) and reappear on any pointer/key activity. The hide logic is shared
-  // with the "Always show playback controls" setting — see showControls/applyControlsAutoHide.
-  const setFocus = (on) => {
-    document.body.classList.toggle("focus-mode", on);
-    if (focusBtn) {
-      focusBtn.classList.toggle("active", on);
-      focusBtn.title = on ? "Exit focus mode (Esc)" : "Focus mode — hide panels for a full-screen lyrics view (Esc to exit)";
-    }
-    applyControlsAutoHide(); // focus on → arm the timer; off → revert to the ui.playback state
-    requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); positionFocusQr(); });
-  };
   if (focusBtn) focusBtn.onclick = () => setFocus(!document.body.classList.contains("focus-mode"));
   ["mousemove", "touchstart", "keydown", "click"].forEach((ev) =>
     document.addEventListener(ev, () => { if (autoHideActive()) showControls(); }, { passive: true }));

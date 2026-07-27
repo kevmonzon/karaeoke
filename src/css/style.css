@@ -2,8 +2,8 @@
 /* Palette + scale now come from tokens.css (loaded first, see index.html). The app's
    legacy variable names are ALIASED to the semantic tokens so every existing rule keeps
    working while the redesign migrates surface-by-surface — and the whole app inherits
-   both themes + the distance-aware --scale ramp for free. tokens.css owns
-   --bg / --sung / --unsung, --row-h, the column widths, and the per-[data-screen] scale. */
+   both themes + the Small/Medium/Large --scale for free. tokens.css owns
+   --bg / --sung / --unsung, --row-h, the column widths, and the per-[data-fontsize] scale. */
 :root {
   --panel: var(--surface-1);
   --panel-2: var(--surface-2);
@@ -23,6 +23,11 @@ body {
   color: var(--ink);
   font: 15px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
   display: flex; flex-direction: column;
+  /* This is a fixed-viewport app (panels scroll internally) — it should never scroll the
+     page sideways. Guards against any element poking past the viewport (e.g. a collapsed
+     panel's leftover padding in its 0-width grid track). clip = no scroll container, and it
+     doesn't force overflow-y to auto the way `hidden` would. */
+  overflow-x: clip;
 }
 
 /* ---------------------------------------------------------------------------
@@ -79,8 +84,10 @@ body {
 body.lib-collapsed .layout { grid-template-columns: 0 1fr var(--queue-w); }
 body.queue-collapsed .layout { grid-template-columns: var(--lib-w) 1fr 0; }
 body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
-body.lib-collapsed .library { opacity: 0; pointer-events: none; }
-body.queue-collapsed .queue { opacity: 0; pointer-events: none; }
+/* padding:0 so a collapsed panel is truly 0-wide in its 0-width grid track — otherwise its
+   16px side padding (→ 32px box) pokes past the viewport and adds horizontal page scroll. */
+body.lib-collapsed .library { opacity: 0; pointer-events: none; padding: 0; }
+body.queue-collapsed .queue { opacity: 0; pointer-events: none; padding: 0; }
 /* Playback dock — the seek bar + transport float as a translucent OVERLAY pinned to the
    bottom of the stage (absolute, so they no longer occupy flow space: the lyrics/guide get
    the freed height). The gradient fades the lyric text behind the bar so it stays legible.
@@ -714,26 +721,50 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
 
-/* Responsive — tablet: single column, library on top, queue hidden */
-@media (max-width: 900px) {
+/* Responsive — "compact" (mobile) layout: single column, mutually-exclusive list/queue.
+   Applies to phones/small screens (≤900px, any orientation) AND to tablets in PORTRAIT up
+   to 1024px (iPads incl. the 12.9″). A tablet in LANDSCAPE is >1024 or landscape-oriented,
+   so it stays on the desktop 3-column layout — orientation is what separates the two. */
+@media (max-width: 900px), (max-width: 1024px) and (orientation: portrait) {
   /* Short list on top, generous stage below — the stage (lyrics/guide) is the star
-     on mobile; the list stays scrollable (virtualized) so nothing is lost. */
-  .layout { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38vh) 1fr; }
-  /* single column stacks by rows — drop the desktop column pins so auto-placement
-     puts library on top and stage below. */
-  .library, .stage, .queue { grid-column: auto; }
-  .queue { display: none; }
-
-  /* Panel-collapse is a desktop idea; on one column only "hide the list for a
-     full-screen lyrics view" is useful. Keep the list toggle (☰), drop the queue toggle. */
-  #toggle-queue { display: none; }
-  body.lib-collapsed .library { display: none; } /* on one column, fully remove it to reclaim the row */
-  body.lib-collapsed .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+     on mobile; the list stays scrollable (virtualized) so nothing is lost.
+     NOTE: the desktop lib/queue-collapsed rules set grid-template-columns at higher
+     specificity (0,3,1) — re-declare every collapse combo here (same selectors, later
+     source) so the single-column compact layout always wins regardless of saved desktop
+     collapse state. Otherwise a both-collapsed profile leaves the grid at `0 1fr 0`
+     and squishes the stage into a 0-width column. */
+  .layout,
+  body.lib-collapsed .layout,
   body.queue-collapsed .layout,
-  body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 1fr; }
-  body.focus-mode .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; } /* full stage on narrow too */
+  body.lib-collapsed.queue-collapsed .layout {
+    grid-template-columns: 1fr; grid-template-rows: minmax(0, 42vh) minmax(0, 1fr);
+  }
+  /* single column: pin the song list AND the queue into the SAME top slot (row 1,
+     stacked) and the stage into row 2, so only the open panel occupies the top. */
+  .library, .queue { grid-column: 1; grid-row: 1; min-height: 0; }
+  .stage { grid-column: 1; grid-row: 2; }
 
-  .library { min-height: 0; }
+  /* Mobile: the song list (🔍) and the queue (▦) are MUTUALLY EXCLUSIVE — screen space is
+     tight, so at most ONE is open at a time. app.js drives body.mobile-lib / body.mobile-queue
+     from the two top-bar toggles (opening one closes the other; tapping the open one closes it
+     for a full-screen lyrics view). The desktop lib/queue-collapsed classes are ignored here. */
+  .library, .queue { display: none; }
+  /* Show the active panel. `opacity: 1; pointer-events: auto` re-assert over the desktop
+     `body.lib/queue-collapsed .library/.queue { opacity: 0 }` rules, which otherwise leak in
+     and render the shown mobile panel invisible when a collapse pref is saved from desktop. */
+  body.mobile-lib   .library { display: flex; opacity: 1; pointer-events: auto; }
+  body.mobile-queue .queue   { display: flex; opacity: 1; pointer-events: auto; }
+  /* Neither open (or focus mode) → collapse the top slot so the stage fills the screen.
+     (Doubled .focus-mode reaches 0,4,1 so it beats the both-collapsed columns rule above at 0,3,1;
+     the :not():not() none-rule is 0,3,1 and wins over both-collapsed by later source order.) */
+  body:not(.mobile-lib):not(.mobile-queue) .layout { grid-template-columns: 1fr; grid-template-rows: 0 minmax(0, 1fr); }
+  body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; grid-template-rows: 0 minmax(0, 1fr); }
+  body.focus-mode .library, body.focus-mode .queue { display: none; } /* focus wins over mobile-lib/queue */
+  /* The phone-remote QR lives on the queue panel — pointless on a phone (you're already on the
+     device you'd scan with), so hide it on mobile even when the queue is open. */
+  .remote-qr, .remote-qr.show { display: none; }
+  /* Focus mode + full-screen are 10-foot / TV features — hide their toggles on mobile. */
+  #btn-focus, #btn-fullscreen { display: none; }
   .stage { padding: 14px; }
   .playback-dock { padding: 8px 14px 12px; } /* keep the overlay aligned with the tighter stage pad */
   .playbar { gap: 14px 20px; } /* full-width single-column stage still spreads, just tighter */
@@ -746,13 +777,13 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .topbar { padding: 10px 14px; gap: 10px; }
   .brand { font-size: 17px; letter-spacing: 1px; }
   /* Now-playing info already lives in the stage header — drop the status text so
-     the topbar is a clean brand ↔ (☰ ⚙) row instead of cramming four things. With
+     the topbar is a clean brand ↔ (🔍 ▦ ⚙) row instead of cramming four things. With
      the flex:1 status gone, push the controls to the right (else space-between
-     floats the lone ☰ into the middle). */
+     floats the toggles into the middle). */
   .status { display: none; }
   .toggles { margin-left: auto; }
-  /* Shorter list, bigger stage — lyrics get the room by default (list still scrolls). */
-  .layout { grid-template-rows: minmax(0, 32vh) 1fr; }
+  /* Shorter open-panel slot, bigger stage — lyrics get the room by default. */
+  .layout { grid-template-rows: minmax(0, 34vh) minmax(0, 1fr); }
   .stage { padding: 10px; }
   .playback-dock { padding: 6px 10px 10px; }
 
@@ -780,7 +811,5 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .settings-panel { width: 100vw; }
   .pitch-guide { height: min(var(--guide-height, 150px), 22vh); }
   .midi-mixer { max-height: 26vh; }
-
-  /* When the list is hidden (☰), the stage becomes a full-screen lyrics view. */
-  body.lib-collapsed .layout { grid-template-rows: 1fr; }
+  /* (the "neither panel open → full-screen stage" collapse is inherited from the ≤900 block) */
 }
