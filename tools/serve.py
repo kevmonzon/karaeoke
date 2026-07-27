@@ -54,7 +54,6 @@ VENDOR = os.path.join(SRC, "vendor")
 # All mutable/user data lives under DATA_DIR — mount this as a volume in Docker.
 # Defaults to <project>/data; override with KARAEOKE_DATA_DIR (e.g. /data in a container).
 DATA_DIR = os.path.abspath(os.environ.get("KARAEOKE_DATA_DIR") or os.path.join(APP_DIR, "data"))
-BGV_DIR = os.path.join(DATA_DIR, "bgv")
 VIDEOS_DIR = os.path.join(DATA_DIR, "videos")        # karaoke VIDEO songs (parallel to kar_raw/)
 AUDIO_DIR = os.path.join(DATA_DIR, "audio_lyrics")   # AUDIO songs: audio file + a lyrics sidecar
 DOWNLOADS_DIR = os.path.join(DATA_DIR, "kar_raw")  # compressed-MIDI song payloads
@@ -64,11 +63,10 @@ AUDIO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-audio.json")
 # Shared blocklist of YouTube videoIds that can't be embedded (owner-disabled / removed). Clients
 # report them via POST /api/youtube-block; /api/youtube-search filters them out for EVERY user.
 YOUTUBE_BLOCKLIST_PATH = os.path.join(DATA_DIR, "youtube-blocklist.json")
-VIDEO_EXTS = (".mp4", ".webm", ".ogg", ".mov")
 
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
-DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/bgv/", "/audio_lyrics/")
-DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/catalog-audio.json", "/soundfont.sf2", "/manifest.json")
+DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/audio_lyrics/")
+DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/catalog-audio.json", "/soundfont.sf2")
 
 # --- SpessaSynth engine ---
 # These 4 files are VENDORED into the repo under src/vendor/ (see src/vendor/README.md
@@ -167,7 +165,6 @@ def setup() -> None:
     os.makedirs(DOWNLOADS_DIR, exist_ok=True)  # kar_raw/
     os.makedirs(VIDEOS_DIR, exist_ok=True)
     os.makedirs(AUDIO_DIR, exist_ok=True)      # audio_lyrics/
-    os.makedirs(BGV_DIR, exist_ok=True)
 
     # 1) engine files (vendored + committed; warn if a checkout is somehow missing them)
     missing = [f for f in ENGINE_FILES if not os.path.exists(os.path.join(VENDOR, f))]
@@ -238,25 +235,6 @@ def setup() -> None:
     else:
         print("catalog-audio.json: present ✓")
     print()
-
-
-def build_bgv_manifest() -> None:
-    """List drop-in videos in DATA_DIR/bgv/ into DATA_DIR/manifest.json (served at /manifest.json)."""
-    os.makedirs(BGV_DIR, exist_ok=True)
-    try:
-        vids = sorted(
-            f for f in os.listdir(BGV_DIR)
-            if f.lower().endswith(VIDEO_EXTS) and os.path.isfile(os.path.join(BGV_DIR, f))
-        )
-    except OSError:
-        vids = []
-    manifest = os.path.join(DATA_DIR, "manifest.json")  # one level up from the bgv/ clips
-    with open(manifest, "w", encoding="utf-8") as fh:
-        json.dump(vids, fh)
-    if vids:
-        print(f"Background videos: {len(vids)} found in data/bgv/")
-    else:
-        print("Background videos: none (drop .mp4/.webm in data/bgv/) — using gradient fallback")
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +558,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_error(404)
 
     def translate_path(self, path):
-        # Route data URLs (songs, videos, bgv, catalogs, soundfont) to DATA_DIR; every
+        # Route data URLs (songs, videos, catalogs, soundfont) to DATA_DIR; every
         # other URL falls through to the app tree (APP_DIR). _serve_range() calls this too,
         # so video Range/206 seeking inherits the routing. Reuses the stdlib path sanitizer
         # (which blocks '..' escapes) by temporarily swapping the base directory.
@@ -794,7 +772,6 @@ def main() -> int:
     if not args.no_setup:
         setup()
 
-    build_bgv_manifest()  # always refresh so drop-in videos are picked up
     _load_yt_blocklist()  # shared YouTube embed blocklist (filtered from search results)
 
     os.chdir(SRC)  # the app (src/) IS the web root — served at "/"; data URLs route to DATA_DIR

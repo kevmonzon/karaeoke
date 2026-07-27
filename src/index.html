@@ -65,8 +65,6 @@
 
     <!-- CENTER: stage -->
     <section class="stage">
-      <video id="bgv" class="bgv" muted loop playsinline></video>
-
       <!-- Unified now-playing header: source icon · title/artist · singer · key · lyric badge.
            (Merged with the former singer/up-next banner into one cohesive header.) -->
       <div class="now-playing">
@@ -258,22 +256,6 @@
         </label>
       </section>
 
-      <section>
-        <h4>Background video</h4>
-        <label class="row toggle">
-          <span>Enabled <em id="set-bgv-note" class="muted"></em></span>
-          <input id="set-bgv" type="checkbox" />
-        </label>
-        <label class="row">
-          <span>Opacity <em id="set-bgv-op-val">45%</em></span>
-          <input id="set-bgv-op" type="range" min="0" max="1" step="0.05" value="0.45" />
-        </label>
-        <label class="row">
-          <span>Change per song</span>
-          <input id="set-bgv-perssong" type="checkbox" />
-        </label>
-        <div class="hint sub">Drop <code>.mp4</code>/<code>.webm</code> files in <code>src/assets/bgv/</code> and restart the server.</div>
-      </section>
       </details>
 
       <details class="set-cat" data-cat="music">
@@ -430,11 +412,6 @@
       </section>
 
       <section>
-        <h4>Audio songs <em class="muted">(audio + lyrics)</em></h4>
-        <div class="hint sub">Drop a recorded audio file (<code>.mp3/.wav/.flac/.m4a/.opus…</code>) plus a matching-name lyric sidecar (<code>.lrc</code>, <code>.kar/.mid</code>, <code>.vtt/.srt</code>, or <code>.txt</code>) into <code>data/audio_lyrics/</code>, then Rebuild. The <strong>Key</strong> control pitch-shifts these in real time; timed lyrics scroll like a MIDI song.</div>
-      </section>
-
-      <section>
         <h4>Library</h4>
         <div class="hint sub">Showing <em id="list-count">0</em> songs</div>
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
@@ -444,6 +421,11 @@
 
       <button id="settings-reset" class="reset-btn">Reset to defaults</button>
       <p class="hint">Defaults live in <code>src/config.js</code>. Edit it, then Reset.</p>
+
+      <div class="danger-zone">
+        <button id="erase-all" class="reset-btn danger">Erase all app data</button>
+        <p class="hint">Factory reset: also clears your queue, recents, favorites, panel layout, phone-remote code, saved YouTube songs, and the cached soundfont. Irreversible.</p>
+      </div>
     </div>
   </div>
 

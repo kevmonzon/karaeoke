@@ -26,8 +26,7 @@ import re
 import tempfile
 
 # Non-song files that may live in a payload folder and must never become records.
-# (Includes manifest.json — the BGV manifest — so it's ignored uniformly by all builders.)
-IGNORE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store", "manifest.json"}
+IGNORE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
 
 # Leading integer dial code, then the rest.
 _LEADING_CODE = re.compile(r"^(\d+)\s*-\s*(.*)$", re.DOTALL)

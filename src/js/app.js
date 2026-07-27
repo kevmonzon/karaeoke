@@ -7,7 +7,7 @@
  * actually does). The two big UI surfaces are delegated:
  *   - library-ui.js  : song list, search results, queue rendering
  *   - settings-ui.js : the ⚙ panel (control ↔ Settings wiring)
- * Everything else (audio, lyrics, melody/key, mic, bgv, settings store) lives in
+ * Everything else (audio, lyrics, melody/key, mic, settings store) lives in
  * its own module; this file wires them together.
  */
 
@@ -20,14 +20,13 @@ import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
 import { linesFromLyricFile } from "./lyrics-formats.js";
 import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
-import { BackgroundVideo } from "./bgv.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createRemoteHost, pickRemoteBaseUrl } from "./remote-host.js";
-import { cachedArrayBuffer, purgeStaleCaches } from "./asset-cache.js";
+import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
 // Source-kind icon shown in the now-playing header (in place of the dial number).
@@ -38,7 +37,7 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
-let lyrics, bgv, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
+let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
 let remoteHost;                  // host↔phone relay driver (created at boot)
@@ -74,7 +73,6 @@ async function boot() {
     smooth: settings.get("lyrics.smooth"),
     mergeLines: settings.get("lyrics.mergeLines"),
   });
-  bgv = new BackgroundVideo($("bgv"), settings);
   mic = new MicEngine(audio, settings);
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
   chordEngine = new ChordEngine($("chords"), { simplify: settings.get("chords.simplify") });
@@ -89,7 +87,7 @@ async function boot() {
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: toggleFavorite, isFavorite,
   });
-  settingsUI = createSettingsUI({ settings, mic, onRebuild, onToggleMic: toggleMic });
+  settingsUI = createSettingsUI({ settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
@@ -104,7 +102,6 @@ async function boot() {
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
-  bgv.init();
 
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
@@ -169,7 +166,6 @@ function applyAudioSettings() {
 
 function onSettingChanged(path) {
   if (path === "*" || path.startsWith("lyrics.")) applyVisualSettings();
-  if (path === "*" || path.startsWith("bgv.")) bgv.applySettings();
   if (path === "*" || path.startsWith("audio.")) applyAudioSettings();
   if (path.startsWith("mic.")) {
     // AEC/NS/AGC are getUserMedia constraints → need a fresh stream
@@ -579,6 +575,24 @@ function syncTransportLabels() {
 // ---------------------------------------------------------------------------
 const SESSION_KEY = "karaeoke.session.v1";
 
+// Full factory reset ("Erase all app data"): remove EVERY karaeoke.* localStorage key
+// (settings, session/queue+recents, favorites, ⚙ panel state, remote room code, the
+// YouTube pointer cache + blocklist) AND every Cache Storage cache (the ~32 MB soundfont
+// + cached songs), then reload into a pristine first-run state. Irreversible — the caller
+// (settings-ui.js) gates it behind a two-step confirm.
+async function eraseAllData() {
+  try {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("karaeoke.")) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch (_) {}
+  await purgeAllCaches();
+  location.reload();
+}
+
 // Resolve a stored reference to a song. New format = stable id ("midi:5"/"video:5");
 // old sessions stored a bare numeric code → treat as a MIDI code (back-compat).
 function resolveSong(ref) {
@@ -902,7 +916,6 @@ async function playVideo(song) {
   video.setTempo(settings.get("audio.tempo"));
   video.setKey(settings.get("audio.key")); // apply the current transpose to the video's audio
   video.load(url);
-  bgv.onSongStart();
   setStatus(`Now playing: ${song.code} — ${song.name}`);
   await video.play();
   setPlayIcon();
@@ -952,7 +965,6 @@ async function playAudio(song) {
   audioFile.setKey(settings.get("audio.key"));
   await audioFile.load(url);   // fetch the audio into an in-memory blob (reliable load/seek)
   await loadAudioLyrics(song); // fetch + parse the sidecar into the lyric surface
-  bgv.onSongStart();
   showTitleCard(song);
   setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
   await audioFile.play();
@@ -1031,7 +1043,6 @@ async function playYoutube(song) {
   youtube.setVolume(settings.get("audio.volume"));
   youtube.setTempo(settings.get("audio.tempo"));
   youtube.load(song.videoId);
-  bgv.onSongStart();
   setStatus(`Now playing: ${song.name}`);
   await youtube.play();
   setPlayIcon();
@@ -1086,7 +1097,6 @@ async function playMidi(song) {
   }
 
   audio.loadSong(buf);
-  bgv.onSongStart();
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
   setStatus(`Now playing: ${song.code} — ${song.name}`);
 
@@ -1563,11 +1573,5 @@ function setPlayIcon() {
 }
 function fmtKey(s) { return (s > 0 ? "+" : "") + s; }
 function fmt(s) { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, "0")}`; }
-
-// set the bgv "no clips" note once discovery finishes
-setTimeout(() => {
-  const note = $("set-bgv-note");
-  if (note && bgv) note.textContent = bgv.available ? "" : "(no clips found)";
-}, 1200);
 
 boot();

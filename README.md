@@ -6,7 +6,7 @@
 
 Plays local **MIDI/KAR** songs through an in-browser SoundFont synth with
 **tick-synced, per-syllable lyrics** — plus a live **microphone with voice effects &
-auto-tune**, a **pitch guide**, **key detection**, **background video**, drop-in
+auto-tune**, a **pitch guide**, **key detection**, drop-in
 **video karaoke**, and optional **YouTube karaoke search**. No accounts, no build step;
 your local library plays offline after first-run setup.
 
@@ -48,7 +48,6 @@ your local library plays offline after first-run setup.
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files; play full-stage with real-time **key change** + volume >100% |
 | 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with scrolling lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
-| 🌄 | **Background video** layer behind the lyrics (or an animated gradient) |
 | 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
 | 📱 | **Phone remote** — show a QR on the queue; guests scan it to queue, search & control playback from their phones |
 | 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
@@ -309,9 +308,7 @@ in ⚙ for an untrusted network). ⚠️ The
 code is a **friction gate for a trusted network, not real security** — anyone on your LAN who has the
 code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 
-### 🌄 Background video, title card, Bluetooth mode
-- **Background video** (⚙ → Background video, **off by default**): drop clips in `data/bgv/`
-  (restart to detect) or list them in `config.js`. No clips → animated gradient.
+### 🎬 Title card, Bluetooth mode
 - **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
   lyrics when a song starts, then fades in the words (⚙ → duration 0–10 s; 0 = off).
 - **Bluetooth mode** (⚙) — BT speakers lag ~260 ms, so this delays the visuals to match and
@@ -342,7 +339,6 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | Group | What it controls |
 |---|---|
 | **Lyrics** | offset, smooth wipe, visible lines, merge lines, width, font scale |
-| **Background video** | enabled, mode, opacity, change-per-song, explicit files |
 | **Audio** | volume, tempo, key (also driven by the bottom controls) |
 | **Key** | auto-detect, show key badge |
 | **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
@@ -424,9 +420,7 @@ karaoke-clone/
 │   ├── kar_raw/          ← MIDI/KAR song files (compressed MIDI)   [git-ignored]
 │   ├── videos/               ← video-karaoke files                     [git-ignored]
 │   ├── audio_lyrics/         ← audio files + matching lyric sidecars    [git-ignored]
-│   ├── soundfont.sf2         ← General MIDI SoundFont (~31 MB, auto-fetched) [git-ignored]
-│   ├── manifest.json         ← bgv clip list (auto-written each start)  [git-ignored]
-│   └── bgv/                  ← drop background videos here             [git-ignored]
+│   └── soundfont.sf2         ← General MIDI SoundFont (~31 MB, auto-fetched) [git-ignored]
 │
 ├── Dockerfile · .dockerignore · docker-compose.yml   ← containerized run (§4)
 │

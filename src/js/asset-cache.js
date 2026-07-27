@@ -60,6 +60,19 @@ export async function purgeStaleCaches() {
   } catch (_) {}
 }
 
+/**
+ * Delete EVERY Cache Storage cache, including the current asset cache — used by the
+ * full "Erase all app data" factory reset (unlike purgeStaleCaches, which spares the
+ * asset cache). The ~32 MB soundfont + cached songs re-download on next play.
+ */
+export async function purgeAllCaches() {
+  if (!supported) return;
+  try {
+    const names = await caches.keys();
+    await Promise.all(names.map((n) => caches.delete(n)));
+  } catch (_) {}
+}
+
 /** fetch() → ArrayBuffer, streaming with Content-Length progress when available. */
 async function streamToBuffer(url, onProgress) {
   const res = await fetch(url);

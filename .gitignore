@@ -20,5 +20,7 @@
 # Local dev/agent guide (CLAUDE.md) + any local Claude Code config — personal, kept
 # out of the repo. The whole .claude/ folder stays untracked.
 /.claude
+# Redesign/design-system notes + mockups — kept local only, not published in the repo.
+/docs
 __pycache__/
 *.bak

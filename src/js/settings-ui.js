@@ -33,10 +33,6 @@ const SETTINGS_SCHEMA = [
   { id: "set-width", path: "lyrics.lineWidthPct", type: "range", fmt: (v) => `${v}%` },
   { id: "set-font", path: "lyrics.fontScale", type: "range", fmt: (v) => `${(+v).toFixed(2)}×` },
   { id: "set-tc", path: "titleCard.seconds", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
-  // background video
-  { id: "set-bgv", path: "bgv.enabled", type: "check" },
-  { id: "set-bgv-op", path: "bgv.opacity", type: "range", fmt: pct },
-  { id: "set-bgv-perssong", path: "bgv.changePerSong", type: "check" },
   // midi mode (channel mixer band)
   { id: "set-midimode", path: "midiMode.enabled", type: "check" },
   // key detection
@@ -98,7 +94,6 @@ const SEARCH_KEYWORDS = {
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",
-  "set-bgv": "background wallpaper backdrop",
   "set-midimode": "channel mixer volume mute solo vu levels",
   "set-key-auto": "transpose signature",
   "set-key-badge": "transpose signature",
@@ -145,7 +140,7 @@ export function matchesQuery(text, query) {
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -181,6 +176,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
   // --- searchable / collapsible settings ---
   const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog"; // matchable controls + action buttons
   let searchIndex = null;
+  let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
   function buildSearchIndex() {
     const root = document.querySelector(".settings-body");
@@ -216,6 +212,15 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
     const st = {};
     for (const cat of searchIndex?.cats || []) st[cat.dataset.cat] = cat.open;
     try { localStorage.setItem(CAT_STATE_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+  };
+  // Reset the panel's own layout (category open/closed) back to the HTML defaults and
+  // forget the persisted state — the settings-UI half of "Reset to defaults".
+  const resetCatState = () => {
+    try { localStorage.removeItem(CAT_STATE_KEY); } catch { /* ignore */ }
+    for (const cat of searchIndex?.cats || []) {
+      const d = catDefaults[cat.dataset.cat];
+      cat.open = typeof d === "boolean" ? d : false;
+    }
   };
 
   function applyFilter(q) {
@@ -255,6 +260,8 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
 
   function wireSearch() {
     searchIndex = buildSearchIndex();
+    // capture each category's HTML-default open state BEFORE restore overwrites the DOM
+    for (const cat of searchIndex.cats) catDefaults[cat.dataset.cat] = cat.open;
     restoreCatState();
     const input = $("set-search");
     if (!input) return;
@@ -313,7 +320,28 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic }) {
       updateMicBtn();
     });
 
-    $("settings-reset").onclick = () => { settings.reset(); };
+    $("settings-reset").onclick = () => {
+      settings.reset();                 // clears karaeoke.settings.v1 → re-applies defaults + syncs controls
+      const s = $("set-search");
+      if (s && s.value) { s.value = ""; applyFilter(""); } // drop any active search filter
+      resetCatState();                  // clears karaeoke.settingsUI.v1 → default panel layout
+    };
+
+    // "Erase all app data" — full factory reset (settings + library data + caches). Guarded
+    // by a two-step confirm on the button itself (no native dialog, matches the app's style):
+    // first click arms + warns, a second click within 4 s performs the irreversible wipe.
+    const erase = $("erase-all");
+    if (erase && onEraseAll) {
+      const orig = erase.textContent;
+      let armed = null; // timer handle while armed
+      const disarm = () => { clearTimeout(armed); armed = null; erase.textContent = orig; erase.classList.remove("armed"); };
+      erase.onclick = () => {
+        if (armed) { disarm(); onEraseAll(); return; } // second click → wipe + reload
+        erase.textContent = "Click again to erase everything";
+        erase.classList.add("armed");
+        armed = setTimeout(disarm, 4000);
+      };
+    }
   }
 
   function syncSettingsUI() {

@@ -145,15 +145,7 @@ body.focus-mode.controls-hidden { cursor: none; }
 .remote-qr-room { font-size: 12px; color: var(--muted); }
 .remote-qr-room strong { color: var(--accent); font-size: 16px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
 
-/* Background video layer */
-.bgv {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; z-index: 0; opacity: 0; pointer-events: none;
-  transition: opacity .6s ease; display: none;
-}
-.stage > *:not(.bgv) { position: relative; z-index: 1; }
-body.bgv-active .stage { background: #05060a; }
-body.bgv-active .lyrics .line { text-shadow: 0 2px 18px rgba(0,0,0,.85); }
+.stage > * { position: relative; z-index: 1; }
 
 /* VIDEO karaoke: the picture fills the freed middle only in video-mode. #kva has
    no layout (it's just the sound). */
@@ -644,6 +636,12 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
 .reset-btn { width: 100%; padding: 11px; border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 13px/1 var(--font-sans); }
 .reset-btn:hover { background: var(--brand); color: var(--brand-ink); }
+
+/* Danger zone: the full "Erase all app data" factory reset. */
+.danger-zone { margin-top: var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--border-soft); }
+.reset-btn.danger { border-color: var(--bad); color: var(--bad); }
+.reset-btn.danger:hover { background: var(--bad); color: #fff; }
+.reset-btn.danger.armed { background: var(--bad); color: #fff; font-weight: 700; } /* second-click confirm state */
 .sub-h { font: 700 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); margin: 6px 0 10px; border-top: 1px solid var(--border-soft); padding-top: var(--s-3); }
 .mic-btn { border-color: var(--brand-2); color: var(--brand-2); margin-bottom: 8px; }
 

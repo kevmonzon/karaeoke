@@ -20,8 +20,6 @@ export const DEFAULT_CONFIG = {
     videoCatalogUrl: "/catalog-video.json", // video-karaoke catalog (optional; may be absent)
     audioCatalogUrl: "/catalog-audio.json", // audio+lyrics catalog (optional; may be absent)
     soundfontUrl:    "/soundfont.sf2",      // General MIDI SoundFont (~31 MB)
-    bgvDir:          "/bgv/",               // background-video clips folder (bare names resolve here)
-    bgvManifestUrl:  "/manifest.json",      // background-video clip list (written by serve.py)
   },
 
   lyrics: {
@@ -45,26 +43,6 @@ export const DEFAULT_CONFIG = {
 
     // Multiplier on the lyric font size (0.6–1.8).
     fontScale: 1.0,
-  },
-
-  bgv: {
-    // Master switch for the background video layer. OFF by default.
-    enabled: false,
-
-    // "random" | "sequential" — how the next clip is chosen.
-    mode: "random",
-
-    // Video layer opacity behind the lyrics (0–1).
-    opacity: 0.45,
-
-    // Change the background video on every new song.
-    changePerSong: true,
-
-    // Explicit clip list. Bare names resolve under /bgv/; full URLs are
-    // used as-is. Leave empty to auto-use whatever serve.py finds in
-    // data/bgv/ (drop .mp4 / .webm files there). If nothing is available,
-    // the player falls back to an animated gradient.
-    files: [],
   },
 
   audio: {
@@ -201,6 +179,8 @@ export const DEFAULT_CONFIG = {
     //   mode "chromatic" → snap to the nearest semitone
     // strength 0 = off, 1 = full correction. (Shares the pitch-shift worklet, so its
     // quality/artifacts apply.) Needs the mic on; melody mode needs a playing song.
-    autotune: { enabled: false, strength: 1.0, mode: "melody", key: 0, scale: "major" },
+    // key "auto" = derive both the key AND the scale from the song's detected key
+    // (the melody.detectKey result); a numeric 0–11 pins the key and uses `scale`.
+    autotune: { enabled: false, strength: 1.0, mode: "melody", key: "auto", scale: "major" },
   },
 };
