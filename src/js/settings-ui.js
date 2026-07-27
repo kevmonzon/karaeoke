@@ -23,6 +23,9 @@ const SETTINGS_SCHEMA = [
   // display size / profile
   { id: "set-screen", path: "ui.screen", type: "select" },
   { id: "set-theme", path: "ui.theme", type: "select" },
+  // playback-controls overlay: always-show toggle + idle auto-hide duration
+  { id: "set-playback", path: "ui.playback", type: "check" },
+  { id: "set-autohide", path: "ui.autoHideSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
   { id: "set-bt", path: "bt.enabled", type: "check" }, // lives in the Display category in index.html
@@ -91,6 +94,8 @@ const SETTINGS_SCHEMA = [
 const SEARCH_KEYWORDS = {
   "set-screen": "tv television display size screen distance responsive scale zoom big large",
   "set-theme": "dark light color theme appearance mode night day",
+  "set-playback": "playback controls transport seek bar show hide always overlay dock",
+  "set-autohide": "auto hide fade idle timeout duration seconds controls transport overlay",
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",

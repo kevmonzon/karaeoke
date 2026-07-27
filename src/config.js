@@ -77,7 +77,12 @@ export const DEFAULT_CONFIG = {
   // output isn't practical). The offset stays adjustable afterward.
   bt: { enabled: false },
 
-  // Collapsible panels (toggled from the top bar; true = shown). Persisted.
+  // Collapsible panels (library / queue toggled from the top bar; true = shown). Persisted.
+  //   playback = "Always show playback controls" (the transport/seek overlay). true = always
+  //              visible in normal mode; false = it auto-hides after `autoHideSec` idle seconds
+  //              (the same behavior focus mode always uses) and returns on pointer/key activity.
+  //   autoHideSec = idle seconds before the playback controls fade — used in focus mode AND when
+  //              `playback` is off. Reappear on any movement/keypress.
   // `screen` = the display-size profile that scales the whole UI for readability:
   //   "auto"     → detect from the window size (phone / tablet / computer / TV), live on resize
   //   "phone" | "tablet" | "computer" | "tv" → force that profile (e.g. pick "tv" for big,
@@ -85,7 +90,7 @@ export const DEFAULT_CONFIG = {
   //                 (~1800px+) auto-detects as "tv" — switch to "computer" if it's a desktop monitor.
   //   theme = the color theme: "auto" (follow the device / OS preference), "dark", or "light".
   //           The whole player is designed for both; "auto" tracks prefers-color-scheme live.
-  ui: { library: true, queue: true, playback: true, screen: "auto", theme: "auto" },
+  ui: { library: true, queue: true, playback: true, autoHideSec: 3, screen: "auto", theme: "auto" },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).

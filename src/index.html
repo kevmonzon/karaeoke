@@ -38,7 +38,6 @@
     <div class="toggles">
       <button id="toggle-lib" class="gear" title="Toggle song list">☰</button>
       <button id="toggle-queue" class="gear" title="Toggle queue">▦</button>
-      <button id="toggle-playback" class="gear" title="Toggle playback controls">🎛</button>
     </div>
     <button id="btn-focus" class="gear" title="Focus mode — hide panels for a full-screen lyrics view (Esc to exit)" aria-label="Focus mode">◎</button>
     <button id="btn-settings" class="gear" title="Settings">⚙</button>
@@ -132,6 +131,12 @@
 
       <div id="offset-toast" class="offset-toast"></div>
 
+      <!-- Playback dock: the seek bar + transport float as a translucent OVERLAY pinned to the
+           bottom of the stage (absolute), so the lyrics/guide get the freed vertical space.
+           Always visible when ui.playback ("Always show playback controls") is on; otherwise it
+           auto-hides after ui.autoHideSec idle seconds (also always in focus mode) via
+           body.controls-hidden — see app.js showControls/applyControlsAutoHide. -->
+      <div id="playback-dock" class="playback-dock">
       <!-- seek bar with the current/total time inline on either side -->
       <div class="seek-row">
         <span id="time-cur" class="t-time">0:00</span>
@@ -173,6 +178,7 @@
           </div>
         </div>
       </div>
+      </div><!-- /#playback-dock -->
     </section>
 
     <!-- RIGHT: queue -->
@@ -226,6 +232,18 @@
           </select>
         </label>
         <div class="hint sub">Scales the whole player for readability. <strong>Auto</strong> follows the window size (a big screen reads as <strong>TV</strong>); pick TV for large, read-at-a-distance text, or Computer for a desktop monitor. Font size (below) fine-tunes on top.</div>
+      </section>
+      <section>
+        <h4>Playback controls</h4>
+        <label class="row toggle">
+          <span>Always show playback controls</span>
+          <input id="set-playback" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Auto-hide after <em id="set-autohide-val">3.0 s</em></span>
+          <input id="set-autohide" type="range" min="1" max="15" step="0.5" value="3" />
+        </label>
+        <div class="hint sub">The transport + seek bar float as an overlay at the bottom of the stage. With <strong>Always show</strong> off (and in focus mode), they fade after this idle time and reappear on any movement or keypress.</div>
       </section>
       <section>
         <h4>Lyrics</h4>

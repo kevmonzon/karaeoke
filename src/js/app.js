@@ -102,6 +102,7 @@ async function boot() {
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   applyUiCollapse();
+  applyControlsAutoHide();  // arm the playback-dock idle-hide if "Always show" is off
 
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
@@ -194,7 +195,9 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   // Only the panel-collapse booleans drive applyUiCollapse — not ui.screen / ui.theme
   // (those have their own handlers below and don't need a virtual-list re-refresh).
-  if (path === "*" || /^ui\.(library|queue|playback)$/.test(path)) applyUiCollapse();
+  if (path === "*" || /^ui\.(library|queue)$/.test(path)) applyUiCollapse();
+  // "Always show playback controls" + its auto-hide duration re-arm the idle-hide timer.
+  if (path === "*" || path === "ui.playback" || path === "ui.autoHideSec") applyControlsAutoHide();
   if (path === "*" || path === "ui.screen") applyScreenProfile();
   if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*") settingsUI.syncSettingsUI();
@@ -245,18 +248,37 @@ window.addEventListener("resize", () => {
 function applyUiCollapse() {
   const libOpen = settings.get("ui.library");
   const qOpen = settings.get("ui.queue");
-  const pbOpen = settings.get("ui.playback");
   document.body.classList.toggle("lib-collapsed", !libOpen);
   document.body.classList.toggle("queue-collapsed", !qOpen);
-  document.body.classList.toggle("pb-collapsed", !pbOpen);
   $("toggle-lib").classList.toggle("active", libOpen);
   $("toggle-queue").classList.toggle("active", qOpen);
-  $("toggle-playback").classList.toggle("active", pbOpen);
   // panels that regained size need a re-render / resize
   requestAnimationFrame(() => {
     if (libOpen && lib) lib.refresh();
     if (pitchGuide) pitchGuide.resize();
   });
+}
+
+// Playback-controls auto-hide. The transport/seek dock is an overlay at the bottom of the
+// stage; it stays visible when "Always show playback controls" (ui.playback) is on, and
+// auto-hides after ui.autoHideSec idle seconds when that's off — and always in focus mode
+// (which additionally recedes the topbar). Any pointer/key activity brings it back.
+let _ctlHideTimer;
+function autoHideActive() {
+  return document.body.classList.contains("focus-mode") || !settings.get("ui.playback");
+}
+function showControls() {
+  clearTimeout(_ctlHideTimer);
+  document.body.classList.remove("controls-hidden");
+  if (autoHideActive()) {
+    const ms = Math.max(1, Number(settings.get("ui.autoHideSec")) || 3) * 1000;
+    _ctlHideTimer = setTimeout(() => document.body.classList.add("controls-hidden"), ms);
+  }
+}
+// (Re)arm or cancel the idle-hide timer when the mode or duration changes.
+function applyControlsAutoHide() {
+  if (autoHideActive()) showControls();
+  else { clearTimeout(_ctlHideTimer); document.body.classList.remove("controls-hidden"); }
 }
 
 // Bluetooth mode: BT output lags ~260 ms, so the lyrics/guide (synced to the app
@@ -1299,10 +1321,10 @@ function wireUI() {
     settings.set("youtube.enabled", !settings.get("youtube.enabled")); // onSettingChanged repaints + re-runs
   };
 
-  // collapsible panels
+  // collapsible panels (playback-controls visibility is now a ⚙ → Display setting, not a
+  // top-bar toggle — see ui.playback / applyControlsAutoHide)
   $("toggle-lib").onclick = () => settings.set("ui.library", !settings.get("ui.library"));
   $("toggle-queue").onclick = () => settings.set("ui.queue", !settings.get("ui.queue"));
-  $("toggle-playback").onclick = () => settings.set("ui.playback", !settings.get("ui.playback"));
 
   // Full-screen toggle (top-right). Falls back silently if the browser refuses.
   const fsBtn = $("btn-fullscreen");
@@ -1321,28 +1343,21 @@ function wireUI() {
   // queue panels; the topbar stays so you can exit (Esc also exits). Re-measures the
   // virtual list + guide because the stage width changes.
   const focusBtn = $("btn-focus");
-  // In focus mode the transport + topbar auto-hide after a few idle seconds (video-player
-  // style) and reappear on any pointer/key activity, for a clean 10-foot view.
-  let _ctlHideTimer;
-  const showControls = () => {
-    clearTimeout(_ctlHideTimer);
-    document.body.classList.remove("controls-hidden");
-    if (document.body.classList.contains("focus-mode"))
-      _ctlHideTimer = setTimeout(() => document.body.classList.add("controls-hidden"), 3000);
-  };
+  // The transport dock (and, in focus mode, the topbar) auto-hide after a few idle seconds
+  // (video-player style) and reappear on any pointer/key activity. The hide logic is shared
+  // with the "Always show playback controls" setting — see showControls/applyControlsAutoHide.
   const setFocus = (on) => {
     document.body.classList.toggle("focus-mode", on);
     if (focusBtn) {
       focusBtn.classList.toggle("active", on);
       focusBtn.title = on ? "Exit focus mode (Esc)" : "Focus mode — hide panels for a full-screen lyrics view (Esc to exit)";
     }
-    if (on) showControls();
-    else { clearTimeout(_ctlHideTimer); document.body.classList.remove("controls-hidden"); }
+    applyControlsAutoHide(); // focus on → arm the timer; off → revert to the ui.playback state
     requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); positionFocusQr(); });
   };
   if (focusBtn) focusBtn.onclick = () => setFocus(!document.body.classList.contains("focus-mode"));
   ["mousemove", "touchstart", "keydown", "click"].forEach((ev) =>
-    document.addEventListener(ev, () => { if (document.body.classList.contains("focus-mode")) showControls(); }, { passive: true }));
+    document.addEventListener(ev, () => { if (autoHideActive()) showControls(); }, { passive: true }));
   document.addEventListener("keydown", (e) => {
     // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");

@@ -81,11 +81,23 @@ body.queue-collapsed .layout { grid-template-columns: var(--lib-w) 1fr 0; }
 body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
 body.lib-collapsed .library { opacity: 0; pointer-events: none; }
 body.queue-collapsed .queue { opacity: 0; pointer-events: none; }
-.seek-row { max-height: 64px; }
-.playbar { max-height: 220px; }
-.seek-row, .playbar { transition: max-height var(--dur-base) var(--ease), opacity var(--dur-fast) var(--ease), margin var(--dur-base) var(--ease); }
-body.pb-collapsed .seek-row,
-body.pb-collapsed .playbar { max-height: 0; opacity: 0; margin-top: 0; margin-bottom: 0; overflow: hidden; pointer-events: none; }
+/* Playback dock — the seek bar + transport float as a translucent OVERLAY pinned to the
+   bottom of the stage (absolute, so they no longer occupy flow space: the lyrics/guide get
+   the freed height). The gradient fades the lyric text behind the bar so it stays legible.
+   Auto-hide (body.controls-hidden) slides + fades it — see app.js. */
+.playback-dock {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  padding: 10px 26px 14px;
+  background: linear-gradient(to top, var(--bg) 62%, transparent);
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+}
+body.controls-hidden .playback-dock {
+  opacity: 0; pointer-events: none; transform: translateY(10px);
+  transition: opacity .5s var(--ease), transform .5s var(--ease);
+}
+/* MIDI mode drops a per-channel mixer band at the bottom of the flow — reserve room so the
+   overlay doesn't cover its lowest rows (only mode with in-flow content behind the dock). */
+body.midi-mode .stage { padding-bottom: 120px; }
 
 /* Focus mode — distraction-free full-stage lyrics (10-foot). Hides the browse + queue
    panels so the stage fills the width; the topbar recedes but stays reachable (hover /
@@ -99,11 +111,11 @@ body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; }
 body.focus-mode .stage { grid-column: 1; }
 body.focus-mode .topbar { opacity: .5; transition: opacity .25s var(--ease); }
 body.focus-mode .topbar:hover { opacity: 1; }
-/* Auto-hide: after a few idle seconds in focus mode the transport + topbar fade away
-   (cheap opacity only); any pointer/key activity brings them back (app.js). */
-body.focus-mode.controls-hidden .topbar,
-body.focus-mode.controls-hidden .seek-row,
-body.focus-mode.controls-hidden .playbar { opacity: 0; pointer-events: none; transition: opacity .5s var(--ease); }
+/* Auto-hide: after a few idle seconds the playback dock fades (handled globally by
+   body.controls-hidden .playback-dock above — active in focus mode AND when "Always show
+   playback controls" is off). In focus mode ONLY, the topbar also recedes and the cursor
+   is hidden for a clean 10-foot view; any pointer/key activity brings them back (app.js). */
+body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity .5s var(--ease); }
 body.focus-mode.controls-hidden { cursor: none; }
 /* Focus mode: enlarge the "up next" pill (1.75×) so it's legible from across the room. */
 body.focus-mode { --upnext-mult: 1.75; }
@@ -713,11 +725,8 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .queue { display: none; }
 
   /* Panel-collapse is a desktop idea; on one column only "hide the list for a
-     full-screen lyrics view" is useful. Keep the list toggle (☰), drop the other
-     two, and make sure a stale queue/playback collapse can't strand content. */
-  #toggle-queue, #toggle-playback { display: none; }
-  body.pb-collapsed .seek-row,
-  body.pb-collapsed .playbar { max-height: none; opacity: 1; }
+     full-screen lyrics view" is useful. Keep the list toggle (☰), drop the queue toggle. */
+  #toggle-queue { display: none; }
   body.lib-collapsed .library { display: none; } /* on one column, fully remove it to reclaim the row */
   body.lib-collapsed .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
   body.queue-collapsed .layout,
@@ -726,6 +735,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
 
   .library { min-height: 0; }
   .stage { padding: 14px; }
+  .playback-dock { padding: 8px 14px 12px; } /* keep the overlay aligned with the tighter stage pad */
   .playbar { gap: 14px 20px; } /* full-width single-column stage still spreads, just tighter */
   .status { font-size: 12px; }
   .settings-panel { width: min(380px, 96vw); }
@@ -744,6 +754,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   /* Shorter list, bigger stage — lyrics get the room by default (list still scrolls). */
   .layout { grid-template-rows: minmax(0, 32vh) 1fr; }
   .stage { padding: 10px; }
+  .playback-dock { padding: 6px 10px 10px; }
 
   /* Roomier touch targets */
   .search-row { padding: 10px 8px; gap: 8px; }
