@@ -44,26 +44,31 @@ body {
 /* subtle lift on song-row hover so browsing feels alive (transform only → cheap) */
 .song:hover { transform: translateX(2px); }
 
-/* Topbar */
+/* Topbar — a calm cluster: brand · status eyebrow · grouped view toggles · icon buttons. */
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 18px; border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
+  padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--border-soft);
+  background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(10px);
 }
-.brand { font-weight: 800; letter-spacing: .5px; font-size: 20px; }
+.brand { font-weight: 800; letter-spacing: .3px; font-size: 19px; }
 .brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
-.status { color: var(--muted); font-size: 13px; flex: 1; text-align: center; }
+.status { flex: 1; text-align: center; color: var(--text-muted);
+  font: 600 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
+/* Icon-button primitive (matches the gallery .icon-btn). */
 .gear {
   display: inline-flex; align-items: center; justify-content: center;
-  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink);
-  width: 34px; height: 34px; border-radius: 9px; cursor: pointer; font-size: 16px;
-  line-height: 1; padding: 0; flex: none; vertical-align: middle;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  width: 38px; height: 38px; border-radius: var(--r-md); cursor: pointer; font-size: 16px;
+  line-height: 1; padding: 0; flex: none;
 }
-.gear:hover { border-color: var(--accent-2); }
-.toggles { display: flex; align-items: center; gap: 6px; }
-#btn-settings, #btn-fullscreen { margin-left: 6px; } /* uniform 6px rhythm across the whole right cluster */
-.toggles .gear { font-size: 14px; opacity: .5; }
-.toggles .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
+.gear:hover { border-color: var(--brand-2); }
+/* The three panel toggles read as ONE segmented control (declutters the header). */
+.toggles { display: inline-flex; align-items: center; gap: 2px; padding: 3px;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); }
+.toggles .gear { border: 0; background: none; width: 32px; height: 32px; font-size: 14px; opacity: .4; color: var(--text-muted); border-radius: var(--r-pill); }
+.toggles .gear.active { opacity: 1; color: var(--brand-2); } /* shown = subtle teal glyph; collapsed = dimmed */
+.toggles .gear:hover { opacity: 1; }
+#btn-focus, #btn-settings, #btn-fullscreen { margin-left: var(--s-2); }
 
 /* Collapsible panels (topbar toggles) */
 body.lib-collapsed .layout { grid-template-columns: 0 1fr var(--queue-w); }
@@ -198,11 +203,11 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 .search-row { display: flex; gap: calc(8px * var(--ui-scale)); padding: calc(12px * var(--ui-scale)); align-items: center; }
 .search-box { position: relative; flex: 1; display: flex; }
 #search {
-  flex: 1; padding: calc(10px * var(--ui-scale)) calc(30px * var(--ui-scale)) calc(10px * var(--ui-scale)) calc(12px * var(--ui-scale));
-  border-radius: calc(10px * var(--ui-scale)); border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: calc(14px * var(--ui-scale)); outline: none;
+  flex: 1; padding: calc(11px * var(--ui-scale)) calc(32px * var(--ui-scale)) calc(11px * var(--ui-scale)) calc(14px * var(--ui-scale));
+  border-radius: var(--r-md); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale)); outline: none;
 }
-#search:focus { border-color: var(--accent); }
+#search:focus { border-color: var(--brand); }
 .search-clear {
   position: absolute; right: calc(6px * var(--ui-scale)); top: 50%; transform: translateY(-50%);
   width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); border: none; border-radius: 50%;
@@ -244,23 +249,23 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
      and controls stay proportional to the scaled text — otherwise big TV text crams a tiny box. */
   display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto auto;
   align-items: center; gap: calc(8px * var(--ui-scale));
-  padding: calc(6px * var(--ui-scale)) calc(10px * var(--ui-scale));
-  border-radius: calc(10px * var(--ui-scale)); cursor: pointer;
+  padding: calc(7px * var(--ui-scale)) calc(12px * var(--ui-scale));
+  border-radius: var(--r-md); cursor: pointer;
   border: max(1px, calc(1px * var(--ui-scale))) solid transparent;
 }
-.song.playing { border-color: var(--accent); background: rgba(255, 61, 129, .10); }
-.song:hover { background: var(--panel); }
-.song.selected { background: var(--panel-2); border-color: var(--accent); }
+.song.playing { border-color: var(--accent); background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.song:hover { background: var(--surface-1); }
+.song.selected { background: var(--surface-2); border-color: var(--accent); }
 .song .kind { font-size: calc(18px * var(--ui-scale)); }
 .song .meta { display: flex; flex-direction: column; min-width: 0; }
-.song .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .title { font-size: calc(14px * var(--ui-scale)); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 button.add {
-  background: var(--panel-2); border: none; color: var(--ink);
-  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
-  border-radius: calc(8px * var(--ui-scale)); cursor: pointer; font-size: calc(14px * var(--ui-scale)); line-height: 1;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  width: calc(28px * var(--ui-scale)); height: calc(28px * var(--ui-scale));
+  border-radius: var(--r-sm); cursor: pointer; font-size: calc(14px * var(--ui-scale)); line-height: 1;
 }
-button.add:hover { background: var(--accent); }
+button.add:hover { background: var(--brand); border-color: transparent; color: var(--brand-ink); }
 
 /* Star / favorite toggle on each song row. Dim outline by default, warm gold
    when starred; the star stays legible on hover without shouting like ＋. */
