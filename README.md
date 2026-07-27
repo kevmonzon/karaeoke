@@ -218,14 +218,17 @@ compilation of your own library, not something the repo distributes.
 - The **🌐** pill in the search row toggles **YouTube search** (see below; **on by default** — it still only queries when your local results are thin).
 - The queue auto-advances between songs (MIDI, video, and YouTube alike). Remove queued items with **✕**.
 
-### Playback controls (bottom strip)
+### Playback controls (overlay)
+The transport + seek bar float as a **translucent overlay** at the bottom of the stage. By default
+they **auto-hide** after a few idle seconds and reappear on any movement or keypress — turn
+**Always show playback controls** on (or change the **Auto-hide after** delay) under **⚙ → Display**.
 - **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (toggle the melody guide vocal on/off), and **🎤 Mic**.
 - **Seek bar** — click/drag to scrub (the current / total time flank it).
 - **Key ±** — transpose in semitones (the resulting key is named next to it).
 - **Tempo ±** — 0.5×–1.5× playback rate (a −/＋ stepper, like Key).
 - **Volume** — up to 200%.
 
-The controls spread evenly across the strip and reflow (stack) on narrow screens.
+The controls spread evenly and reflow (stack) on narrow screens.
 
 ### Lyrics
 A smooth-scrolling column glides upward as lines finish (no jump-cuts); the active line is
@@ -315,13 +318,16 @@ code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
   disables the mic; the offset stays adjustable.
 
 ### Layout & screens
-The player adapts across **phone · tablet · computer · TV**. It auto-scales to your window size
-(**⚙ → Display → Display size**, default **Auto**) so the lyrics stay readable — a big screen reads
-as **TV** with large, read-at-a-distance text. If Auto guesses wrong (e.g. a desktop 4K monitor gets
-TV-sized text), switch it to **Computer**; the **font size** slider fine-tunes on top. Collapse the
-**song list / queue / playback strip** from the top-bar toggles (☰ ▦ 🎛), go **full screen** with the
-**⛶** button (top-right), and find the live **song count** under ⚙ → Library. On phones/tablets the
-layout stacks to a single column with the lyrics front and centre.
+Set the overall **Font size** — **Small / Medium / Large** (**⚙ → Display → Font size**) — to scale
+the whole player's text + controls for your viewing distance (pick **Large** for a TV across the
+room); the Lyrics **Lyrics size** slider fine-tunes just the lyrics on top. Collapse the **song list
+/ queue** from the top-bar toggles (**🔍 ▦**), go **full screen** with the **⛶** button (top-right),
+and find the live **song count** under ⚙ → Library.
+
+On **phones and tablets in portrait** the layout stacks to a single column with the lyrics front and
+centre, and the **song list (🔍)** and **queue (▦)** open **one at a time** to save space (tap the
+open one to hide it for a full-screen lyrics view). A **tablet in landscape** gets the full desktop
+three-column layout. The remote QR, focus (◎), and full-screen (⛶) buttons are hidden on mobile.
 
 ---
 
@@ -338,7 +344,7 @@ categories at once (it matches labels, section names, and synonyms like "latency
 
 | Group | What it controls |
 |---|---|
-| **Lyrics** | offset, smooth wipe, visible lines, merge lines, width, font scale |
+| **Lyrics** | offset, smooth wipe, visible lines, merge lines, width, lyrics size |
 | **Audio** | volume, tempo, key (also driven by the bottom controls) |
 | **Key** | auto-detect, show key badge |
 | **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
@@ -347,7 +353,8 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
-| **Display size** | Auto / Phone / Tablet / Computer / TV — scales the whole player for readability (Auto follows the window; big screens read as TV) |
+| **Font size** | Small / Medium / Large — scales the whole player's text + controls (the Lyrics "Lyrics size" slider fine-tunes lyrics on top) |
+| **Playback controls** | Always show (off = the transport overlay auto-hides) + auto-hide delay |
 | **Title card** | seconds shown, 0–10 (0 = off; default 5) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |
