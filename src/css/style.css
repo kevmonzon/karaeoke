@@ -312,6 +312,8 @@ button.fav.on { color: #ffce3a; }
 .up-next:empty { display: none; }
 .up-next .up-lb { flex: none; font: 700 calc(10px * var(--ui-scale))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
 .up-next .up-song { min-width: 0; font-size: calc(13px * var(--ui-scale)); color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+/* the queued next singer — brand pink, tying it to the singer identity */
+.up-next .up-by { flex: none; font-size: calc(12.5px * var(--ui-scale)); font-weight: 600; color: var(--brand); }
 /* Slide in from the right when it appears (last ~20 s). Token duration → auto-disabled
    under prefers-reduced-motion. Plays once each time the pill gains content. */
 .up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }

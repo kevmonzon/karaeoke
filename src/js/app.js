@@ -1453,22 +1453,28 @@ function updateStageBanner() {
   if (!nowEl || !upEl) return;
   const nowText = current && currentBy ? `🎤 ${currentBy}` : "";
   if (nowText !== _bannerNow) { nowEl.textContent = nowText; _bannerNow = nowText; }
-  let upSong = "";
+  let upName = "", upWho = "";
   if (current && media && media.duration > 0 && queue.length) {
     const remaining = media.duration - media.currentTime;
     if (remaining > 0 && remaining <= 20) {
-      const who = queueBy[0];
-      upSong = `${queue[0].name || "(untitled)"}${who ? ` · ${who}` : ""}`;
+      upName = queue[0].name || "(untitled)";
+      upWho = queueBy[0] || "";
     }
   }
-  if (upSong !== _bannerUp) {
-    _bannerUp = upSong;
+  const upKey = upName ? `${upName}|${upWho}` : "";
+  if (upKey !== _bannerUp) {
+    _bannerUp = upKey;
     upEl.textContent = "";
-    if (upSong) {
-      // Pill = a mono "⏭ Up next" eyebrow + the song/singer (built as spans, no innerHTML).
+    if (upName) {
+      // Pill = a mono "⏭ Up next" eyebrow + the song + (if phone-queued) the next singer.
+      // Built as spans (text nodes, no innerHTML).
       const lab = document.createElement("span"); lab.className = "up-lb"; lab.textContent = "⏭ Up next";
-      const sp = document.createElement("span"); sp.className = "up-song"; sp.textContent = upSong;
+      const sp = document.createElement("span"); sp.className = "up-song"; sp.textContent = upName;
       upEl.append(lab, sp);
+      if (upWho) {
+        const wh = document.createElement("span"); wh.className = "up-by"; wh.textContent = `🎤 ${upWho}`;
+        upEl.append(wh);
+      }
     }
   }
 }
