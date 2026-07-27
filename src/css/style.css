@@ -288,7 +288,7 @@ button.fav:active { transform: scale(.85); }
 button.fav.on { color: #ffce3a; }
 
 /* Stage / now playing */
-.now-playing { display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
+.now-playing { position: relative; display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
 
 /* Singer badge — sits in the now-playing header (was a separate banner row). */
 .now-singer {
@@ -298,12 +298,16 @@ button.fav.on { color: #ffce3a; }
 }
 .now-singer:empty { display: none; }
 /* "Up next" — a slim hint under the header; collapses when empty. */
-/* "Up next" — a teal-bordered PILL (matches the mockup): a mono eyebrow + the song. */
+/* "Up next" — a teal-bordered PILL (matches the mockup): a mono eyebrow + the song.
+   OVERLAID (absolute) so appearing/vanishing in the last ~20 s never reflows the lyrics.
+   Floats top-right, just under the now-playing divider (the title stays clear on the left). */
 .up-next {
-  align-self: flex-start; display: inline-flex; align-items: center; gap: 10px;
-  margin-top: var(--s-2); padding: 8px 14px; max-width: 100%;
+  position: absolute; top: 50%; left: 0; transform: translateY(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 10px;
+  width: max-content; max-width: 100%;
+  padding: 8px 14px;
   background: var(--surface-1); border: 1px solid color-mix(in srgb, var(--brand-2) 40%, transparent);
-  border-radius: var(--r-pill); white-space: nowrap; overflow: hidden;
+  border-radius: var(--r-pill); box-shadow: var(--elev-1); white-space: nowrap; overflow: hidden;
 }
 .up-next:empty { display: none; }
 .up-next .up-lb { flex: none; font: 700 calc(10px * var(--ui-scale))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
@@ -311,7 +315,7 @@ button.fav.on { color: #ffce3a; }
 /* Slide in from the right when it appears (last ~20 s). Token duration → auto-disabled
    under prefers-reduced-motion. Plays once each time the pill gains content. */
 .up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }
-@keyframes upNextIn { from { opacity: 0; transform: translateX(22px); } to { opacity: 1; transform: none; } }
+@keyframes upNextIn { from { opacity: 0; transform: translate(22px, -50%); } to { opacity: 1; transform: translateY(-50%); } }
 
 /* Fullscreen top-bar button active state (it lives outside .toggles). */
 .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
