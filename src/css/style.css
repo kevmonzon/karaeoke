@@ -372,7 +372,12 @@ body.midi-mode .midi-mixer { display: grid; }
     width: min(300px, 32vw); max-height: none; margin: 0;
     border: 0; border-left: 1px solid var(--line); border-radius: 0;
     background: var(--surface-1); padding: 16px 12px;
+    overflow-x: hidden; /* never scroll sideways — rows stack to fit the rail (below) */
   }
+  /* Stack each channel row to fit the narrow rail: [label · M · S] / [volume] / [VU]. */
+  body.midi-mode .mx-row { grid-template-columns: 1fr 26px 26px; gap: 5px 6px; }
+  body.midi-mode .mx-vol { grid-column: 1 / -1; grid-row: 2; }
+  body.midi-mode .mx-vu  { grid-column: 1 / -1; grid-row: 3; }
   body.midi-mode .layout,
   body.midi-mode .topbar { margin-right: min(300px, 32vw); }
   /* both rails open (mixer + settings): sum the widths, dock the mixer left of the drawer */
