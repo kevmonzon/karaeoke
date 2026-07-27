@@ -102,6 +102,11 @@
 
       <canvas id="pitch-guide" class="pitch-guide"></canvas>
 
+      <!-- Focus-mode phone-remote QR: in focus mode (queue panel hidden) it overlays the RIGHT
+           side of the melody guide, matched to its height (positioned in JS: positionFocusQr).
+           Shown only in body.focus-mode.remote-on; falls back to a top-right corner if no guide. -->
+      <div id="focus-qr" class="focus-qr" role="img" aria-label="Scan to control from your phone"></div>
+
       <!-- chord follow-along lane (MIDI only): auto-detected chords, scrolls in sync
            with the lyrics; hidden in video/youtube mode (baked-in, no note data) -->
       <div id="chords" class="chords"></div>
@@ -109,9 +114,6 @@
       <!-- the title card overlays only the lyrics area, then fades to reveal it -->
       <div class="lyrics-wrap">
         <div id="lyrics" class="lyrics"></div>
-        <!-- Focus-mode phone-remote QR: pinned top-right of the lyrics area, shown only in
-             focus mode while remote is enabled (so guests can still scan with panels hidden). -->
-        <div id="focus-qr" class="focus-qr" role="img" aria-label="Scan to control from your phone"></div>
         <div id="title-card" class="title-card">
           <div id="tc-title" class="tc-title"></div>
           <div id="tc-artist" class="tc-artist"></div>

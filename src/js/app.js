@@ -239,7 +239,7 @@ function applyTheme() {
 let _screenResizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(_screenResizeTimer);
-  _screenResizeTimer = setTimeout(() => { applyScreenProfile(); fitTitleCard(); }, 150);
+  _screenResizeTimer = setTimeout(() => { applyScreenProfile(); fitTitleCard(); positionFocusQr(); }, 150);
 });
 
 function applyUiCollapse() {
@@ -280,6 +280,7 @@ function applyGuideSettings() {
   document.body.classList.toggle("guide-on", on);
   document.documentElement.style.setProperty("--guide-height", settings.get("guide.height") + "px");
   if (on && pitchGuide) pitchGuide.resize();
+  positionFocusQr(); // guide height/visibility changed → re-anchor the focus-mode QR
 }
 
 // Chord lane: show/hide + push the simplify toggle. (Detection happens on song load;
@@ -450,7 +451,29 @@ async function refreshRemoteQr(on) {
   if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
   renderQr($("remote-qr-code"), url);
   renderQr($("focus-qr"), url); // same QR mirrored into the focus-mode overlay (CSS gates visibility)
+  positionFocusQr();
   box.classList.add("show");
+}
+
+// Focus-mode QR placement: overlay it on the RIGHT side of the melody guide, sized square to
+// the guide's height. The guide's top is dynamic (below the now-playing header), so we measure
+// rather than guess. When focus/remote is off or the guide is hidden, clear the inline styles
+// and let CSS fall back to a top-right corner. Called on focus toggle, resize, and guide changes.
+function positionFocusQr() {
+  const qr = $("focus-qr");
+  if (!qr) return;
+  qr.style.top = qr.style.right = qr.style.width = qr.style.height = ""; // reset → CSS fallback
+  const active = document.body.classList.contains("focus-mode") && document.body.classList.contains("remote-on");
+  const stage = document.querySelector(".stage");
+  const guide = $("pitch-guide");
+  if (!active || !stage || !guide) return;
+  // guide only counts if it's actually laid out (guide-on, and not hidden by video/audio/youtube mode)
+  if (!document.body.classList.contains("guide-on") || !guide.getClientRects().length) return;
+  const s = stage.getBoundingClientRect();
+  const g = guide.getBoundingClientRect();
+  qr.style.width = qr.style.height = g.height + "px";   // square, same height as the guide
+  qr.style.top = (g.top - s.top) + "px";                 // top-aligned to the guide
+  qr.style.right = (s.right - g.right) + "px";           // right edge aligned to the guide's
 }
 
 // Draw a QR into `el` using the vendored qrcode-generator (window.qrcode). No-op if the
@@ -1315,7 +1338,7 @@ function wireUI() {
     }
     if (on) showControls();
     else { clearTimeout(_ctlHideTimer); document.body.classList.remove("controls-hidden"); }
-    requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); });
+    requestAnimationFrame(() => { if (lib) lib.refresh(); if (pitchGuide) pitchGuide.resize(); positionFocusQr(); });
   };
   if (focusBtn) focusBtn.onclick = () => setFocus(!document.body.classList.contains("focus-mode"));
   ["mousemove", "touchstart", "keydown", "click"].forEach((ev) =>

@@ -107,11 +107,12 @@ body.focus-mode.controls-hidden .playbar { opacity: 0; pointer-events: none; tra
 body.focus-mode.controls-hidden { cursor: none; }
 /* Focus mode: enlarge the "up next" pill (1.75×) so it's legible from across the room. */
 body.focus-mode { --upnext-mult: 1.75; }
-/* Focus mode: with the queue panel hidden, surface the phone-remote QR in the top-right of
-   the lyrics area (only while remote is enabled + a QR was rendered). See #focus-qr in app.js. */
+/* Focus mode: with the queue panel hidden, surface the phone-remote QR. app.js's
+   positionFocusQr() overlays it on the RIGHT side of the melody guide, sized to the guide's
+   height; the top/right/size below are the FALLBACK (guide hidden) — a top-right corner. */
 .focus-qr { display: none; }
 body.focus-mode.remote-on .focus-qr:not(:empty) {
-  display: block; position: absolute; top: 12px; right: 12px; z-index: 5;
+  display: block; position: absolute; top: 96px; right: 26px; z-index: 5;
   width: calc(104px * var(--ui-scale)); height: calc(104px * var(--ui-scale));
   background: #fff; border-radius: 8px; padding: 6px; box-shadow: var(--elev-2);
 }
