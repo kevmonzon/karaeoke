@@ -22,6 +22,8 @@ import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
+import { Scorer } from "./scoring.js";
+import { fairInsertIndex, countBy } from "./queue-order.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
@@ -60,7 +62,8 @@ let lastParsed = null;
 let currentKey = null;
 let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
 let currentMelodyChannel = -1;
-let scoreHit = 0, scoreVoiced = 0;
+let scorer = null;               // scoring.js Scorer for the current MIDI song (null = nothing to score)
+let lastBonusLine = -1;          // guards the per-line bonus flash (one per lyric line)
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -91,7 +94,7 @@ async function boot() {
   });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
-    onExportData: exportAppData, onImportData: importAppData,
+    onExportData: exportAppData, onImportData: importAppData, onShowRecap: showRecap,
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
@@ -112,6 +115,8 @@ async function boot() {
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
+    loadDurationHints(); // learned song lengths → queue ETA on the phones
+    loadRecap();         // tonight's performance log (reset after a long enough gap)
     loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
     loadBlockedYoutube(); // hide videos that previously failed to embed
     if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
@@ -385,11 +390,16 @@ function loadMelody(parsed) {
     $("guide-info").textContent = mel.hasMelody
       ? `melody: channel ${mel.channel + 1} · ${mel.notes.length} notes`
       : "no guide melody found in this file";
+    // The guide melody IS the scorer's reference track — the piece UltraStar-family games
+    // have to hand-author per song and we derive from the KAR file (see scoring.js).
+    scorer = mel.hasMelody ? new Scorer(mel.notes, { golden: settings.get("score.golden") }) : null;
   } catch (e) {
     console.warn("melody extract failed:", e);
     pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
+    scorer = null;
   }
-  scoreHit = 0; scoreVoiced = 0;
+  lastBonusLine = -1;
+  hideLineBonus();
   pitchGuide.setScore(null);
 
   currentKey = settings.get("key.autoDetect") ? detectKey(parsed) : null;
@@ -422,8 +432,12 @@ function pcDist(a, b) {
 // `queueBy` runs parallel to `queue` — index i holds who queued queue[i] (a phone
 // nickname, or "" for a host-added song). Every queue mutation keeps them in lockstep.
 function enqueue(song, by = "") {
-  queue.push(song);
-  queueBy.push(by);
+  // Fair play: a new song joins the end of its singer's own "round" rather than the end of
+  // the list, so one enthusiastic guest can't own the night (queue-order.js). Already-queued
+  // songs never move — people watch this list and would notice theirs sliding backwards.
+  const at = settings.get("queue.fairPlay") ? fairInsertIndex(queueBy, by) : queue.length;
+  queue.splice(at, 0, song);
+  queueBy.splice(at, 0, by);
   lib.renderQueue(queue, queueBy);
   saveSession();
   if (remoteHost) remoteHost.push();
@@ -582,6 +596,7 @@ function remoteSnapshot() {
   const q = queue.map((s, i) => ({
     id: s.id, name: s.name || "", artist: s.artistName || "",
     kind: s.kind, code: s.code || "", by: queueBy[i] || "",
+    dur: durationHints[s.id] || null,   // learned length → the phone computes "how long until mine"
   }));
   const settingsSub = {};
   for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
@@ -616,8 +631,15 @@ function queueItemMatches(index, id) {
 function applyRemoteCommand(cmd) {
   switch (cmd.type) {
     case "enqueue": {
+      const by = String(cmd.by || "").slice(0, 24);
+      // Optional reservation cap — the digital form of "don't hog the mic". 0 = off.
+      const cap = +settings.get("queue.maxPerGuest") || 0;
+      if (cap > 0 && by && countBy(queueBy, by) >= cap) {
+        setStatus(`${by} already has ${cap} song${cap === 1 ? "" : "s"} reserved — wait for your turn.`);
+        break;
+      }
       const song = remoteResolveSong(cmd);
-      if (song) enqueue(song, String(cmd.by || "").slice(0, 24));
+      if (song) enqueue(song, by);
       break;
     }
     case "remove":
@@ -626,6 +648,15 @@ function applyRemoteCommand(cmd) {
     case "reorder":
       if (Number.isInteger(cmd.to) && queueItemMatches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
       break;
+    case "react": {
+      if (!settings.get("reactions.enabled")) break;
+      // Allowlisted, never free text: this is drawn on the host's TV from a stranger's phone.
+      const emoji = String(cmd.emoji || "");
+      if (!REACTIONS.includes(emoji)) break;
+      floatReaction(emoji);
+      if (emoji === "👏") playApplause();
+      break;
+    }
     case "play":  remotePlay();  break;
     case "pause": remotePause(); break;
     case "next":  skipCurrent(); break;
@@ -695,6 +726,121 @@ async function eraseAllData() {
   } catch (_) {}
   await purgeAllCaches();
   location.reload();
+}
+
+// ---------------------------------------------------------------------------
+// Tonight's recap. Every performance is logged as it finishes — song, singer, score — and a
+// long enough gap starts a new night. Nothing new is recorded to make this work: it is the
+// same data the queue, the singer banner and the scorer already produce, kept in order.
+// ---------------------------------------------------------------------------
+const RECAP_KEY = "karaeoke.recap.v1";
+const RECAP_GAP_MS = 6 * 3600 * 1000;   // a gap this long means it's a different night
+let recap = { startedAt: 0, items: [] };
+
+function loadRecap() {
+  try {
+    const r = JSON.parse(localStorage.getItem(RECAP_KEY) || "null");
+    if (r && Array.isArray(r.items)) recap = r;
+  } catch (_) {}
+  const last = recap.items.length ? recap.items[recap.items.length - 1].at : 0;
+  if (!last || Date.now() - last > RECAP_GAP_MS) recap = { startedAt: 0, items: [] };
+}
+function saveRecap() {
+  try { localStorage.setItem(RECAP_KEY, JSON.stringify(recap)); } catch (_) {}
+}
+/** Record one finished performance. `score` is null when nothing was scored (mic off, video). */
+function logPerformance(song, by, score) {
+  if (!song) return;
+  const now = Date.now();
+  const last = recap.items.length ? recap.items[recap.items.length - 1].at : 0;
+  if (!recap.items.length || now - last > RECAP_GAP_MS) recap = { startedAt: now, items: [] };
+  recap.items.push({
+    id: song.id, name: song.name || "", artist: song.artistName || "",
+    by: by || "", score: Number.isFinite(score) ? score : null, at: now,
+  });
+  if (recap.items.length > 200) recap.items.shift();   // a very long night still bounded
+  saveRecap();
+}
+
+function showRecap() {
+  const el = $("recap");
+  if (!el) return;
+  const items = recap.items;
+  const body = $("recap-body");
+  body.replaceChildren();
+  if (!items.length) {
+    const p = document.createElement("p");
+    p.className = "hint";
+    p.textContent = "No songs yet tonight. Sing something.";
+    body.appendChild(p);
+  } else {
+    const scored = items.filter((i) => i.score != null).sort((a, b) => b.score - a.score);
+    const singers = new Map();
+    for (const i of items) singers.set(i.by || "—", (singers.get(i.by || "—") || 0) + 1);
+
+    const stats = document.createElement("div");
+    stats.className = "recap-stats";
+    const top = scored[0];
+    stats.append(
+      recapStat(String(items.length), items.length === 1 ? "song" : "songs"),
+      recapStat(String(singers.size), singers.size === 1 ? "singer" : "singers"),
+      recapStat(top ? String(top.score) : "—", top ? `top score · ${top.by || "host"}` : "no scores"),
+    );
+    body.appendChild(stats);
+
+    const ul = document.createElement("ul");
+    ul.className = "recap-list";
+    for (const i of [...items].reverse()) {      // most recent first — that's what people ask about
+      const li = document.createElement("li");
+      const t = document.createElement("span");
+      t.className = "rc-title";
+      t.textContent = i.name || "(untitled)";
+      const a = document.createElement("span");
+      a.className = "rc-meta";
+      a.textContent = [i.artist, i.by ? `🎤 ${i.by}` : ""].filter(Boolean).join(" · ");
+      const s = document.createElement("span");
+      s.className = "rc-score";
+      s.textContent = i.score != null ? String(i.score) : "";
+      li.append(t, a, s);
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+  }
+  el.classList.remove("hidden");
+}
+function recapStat(n, k) {
+  const d = document.createElement("div");
+  d.className = "recap-stat";
+  const a = document.createElement("b"); a.textContent = n;
+  const b = document.createElement("span"); b.textContent = k;
+  d.append(a, b);
+  return d;
+}
+function hideRecap() { const el = $("recap"); if (el) el.classList.add("hidden"); }
+
+// ---------------------------------------------------------------------------
+// Song-length hints. The catalog carries no duration (it's built from filenames), so the
+// only honest way to answer a guest's "how long until mine?" is to LEARN each song's length
+// the first time it plays and remember it. A library you've used before estimates well; a
+// fresh one falls back to an average (queue-order.js DEFAULT_SONG_SEC).
+// ---------------------------------------------------------------------------
+const DURATIONS_KEY = "karaeoke.durations.v1";
+let durationHints = {};
+let _durSongId = null;   // the song we've already recorded during this play
+
+function loadDurationHints() {
+  try {
+    const o = JSON.parse(localStorage.getItem(DURATIONS_KEY) || "{}");
+    durationHints = o && typeof o === "object" ? o : {};
+  } catch (_) { durationHints = {}; }
+}
+function noteDuration(song, d) {
+  if (!song || !(d > 0) || _durSongId === song.id) return;
+  _durSongId = song.id;                       // once per play — this is called from the rAF loop
+  const rounded = Math.round(d);
+  if (durationHints[song.id] === rounded) return;
+  durationHints[song.id] = rounded;
+  try { localStorage.setItem(DURATIONS_KEY, JSON.stringify(durationHints)); } catch (_) {}
 }
 
 // Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
@@ -1017,6 +1163,8 @@ const stalePlay = (gen) => gen !== playGen;
 // songs take the existing SpessaSynth path.
 async function playNow(song, by = "") {
   const gen = ++playGen;
+  _durSongId = null;    // re-arm the song-length learner for the incoming song
+  hideScoreCard();      // a new song takes the stage back from the previous song's verdict
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
@@ -1054,6 +1202,8 @@ function hideMidiSurfaces() {
   currentMelodyChannel = -1;
   lastParsed = null;
   currentKey = null;
+  scorer = null;          // no MIDI note data → nothing to score against
+  hideLineBonus();
 }
 
 // VIDEO song: no synth/soundfont, no lyric parsing. The picture fills the stage; the
@@ -1101,6 +1251,8 @@ function hideNoteSurfaces() {
   currentMelodyChannel = -1;
   lastParsed = null;
   currentKey = null;
+  scorer = null;          // no MIDI note data → nothing to score against
+  hideLineBonus();
 }
 
 // AUDIO song: a recorded audio file + a separate lyric sidecar. Routed through WebAudio
@@ -1318,8 +1470,16 @@ let endGuard = false, endTimer = null;
 function endOfSong() {
   if (endGuard) return;
   endGuard = true;
+  // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
+  const res = finishScore();
+  logPerformance(current, currentBy, res ? res.score : null);   // one line in tonight's recap
+  hideLineBonus();
   clearStage();
-  endTimer = setTimeout(() => { endGuard = false; endTimer = null; advanceQueue(); }, 700);
+  if (res) showScoreCard(res);
+  // Hold the stage while the score is up — the verdict is half the point of a videoke night,
+  // and the next song's title card would otherwise land on top of it.
+  const hold = res && settings.get("score.card") ? SCORE_CARD_MS : 700;
+  endTimer = setTimeout(() => { endGuard = false; endTimer = null; advanceQueue(); }, hold);
 }
 
 // The ONE path for "move on to the next song now" — the ⏭ button, the phone's Next, and any
@@ -1329,6 +1489,7 @@ function skipCurrent() {
   clearTimeout(endTimer);
   endTimer = null;
   endGuard = false;
+  hideScoreCard();
   advanceQueue();
 }
 
@@ -1394,19 +1555,21 @@ function tick() {
       // reads the cached value, so we can query it every frame.
       const guideOn = settings.get("guide.enabled");
       const autotuneOn = mic.enabled && settings.get("mic.autotune.enabled");
-      const wantDetect = mic.enabled && (autotuneOn ||
+      const scoringOn = mic.enabled && settings.get("score.enabled") && !!scorer;
+      const wantDetect = mic.enabled && (autotuneOn || scoringOn ||
         (guideOn && (settings.get("guide.showMic") || settings.get("guide.scoring"))));
       const micMidi = wantDetect ? mic.getPitchMidi() : null;
 
+      // Feed the scorer every frame — including UNVOICED ones, which advance its clock but
+      // score nothing (you have to be allowed to breathe). See scoring.js.
+      if (scoringOn) {
+        scorer.addFrame(gt, micMidi);
+        updateLineBonus(gt);
+      }
+
       if (guideOn) {
-        if (settings.get("guide.scoring") && micMidi != null) {
-          scoreVoiced++;
-          const tgt = pitchGuide.targetNoteAt(gt);
-          if (tgt != null && pcDist(micMidi, tgt) < 1.5) scoreHit++;
-          pitchGuide.setScore(scoreVoiced ? (scoreHit / scoreVoiced) * 100 : 0);
-        } else if (!settings.get("guide.scoring")) {
-          pitchGuide.setScore(null);
-        }
+        if (settings.get("guide.scoring")) pitchGuide.setScore(scoringOn ? scorer.liveScore() : null);
+        else pitchGuide.setScore(null);
         pitchGuide.update(gt, settings.get("guide.showMic") ? micMidi : null);
       }
 
@@ -1438,6 +1601,7 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
+      noteDuration(current, d);   // learn this song's length for the phones' queue ETA
     }
     // End-of-song detection lives in songHasEnded() so the hidden-tab watchdog below can
     // run the SAME predicate. Deliberately outside the `d > 0` block: a MIDI song reports
@@ -1532,9 +1696,14 @@ function wireUI() {
     // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
     // The settings drawer is modal and owns Escape while it's open (settings-ui.js closes it),
     // so one press must not also drop you out of focus mode.
+    if (e.key !== "Escape") return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    // Modals own Escape while they're up: one press must close the thing in front of you,
+    // not drop you out of focus mode behind it.
+    const recapOpen = !$("recap").classList.contains("hidden");
+    if (recapOpen) { hideRecap(); return; }
     const modalOpen = document.body.classList.contains("settings-open");
-    if (e.key === "Escape" && !typing && !modalOpen && document.body.classList.contains("focus-mode")) setFocus(false);
+    if (!typing && !modalOpen && document.body.classList.contains("focus-mode")) setFocus(false);
   });
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
@@ -1561,6 +1730,10 @@ function wireUI() {
     setPlayIcon();
   };
   $("btn-next").onclick = () => skipCurrent();
+  const recapClose = $("recap-close");
+  if (recapClose) recapClose.onclick = hideRecap;
+  const recapEl = $("recap");
+  if (recapEl) recapEl.onclick = (e) => { if (e.target === recapEl) hideRecap(); }; // click the scrim to dismiss
 
   // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
   // background tab while the AudioContext keeps playing — so a song that ended while the host
@@ -1681,6 +1854,154 @@ function fitTitleCard() {
     }
     st.fontSize = Math.floor(lo) + "px";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Reactions — the crowd noise a videoke box has a physical Applause button for. A guest taps
+// an emoji on their phone; it floats up the host's screen, and 👏 also fires a burst of
+// applause. The set is an ALLOWLIST: this is rendered on a TV from a stranger's phone.
+// ---------------------------------------------------------------------------
+export const REACTIONS = ["👏", "🎉", "🔥", "❤️", "😂", "🙌"];
+const MAX_FLOATING = 24;
+let lastApplauseAt = 0;
+
+function floatReaction(emoji) {
+  const stage = document.querySelector(".stage");
+  if (!stage) return;
+  const live = stage.querySelectorAll(".reaction");
+  if (live.length >= MAX_FLOATING) live[0].remove();   // a spammer can't bury the lyrics
+  const el = document.createElement("div");
+  el.className = "reaction";
+  el.textContent = emoji;
+  el.style.left = `${6 + Math.random() * 88}%`;
+  el.style.setProperty("--drift", `${Math.round((Math.random() * 2 - 1) * 70)}px`);
+  el.addEventListener("animationend", () => el.remove(), { once: true });
+  stage.appendChild(el);
+  setTimeout(() => el.remove(), 4000); // belt-and-braces if the animation never runs
+}
+
+/** Applause, SYNTHESIZED — the app ships no audio files, so a few hundred filtered noise
+ *  bursts stand in for a small crowd. Silent (rather than throwing) if the AudioContext has
+ *  never been unlocked by a gesture; throttled so a rapid tapper can't machine-gun it. */
+async function playApplause() {
+  if (!settings.get("reactions.sound")) return;
+  const now = performance.now();
+  if (now - lastApplauseAt < 1500) return;
+  lastApplauseAt = now;
+  try {
+    await audio.ensureContext();
+    const ctx = audio.ctx;
+    if (!ctx || ctx.state !== "running") return;
+    const rate = ctx.sampleRate, len = Math.ceil(rate * 1.6);
+    const buf = ctx.createBuffer(1, len, rate);
+    const d = buf.getChannelData(0);
+    for (let c = 0; c < 700; c++) {           // each "clap" is a short, fast-decaying burst
+      const at = Math.floor(Math.random() * (len - 900));
+      const n = 100 + Math.floor(Math.random() * 380);
+      const amp = 0.25 + Math.random() * 0.75;
+      for (let j = 0; j < n; j++) d[at + j] += (Math.random() * 2 - 1) * Math.pow(1 - j / n, 3) * amp;
+    }
+    for (let i = 0; i < len; i++) {           // swell in, decay out — a room reacting
+      const p = i / len;
+      d[i] *= (p < 0.12 ? p / 0.12 : Math.pow(1 - (p - 0.12) / 0.88, 1.6)) * 0.45;
+    }
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1800; bp.Q.value = 0.7;
+    const g = ctx.createGain(); g.gain.value = 0.6;
+    src.connect(bp).connect(g).connect(ctx.destination);
+    src.start();
+  } catch (_) { /* no context, no applause — never break playback over a sound effect */ }
+}
+
+// ---------------------------------------------------------------------------
+// Score (videoke). scoring.js does the maths; this is presentation + persistence.
+// ---------------------------------------------------------------------------
+const SCORES_KEY = "karaeoke.scores.v1";
+const SCORE_CARD_MS = 4500;   // the card holds the stage this long before the next song starts
+let scTimer = null;
+let bonusTimer = null;
+
+function loadBestScores() {
+  try {
+    const o = JSON.parse(localStorage.getItem(SCORES_KEY) || "{}");
+    return o && typeof o === "object" ? o : {};
+  } catch (_) { return {}; }
+}
+function bestScore(id) { return (id && loadBestScores()[id]) || 0; }
+function saveBestScore(id, score) {
+  if (!id) return;
+  const all = loadBestScores();
+  all[id] = score;
+  try { localStorage.setItem(SCORES_KEY, JSON.stringify(all)); } catch (_) {}
+}
+
+/** Close out the current song's scoring. Returns null when there's nothing worth showing
+ *  (no melody, mic off, or the singer never made a sound). MUST run before clearStage(),
+ *  which drops `current`/`currentBy`. */
+function finishScore() {
+  if (!scorer || !settings.get("score.enabled")) return null;
+  const res = scorer.finish();
+  if (!res) return null;
+  const id = current ? current.id : null;
+  const previous = bestScore(id);
+  const isBest = res.score > previous;
+  if (isBest) saveBestScore(id, res.score);
+  return { ...res, isBest, previous, song: current, by: currentBy };
+}
+
+function showScoreCard(res) {
+  const card = $("score-card");
+  if (!card || !settings.get("score.card")) return;
+  $("sc-song").textContent = res.song ? `${res.song.name || ""}${res.song.artistName ? ` · ${res.song.artistName}` : ""}` : "";
+  $("sc-score").textContent = String(res.score);
+  const band = $("sc-band");
+  band.textContent = res.band.label;
+  band.className = `sc-band ${res.band.tier}`;
+  $("sc-singer").textContent = res.by ? `🎤 ${res.by}` : "";
+  $("sc-best").textContent = res.isBest
+    ? (res.previous ? `★ New best — beat ${res.previous}` : "★ New best")
+    : (res.previous ? `best ${res.previous}` : "");
+  card.classList.add("show");
+  clearTimeout(scTimer);
+  scTimer = setTimeout(() => card.classList.remove("show"), SCORE_CARD_MS - 400);
+}
+function hideScoreCard() {
+  clearTimeout(scTimer);
+  const card = $("score-card");
+  if (card) card.classList.remove("show");
+}
+
+// Per-line bonus: rate the line that just finished. The drip of feedback between the start
+// and the final number is what keeps a room engaged — the final score alone comes too late.
+const BONUS_BANDS = [
+  [0.90, "Perfect!", "perfect"],
+  [0.75, "Great!", "great"],
+  [0.50, "Good", ""],
+  [0.25, "Almost", ""],
+  [0.00, "Miss", "miss"],
+];
+function updateLineBonus() {
+  if (!scorer || !lyrics || !lyrics.lines || !lyrics.lines.length) return;
+  const idx = lyrics.activeLine;
+  if (idx === lastBonusLine) return;
+  const prev = lastBonusLine;
+  lastBonusLine = idx;
+  if (prev < 0 || prev >= lyrics.lines.length) return;   // nothing finished yet
+  const line = lyrics.lines[prev];
+  const r = scorer.windowRatio(line.start, line.end);
+  if (r == null) return;                                  // instrumental line — don't rate it
+  const [, label, cls] = BONUS_BANDS.find(([min]) => r >= min) || BONUS_BANDS[BONUS_BANDS.length - 1];
+  const el = $("line-bonus");
+  if (!el) return;
+  el.textContent = label;
+  el.className = `line-bonus show ${cls}`;
+  clearTimeout(bonusTimer);
+  bonusTimer = setTimeout(() => el.classList.remove("show"), 1100);
+}
+function hideLineBonus() {
+  clearTimeout(bonusTimer);
+  const el = $("line-bonus");
+  if (el) { el.classList.remove("show"); el.textContent = ""; }
 }
 
 // Singer + "up next" banner above the melody guide. Shows the current singer (only when the

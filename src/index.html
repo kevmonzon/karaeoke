@@ -123,6 +123,19 @@
           <div id="tc-singer" class="tc-singer"></div>
           <div id="tc-key" class="tc-key"></div>
         </div>
+
+        <!-- The score card: shown at the natural end of a song, over the cleared stage.
+             aria-live so the number is announced, since it appears without interaction. -->
+        <div id="score-card" class="score-card" role="status" aria-live="polite">
+          <div id="sc-song" class="sc-song"></div>
+          <div id="sc-score" class="sc-score">0</div>
+          <div id="sc-band" class="sc-band"></div>
+          <div id="sc-singer" class="sc-singer"></div>
+          <div id="sc-best" class="sc-best"></div>
+        </div>
+
+        <!-- Per-line bonus: a small chip flashed as each lyric line goes by. -->
+        <div id="line-bonus" class="line-bonus" aria-hidden="true"></div>
       </div>
 
       <!-- MIDI mode: per-channel mixer band (volume / mute / solo + live VU). Rows are
@@ -327,8 +340,16 @@
         </label>
         <label class="row toggle"><span>Overlay my pitch (mic)</span><input id="set-guide-mic" type="checkbox" /></label>
         <label class="row toggle"><span>Soft pitch trail</span><input id="set-guide-trail" type="checkbox" /></label>
-        <label class="row toggle"><span>Scoring</span><input id="set-guide-score" type="checkbox" /></label>
+        <label class="row toggle"><span>Live score on the guide</span><input id="set-guide-score" type="checkbox" /></label>
         <div class="hint sub">Reads the guide melody from the MIDI. Overlay + scoring need the mic on.</div>
+      </section>
+
+      <section>
+        <h4>Score</h4>
+        <label class="row toggle"><span>Score my singing</span><input id="set-score" type="checkbox" /></label>
+        <label class="row toggle"><span>Score card when a song ends</span><input id="set-score-card" type="checkbox" /></label>
+        <label class="row toggle"><span>Golden notes count double</span><input id="set-score-golden" type="checkbox" /></label>
+        <div class="hint sub">Scored per note against the song's own melody, octave-forgivingly. MIDI songs only, and the mic must be on. Your best per song is remembered.</div>
 
         <div class="sub-h">Guide vocal (melody)</div>
         <label class="row"><span>Volume <em id="set-gv-vol-val">100%</em></span><input id="set-gv-vol" type="range" min="0" max="2" step="0.05" value="1" /></label>
@@ -442,6 +463,25 @@
         <div class="hint sub">Showing <em id="list-count">0</em> songs</div>
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
         <div id="rebuild-status" class="hint sub"></div>
+        <button id="show-recap" class="reset-btn">🏆 Tonight's recap</button>
+        <div class="hint sub">Songs sung, who sang them, and the top scores. Resets after a long break.</div>
+      </section>
+
+      <section>
+        <h4>Queue</h4>
+        <label class="row toggle"><span>Fair play (take turns)</span><input id="set-fairplay" type="checkbox" /></label>
+        <label class="row">
+          <span>Max reservations per guest <em id="set-maxper-val">off</em></span>
+          <input id="set-maxper" type="range" min="0" max="6" step="1" value="0" />
+        </label>
+        <div class="hint sub">Fair play puts each new song at the back of that singer's own round, so everyone sings once before anyone sings twice. Songs already queued never move.</div>
+      </section>
+
+      <section>
+        <h4>Reactions</h4>
+        <label class="row toggle"><span>Let phones send reactions</span><input id="set-reactions" type="checkbox" /></label>
+        <label class="row toggle"><span>Play applause</span><input id="set-reactions-sound" type="checkbox" /></label>
+        <div class="hint sub">Guests can send 👏 🎉 🔥 from the Now tab; it floats up this screen. The applause is synthesized — no audio files.</div>
       </section>
       </details>
 
@@ -461,6 +501,17 @@
         <button id="erase-all" class="reset-btn danger">Erase all app data</button>
         <p class="hint">Factory reset: also clears your queue, recents, favorites, panel layout, phone-remote code, saved YouTube songs, and the cached soundfont. Irreversible.</p>
       </div>
+    </div>
+  </div>
+
+  <!-- Tonight's recap (⚙ → Library). Rendered from the performance log app.js keeps. -->
+  <div id="recap" class="recap hidden" role="dialog" aria-modal="true" aria-labelledby="recap-title">
+    <div class="recap-card">
+      <div class="recap-head">
+        <h3 id="recap-title">🏆 Tonight</h3>
+        <button id="recap-close" class="gear" title="Close" aria-label="Close recap">✕</button>
+      </div>
+      <div id="recap-body" class="recap-body"></div>
     </div>
   </div>
 

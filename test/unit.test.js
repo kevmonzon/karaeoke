@@ -19,6 +19,11 @@ import { matchesQuery } from "../src/js/settings-ui.js";
 import { pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "../src/js/remote-host.js";
 import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile, distributeLineTimes } from "../src/js/lyrics-formats.js";
 import { syncClock, clockTime, SNAP_SEC } from "../src/js/sync-clock.js";
+import { fairInsertIndex, countBy, queueEta, formatEta, DEFAULT_SONG_SEC } from "../src/js/queue-order.js";
+import { yinPitch, MAX_HZ } from "../src/js/pitch-yin.js";
+import {
+  foldSemitones, pitchCredit, markGolden, curveScore, scoreBand, Scorer,
+} from "../src/js/scoring.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -694,4 +699,221 @@ test("syncClock: junk input can't fling the clock", () => {
   const d = syncClock(null, { position: undefined, age: undefined, paused: false, at: 0 });
   assert.equal(d.base, 0);
   assert.equal(clockTime(null, 123), 0);
+});
+
+// --- scoring (the videoke score) --------------------------------------------
+// The maths that decides whether a room cheers. The behaviours pinned here are the ones
+// that make it FEEL right, not just compute — see the rationale block in scoring.js.
+test("foldSemitones: the octave does not matter", () => {
+  assert.equal(foldSemitones(60, 60), 0);
+  assert.equal(foldSemitones(72, 60), 0);      // an octave up is still the right note
+  assert.equal(foldSemitones(48, 60), 0);      // …and an octave down
+  assert.equal(foldSemitones(61, 60), 1);
+  assert.equal(foldSemitones(59, 60), -1);
+  assert.equal(foldSemitones(67, 60), -5);     // folded to the near side (a fifth up = 5 down)
+  assert.equal(Math.abs(foldSemitones(66, 60)), 6);
+});
+
+test("pitchCredit: full inside the window, decaying to zero — never a cliff", () => {
+  assert.equal(pitchCredit(0), 1);
+  assert.equal(pitchCredit(0.5), 1);
+  assert.equal(pitchCredit(-0.5), 1);
+  assert.equal(pitchCredit(2.5), 0);
+  assert.equal(pitchCredit(9), 0);
+  const mid = pitchCredit(1.5);
+  assert.ok(mid > 0 && mid < 1);
+  assert.ok(pitchCredit(1) > pitchCredit(2));  // monotonic decay
+});
+
+test("markGolden: the longest notes become the hooks", () => {
+  const notes = [
+    { note: 60, start: 0, end: 0.2 },
+    { note: 62, start: 1, end: 4 },   // longest
+    { note: 64, start: 5, end: 5.2 },
+    { note: 65, start: 6, end: 6.1 },
+  ];
+  const g = markGolden(notes, 0.25);
+  assert.deepEqual(g, [false, true, false, false]);
+  assert.deepEqual(markGolden([], 0.5), []);
+  assert.deepEqual(markGolden(notes, 0), [false, false, false, false]);
+});
+
+test("curveScore + scoreBand: generous in the middle, Magic Sing's bands", () => {
+  assert.equal(curveScore(0), 0);
+  assert.equal(curveScore(1), 100);
+  assert.ok(curveScore(0.5) > 50);            // the curve lifts an honest amateur
+  assert.equal(curveScore(-1), 0);            // clamped
+  assert.equal(curveScore(9), 100);
+  assert.equal(scoreBand(100).tier, "excellent");
+  assert.equal(scoreBand(96).tier, "excellent");
+  assert.equal(scoreBand(90).tier, "good");
+  assert.equal(scoreBand(75).tier, "ok");
+  assert.equal(scoreBand(40).tier, "meh");
+  assert.equal(scoreBand(0).tier, "none");
+});
+
+test("Scorer: perfect singing scores 100, an octave off still scores 100", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 1, end: 2 }];
+  const perfect = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) perfect.addFrame(t, 60);
+  for (let t = 1; t < 2; t += 0.1) perfect.addFrame(t, 62);
+  assert.equal(perfect.finish().score, 100);
+
+  const octave = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) octave.addFrame(t, 48);
+  for (let t = 1; t < 2; t += 0.1) octave.addFrame(t, 74);
+  assert.equal(octave.finish().score, 100);
+});
+
+test("Scorer: silence is neutral, but a note never sung still costs you", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 1, end: 2 }];
+  const s = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);   // first note nailed
+  for (let t = 1; t < 2; t += 0.1) s.addFrame(t, null); // breathed through the second
+  const res = s.finish();
+  assert.equal(res.sung, 1);
+  assert.ok(res.score > 40 && res.score < 100);          // half the song → not a zero, not a win
+  // A frame of silence must not be counted as a wrong note on the FIRST note either.
+  assert.equal(s.noteRatio(0), 1);
+});
+
+test("Scorer: unvoiced-only or no melody yields no result at all", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }];
+  const quiet = new Scorer(notes);
+  for (let t = 0; t < 1; t += 0.1) quiet.addFrame(t, null);
+  assert.equal(quiet.finish(), null);                    // nobody sang → no card
+  assert.equal(new Scorer([]).finish(), null);
+  assert.equal(new Scorer(null).hasMelody, false);
+});
+
+test("Scorer: golden notes are worth double", () => {
+  // Two notes of equal length; the scorer is told note 0 is golden by making it longest.
+  const notes = [{ note: 60, start: 0, end: 3 }, { note: 62, start: 3, end: 4 }];
+  const hitLong = new Scorer(notes, { goldenFraction: 0.5 });
+  for (let t = 0; t < 3; t += 0.1) hitLong.addFrame(t, 60);   // the golden note, nailed
+  for (let t = 3; t < 4; t += 0.1) hitLong.addFrame(t, 70);   // the other, badly missed
+  const hitShort = new Scorer(notes, { goldenFraction: 0.5 });
+  for (let t = 0; t < 3; t += 0.1) hitShort.addFrame(t, 70);  // golden note missed
+  for (let t = 3; t < 4; t += 0.1) hitShort.addFrame(t, 62);  // the other nailed
+  assert.ok(hitLong.finish().score > hitShort.finish().score);
+});
+
+test("Scorer: noteIndexAt finds the note, and gaps between phrases score nothing", () => {
+  const s = new Scorer([{ note: 60, start: 0, end: 1 }, { note: 62, start: 5, end: 6 }]);
+  assert.equal(s.noteIndexAt(0.5), 0);
+  assert.equal(s.noteIndexAt(5.5), 1);
+  assert.equal(s.noteIndexAt(3), -1);        // instrumental gap
+  assert.equal(s.noteIndexAt(-1), -1);
+  assert.equal(s.addFrame(3, 60), -1);       // singing over the gap is neither rewarded nor punished
+  assert.equal(s.attempted, false);
+});
+
+test("Scorer: the live score only counts notes that have gone by", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 100, end: 101 }];
+  const s = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);
+  assert.equal(s.liveScore(), 100);          // not dragged down by a note 99 s away
+  assert.ok(s.finish().score < 100);         // the final tally does include it
+});
+
+test("Scorer: windowRatio rates a lyric line, and returns null for an instrumental one", () => {
+  const s = new Scorer([{ note: 60, start: 0, end: 1 }], { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);
+  assert.equal(s.windowRatio(0, 1), 1);
+  assert.equal(s.windowRatio(20, 30), null); // no melody in that window → don't rate the singer
+});
+
+// --- queue-order (fair play + "how long until mine?") -----------------------
+test("fairInsertIndex: round-robin — everyone sings once before anyone sings twice", () => {
+  // Alice, Bob, Alice already queued → rounds [0, 0, 1]. Carl's first song jumps the
+  // second Alice song, because Carl hasn't had a turn at all yet.
+  assert.equal(fairInsertIndex(["alice", "bob", "alice"], "carl"), 2);
+  // Bob's second song goes after Alice's second (both round 1), not before it.
+  assert.equal(fairInsertIndex(["alice", "bob", "alice"], "bob"), 3);
+  // An empty queue is an empty queue.
+  assert.equal(fairInsertIndex([], "alice"), 0);
+  // The host ("") is just another singer: its 2nd song waits behind everyone's 1st.
+  assert.equal(fairInsertIndex(["", "alice"], ""), 2);          // round 1 → the back
+  assert.equal(fairInsertIndex(["", "alice", ""], "bob"), 2);   // Bob's 1st jumps the host's 2nd
+  // A newcomer joins the BACK of the current round, not the front of it.
+  assert.equal(fairInsertIndex(["", "alice"], "bob"), 2);
+  assert.equal(fairInsertIndex(null, "x"), 0);
+});
+
+test("fairInsertIndex: never reorders the existing queue, only chooses an insert point", () => {
+  // Whatever it returns must be a valid splice index into the current list.
+  const q = ["a", "b", "a", "c", "a"];
+  for (const who of ["a", "b", "c", "d", ""]) {
+    const at = fairInsertIndex(q, who);
+    assert.ok(at >= 0 && at <= q.length, `${who} → ${at}`);
+  }
+});
+
+test("countBy: counts one singer's pending reservations", () => {
+  assert.equal(countBy(["a", "b", "a"], "a"), 2);
+  assert.equal(countBy(["a", "b", "a"], "z"), 0);
+  assert.equal(countBy(["", "a"], ""), 1);     // host-added songs count as their own singer
+  assert.equal(countBy(undefined, "a"), 0);
+});
+
+test("queueEta: sums known lengths and falls back to an average for unplayed songs", () => {
+  assert.equal(queueEta(60, [180, 200], 0), 60);            // next up = whatever's left of now
+  assert.equal(queueEta(60, [180, 200], 1), 240);
+  assert.equal(queueEta(60, [180, 200], 2), 440);
+  assert.equal(queueEta(0, [null, undefined], 2), DEFAULT_SONG_SEC * 2); // never played → estimate
+  assert.equal(queueEta(-5, [], 3), 0);                      // junk clamps rather than throwing
+});
+
+test("formatEta: reads like a person would say it", () => {
+  assert.equal(formatEta(0), "now");
+  assert.equal(formatEta(44), "now");
+  assert.equal(formatEta(240), "~4 min");
+  assert.equal(formatEta(3600), "~1 h");
+  assert.equal(formatEta(4200), "~1 h 10 min");
+});
+
+// --- YIN pitch detection ----------------------------------------------------
+// The point of YIN over plain autocorrelation is octave errors, so that's what's tested:
+// a signal with a strong harmonic must still report the FUNDAMENTAL.
+function tone(hz, rate, n, harmonics = [1]) {
+  const b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    harmonics.forEach((amp, k) => { v += amp * Math.sin(2 * Math.PI * hz * (k + 1) * i / rate); });
+    b[i] = v / harmonics.length;
+  }
+  return b;
+}
+
+test("yinPitch: recovers a pure tone to within a few cents", () => {
+  const rate = 44100;
+  for (const hz of [110, 220, 440, 660]) {
+    const got = yinPitch(tone(hz, rate, 4096), rate);
+    assert.ok(Math.abs(got - hz) / hz < 0.01, `${hz} Hz → ${got}`);
+  }
+});
+
+test("yinPitch: a harmonic-rich tone still reports the fundamental, not an octave up", () => {
+  const rate = 44100;
+  // A vowel-ish spectrum: fundamental plus louder 2nd and 3rd harmonics — precisely the case
+  // that makes naive autocorrelation jump an octave.
+  const got = yinPitch(tone(196, rate, 4096, [0.6, 1.0, 0.8, 0.4]), rate);
+  assert.ok(Math.abs(got - 196) / 196 < 0.03, `expected ~196 Hz, got ${got}`);
+});
+
+test("yinPitch: silence and noise are reported as unvoiced, not guessed at", () => {
+  const rate = 44100;
+  assert.equal(yinPitch(new Float32Array(2048), rate), -1);        // digital silence
+  const quiet = tone(440, rate, 2048);
+  for (let i = 0; i < quiet.length; i++) quiet[i] *= 0.0005;       // below the RMS floor
+  assert.equal(yinPitch(quiet, rate), -1);
+  assert.equal(yinPitch(new Float32Array(0), rate), -1);
+  assert.equal(yinPitch(tone(440, rate, 2048), 0), -1);            // junk sample rate
+});
+
+test("yinPitch: refuses frequencies outside a plausible human range", () => {
+  const rate = 44100;
+  assert.equal(yinPitch(tone(30, rate, 8192), rate), -1);   // below MIN_HZ
+  const high = yinPitch(tone(2000, rate, 4096), rate);
+  assert.ok(high === -1 || high <= MAX_HZ);
 });

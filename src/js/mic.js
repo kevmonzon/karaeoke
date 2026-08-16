@@ -108,7 +108,9 @@ export class MicEngine {
   // timer; it replies with Hz, which we cache as a MIDI note for getPitchMidi().
   _startDetection() {
     if (this._worker) return;
-    this._worker = new Worker(new URL("./workers/pitch-worker.js", import.meta.url));
+    // A MODULE worker: it imports the pure YIN estimator (pitch-yin.js) so the same code the
+    // mic runs is the code the unit tests exercise.
+    this._worker = new Worker(new URL("./workers/pitch-worker.js", import.meta.url), { type: "module" });
     this._worker.onmessage = (e) => {
       if (e.data > 0) {
         const m = hzToMidi(e.data);

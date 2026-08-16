@@ -109,6 +109,22 @@ export const DEFAULT_CONFIG = {
     keyword: "karaoke",
   },
 
+  // Queue behaviour (party fairness). `fairPlay` round-robins each NEW reservation by singer
+  // — everyone gets one song before anyone gets two — which is the digital form of the
+  // reserve-and-wait-your-turn etiquette a videoke night already runs on. Songs already in
+  // the queue never move. `maxPerGuest` caps pending reservations per phone (0 = no cap).
+  queue: {
+    fairPlay: false, // off by default: plain FIFO is what people expect until they ask for fair
+    maxPerGuest: 0, // 0 = unlimited; 2–3 is a friendly cap at a busy party
+  },
+
+  // Reactions — a guest can send an emoji (and applause) from their phone to the host screen.
+  // The applause is SYNTHESIZED with WebAudio (no audio files ship with the app).
+  reactions: {
+    enabled: true,
+    sound: true, // play the applause burst for 👏 (the emoji still floats when off)
+  },
+
   // Remote control (phones). A QR code on the queue panel opens a mobile page (/remote)
   // where guests queue/search and control playback. serve.py relays it in memory (host stays
   // the authoritative player; see src/js/remote-host.js). ON by default. FREE-FOR-ALL: while
@@ -133,12 +149,22 @@ export const DEFAULT_CONFIG = {
     channel: -1, // -1 = auto-detect the melody channel; 0–15 = manual override
     showMic: true, // overlay the singer's detected pitch (needs mic enabled)
     trail: true, // soft fading ribbon tracing where the voice has been
-    scoring: false, // compute + show a score from mic vs. target melody (off by default)
+    scoring: true, // show the live score number on the guide band (the score engine itself is score.*)
 
     // The audible guide melody (the detected melody channel in the song).
     // volume 1 + no mute/solo = the song plays as authored (non-intrusive).
     // Turn the melody up to learn a song, mute it to perform, solo it to isolate.
     vocal: { volume: 1, mute: false, solo: false },
+  },
+
+  // Score (videoke) — the mic is scored against the song's own guide melody, per note,
+  // octave-invariantly, on a deliberately generous curve. See src/js/scoring.js for why
+  // each of those choices matters. MIDI songs only (a baked video carries no note data),
+  // and nothing is scored unless the mic is on.
+  score: {
+    enabled: true, // run the scorer + show the end-of-song score card
+    card: true, // the full-stage score card when a song ends (off = live number only)
+    golden: true, // weight the longest notes (the hooks) double, like UltraStar's golden notes
   },
 
   // MIDI mode — a per-channel mixer band (between the lyrics and the transport)

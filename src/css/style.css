@@ -613,6 +613,73 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(18px * var(--ui-scale)); }
 .tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
+/* ---------------------------------------------------------------------------
+   Score card — the videoke payoff, shown over the cleared stage when a song
+   ends. Same geometry as the title card so the two read as one family; the
+   number is the hero and everything else is support. Tinted with the brand
+   rather than a fixed dark rgba so it belongs in both themes.
+   --------------------------------------------------------------------------- */
+.score-card {
+  position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
+  overflow: hidden; z-index: 4; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; text-align: center; padding: 24px;
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface-0)); backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
+}
+.score-card.show { opacity: 1; }
+.sc-song { font-size: calc(clamp(14px, 1.8vw, 22px) * var(--ui-scale)); color: var(--text-muted); }
+.sc-score {
+  font-size: calc(clamp(72px, 18vw, 220px) * var(--ui-scale)); font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--brand);
+}
+.sc-band { font-size: calc(clamp(20px, 3.4vw, 40px) * var(--ui-scale)); font-weight: 700; }
+.sc-band.excellent { color: var(--gold); }
+.sc-band.good { color: var(--brand-2); }
+.sc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(16px, 2.2vw, 26px) * var(--ui-scale)); }
+.sc-best { margin-top: 4px; color: var(--gold); font-weight: 700; font-size: calc(clamp(13px, 1.6vw, 18px) * var(--ui-scale)); }
+.sc-song:empty, .sc-singer:empty, .sc-best:empty { display: none; }
+/* The score pops in rather than fading — it should land like a verdict. */
+@media (prefers-reduced-motion: no-preference) {
+  .score-card.show .sc-score { animation: sc-pop 420ms var(--ease) both; }
+}
+@keyframes sc-pop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* Per-line bonus chip — brief feedback between the start and the final number. */
+.line-bonus {
+  position: absolute; z-index: 3; left: 50%; top: 12px; transform: translateX(-50%);
+  padding: 4px calc(12px * var(--ui-scale)); border-radius: var(--r-pill);
+  font-size: calc(14px * var(--ui-scale)); font-weight: 700; letter-spacing: .02em;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease);
+}
+.line-bonus.show { opacity: 1; }
+.line-bonus.perfect { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 55%, transparent); }
+.line-bonus.great { color: var(--brand-2); border-color: color-mix(in srgb, var(--brand-2) 55%, transparent); }
+.line-bonus.miss { color: var(--text-muted); }
+
+/* ---------------------------------------------------------------------------
+   Reactions — emoji sent from a guest's phone, floating up the stage. Purely
+   decorative and pointer-transparent so they can never swallow a click on the
+   lyrics or the transport underneath.
+   --------------------------------------------------------------------------- */
+.reaction {
+  position: absolute; bottom: 12%; z-index: 5; pointer-events: none;
+  font-size: calc(34px * var(--ui-scale)); line-height: 1;
+  animation: react-float 2600ms var(--ease) both;
+  will-change: transform, opacity;
+}
+@keyframes react-float {
+  0%   { transform: translate(0, 20px) scale(.6); opacity: 0; }
+  12%  { transform: translate(0, 0) scale(1.15); opacity: 1; }
+  100% { transform: translate(var(--drift, 0), -46vh) scale(1); opacity: 0; }
+}
+/* Reduced motion: show it, hold it, fade it — no travel. */
+@media (prefers-reduced-motion: reduce) {
+  .reaction { animation: react-fade 1600ms linear both; bottom: 22%; }
+  @keyframes react-fade { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+}
+
 /* Mic toggle in the transport row */
 .transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
 .transport .mic-toggle:disabled { opacity: .35; cursor: not-allowed; }
@@ -828,3 +895,51 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .midi-mixer { max-height: 26vh; }
   /* (the "neither panel open → full-screen stage" collapse is inherited from the ≤900 block) */
 }
+
+/* ---------------------------------------------------------------------------
+   Tonight's recap (⚙ → Library). A modal over the whole app, not a stage
+   overlay: it's read between songs, not during one.
+   --------------------------------------------------------------------------- */
+.recap {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: var(--scrim); backdrop-filter: blur(3px);
+}
+.recap.hidden { display: none; }
+.recap-card {
+  width: min(640px, 100%); max-height: 82vh; display: flex; flex-direction: column;
+  background: var(--surface-0); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--elev-2); overflow: hidden;
+}
+.recap-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-soft);
+}
+.recap-head h3 { margin: 0; font-size: calc(18px * var(--ui-scale)); }
+.recap-body { padding: 18px 20px 22px; overflow-y: auto; }
+
+.recap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+.recap-stat {
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-radius: var(--r-md); padding: 12px; text-align: center;
+}
+.recap-stat b {
+  display: block; font-size: calc(26px * var(--ui-scale)); font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--brand); line-height: 1.1;
+}
+.recap-stat span { font-size: calc(11px * var(--ui-scale)); color: var(--text-muted); }
+
+.recap-list { list-style: none; margin: 0; padding: 0; }
+.recap-list li {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px;
+  padding: 10px 2px; border-bottom: 1px solid var(--border-soft);
+}
+.recap-list li:last-child { border-bottom: 0; }
+.rc-title { font-weight: 600; }
+.rc-meta { grid-column: 1; font-size: calc(12px * var(--ui-scale)); color: var(--text-muted); }
+.rc-score {
+  grid-row: 1 / span 2; align-self: center;
+  font-size: calc(22px * var(--ui-scale)); font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--brand-2);
+}
+.rc-score:empty { display: none; }

@@ -52,6 +52,15 @@ const SETTINGS_SCHEMA = [
   { id: "set-guide-mic", path: "guide.showMic", type: "check" },
   { id: "set-guide-trail", path: "guide.trail", type: "check" },
   { id: "set-guide-score", path: "guide.scoring", type: "check" },
+  // score (videoke) — the engine itself; guide.scoring above is just the on-guide number
+  { id: "set-score", path: "score.enabled", type: "check" },
+  { id: "set-score-card", path: "score.card", type: "check" },
+  { id: "set-score-golden", path: "score.golden", type: "check" },
+  // queue fairness + reactions (party behaviour)
+  { id: "set-fairplay", path: "queue.fairPlay", type: "check" },
+  { id: "set-maxper", path: "queue.maxPerGuest", type: "range", fmt: (v) => (+v ? `${v}` : "off") },
+  { id: "set-reactions", path: "reactions.enabled", type: "check" },
+  { id: "set-reactions-sound", path: "reactions.sound", type: "check" },
   { id: "set-gv-vol", path: "guide.vocal.volume", type: "range", fmt: pct },
   { id: "set-gv-mute", path: "guide.vocal.mute", type: "check" },
   { id: "set-gv-solo", path: "guide.vocal.solo", type: "check" },
@@ -121,6 +130,9 @@ const SEARCH_KEYWORDS = {
   "set-remote-url": "phone qr url tunnel address host",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
+  "set-score": "points rating videoke sing grade",
+  "set-score-card": "points rating result end of song",
+  "set-score-golden": "hooks bonus double weight",
   "export-data": "backup save download favorites queue settings json",
   "import-data": "restore load upload backup json",
 };
@@ -147,7 +159,7 @@ export function matchesQuery(text, query) {
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData, onShowRecap }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -181,7 +193,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog, #export-data, #import-data"; // matchable controls + action buttons
+  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog, #export-data, #import-data, #show-recap"; // matchable controls + action buttons
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -359,6 +371,9 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       if (s && s.value) { s.value = ""; applyFilter(""); } // drop any active search filter
       resetCatState();                  // clears karaeoke.settingsUI.v1 → default panel layout
     };
+
+    const recapBtn = $("show-recap");
+    if (recapBtn && onShowRecap) recapBtn.onclick = () => onShowRecap();
 
     // Backup / restore. Favorites, the queue and every setting exist ONLY in this browser, so
     // the panel must offer a way out that isn't the delete button. Import reloads: modules read

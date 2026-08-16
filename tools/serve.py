@@ -413,6 +413,7 @@ _remote_lock = threading.Lock()
 _rooms: dict = {}             # roomCode(upper) -> {rev, ts, now, queue, settings, commands:[], seq}
 REMOTE_CMD_TYPES = frozenset((
     "enqueue", "remove", "reorder", "play", "pause", "next", "seek", "volume", "setting",
+    "react",   # an emoji (+ applause) sent to the host screen; the host allowlists the emoji
 ))
 REMOTE_CMD_MAX = 200          # per-room inbox cap (host-less safety)
 ROOM_TTL = 90                 # secs; a room whose host hasn't pushed in this long is dropped
