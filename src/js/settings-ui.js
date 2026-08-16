@@ -306,9 +306,33 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   }
 
   // The drawer is a modal dialog (role/aria-modal live on the element in index.html), so it
-  // owes keyboard users three things it never had: Escape to dismiss, focus moved INTO it on
-  // open, and focus returned to the ⚙ button on close.
+  // owes keyboard users four things it never had: Escape to dismiss, focus moved INTO it on
+  // open, focus RETURNED to the ⚙ button on close, and a trap so Tab can't wander out into
+  // the page behind it — which `aria-modal` tells a screen reader is unreachable, so leaving
+  // Tab free to go there is worse than no dialog semantics at all.
   let lastFocus = null;
+
+  // Only elements that are actually reachable: the panel's own search filter hides rows with
+  // `display:none`, and a hidden control must not become an invisible Tab stop.
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  function focusableInPanel() {
+    const panel = $("settings-panel");
+    if (!panel) return [];
+    return [...panel.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+  }
+
+  function trapTab(e) {
+    if (e.key !== "Tab") return;
+    const items = focusableInPanel();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !items.includes(active))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
 
   function openSettings() {
     syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
@@ -335,9 +359,18 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     // field and stopPropagation()s), so typing isn't interrupted — a second Escape closes.
     $("settings-panel").addEventListener("keydown", (e) => {
       if (e.key === "Escape") { e.stopPropagation(); closeSettings(); }
+      else trapTab(e);
     });
-    // …and when focus sits outside the drawer (opened, then clicked the stage).
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSettings(); });
+    // …and when focus sits outside the drawer (opened, then clicked the stage behind it):
+    // Escape still closes, and Tab pulls focus back in rather than walking the hidden page.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { closeSettings(); return; }
+      if (e.key !== "Tab" || !document.body.classList.contains("settings-open")) return;
+      const panel = $("settings-panel");
+      if (!panel || panel.contains(document.activeElement)) return;
+      const items = focusableInPanel();
+      if (items.length) { e.preventDefault(); items[0].focus(); }
+    });
 
     autoBind();
     wireSearch();
