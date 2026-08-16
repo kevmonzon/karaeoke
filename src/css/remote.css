@@ -109,11 +109,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .l-lyrics .lyric-scroll {
   position: absolute; left: 0; right: 0; top: 0;
   display: flex; flex-direction: column; align-items: center; gap: .3em;
-  transition: transform .45s cubic-bezier(.33, 0, .1, 1); will-change: transform;
+  transition: transform var(--dur-slow) var(--ease); will-change: transform;
 }
 .l-lyrics .line {
   max-width: var(--line-width); line-height: 1.32; font-weight: 700; text-align: center;
-  transition: opacity .35s ease, transform .35s ease;
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
 }
 .l-lyrics .line.placeholder { color: var(--muted); font-size: .55em; font-weight: 600; }
 .l-lyrics .line.past     { opacity: .30; }
@@ -241,7 +241,7 @@ body.connected .gate { display: none; }
   min-height: 46px; font-size: 22px; line-height: 1;
   background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line); border-radius: 12px; cursor: pointer;
-  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+  transition: transform var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .react-btn:active { transform: scale(.9); }
 .react-btn.sent { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel-2)); }

@@ -1,0 +1,47 @@
+# CI for Ka-Rae-oke.
+#
+# The project is deliberately buildless — no bundler, no dependencies, two runtimes — so CI is
+# just "run both test suites". There is nothing to install: node --test is built in, and the
+# Python side is stdlib unittest, matching the rule the tooling already follows.
+#
+# What this cannot cover: anything needing a browser (the synth, the engines, the lyric
+# rendering, the relay's HTTP paths). Those are verified by hand — see CLAUDE.md §13.
+
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Unit tests (JavaScript — pure logic)
+        run: npm run test:js
+
+      - name: Unit tests (Python — builders + relay + scrape parsing)
+        run: npm run test:py
+
+      # Cheap guard against a syntax error reaching the branch: nothing compiles this code
+      # before a browser does, so a typo in a module would otherwise only surface at runtime.
+      - name: Syntax-check every module
+        run: |
+          for f in $(git ls-files 'src/**/*.js' 'src/*.js' 'tools/*.py'); do
+            case "$f" in
+              *.js) node --check "$f" || exit 1 ;;
+              *.py) python3 -m py_compile "$f" || exit 1 ;;
+            esac
+          done

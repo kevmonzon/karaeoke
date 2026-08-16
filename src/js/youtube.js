@@ -44,7 +44,9 @@ function ytApiReady() {
   return _apiPromise;
 }
 
-export class YouTubeEngine {
+import { MediaEngineBase } from "./media-engine.js";
+
+export class YouTubeEngine extends MediaEngineBase {
   /** True only where <iframe credentialless> exists (Chromium 110+). */
   static get supported() {
     return typeof HTMLIFrameElement !== "undefined"
@@ -55,6 +57,7 @@ export class YouTubeEngine {
    * @param {HTMLIFrameElement} iframeEl  the pre-created `<iframe id="ytplayer" credentialless>`
    */
   constructor(iframeEl) {
+    super();
     this.iframe = iframeEl;
     this.player = null;         // the YT.Player, created lazily on first load()
     this._loadPromise = null;   // resolves when the current video is cued/ready
@@ -143,17 +146,12 @@ export class YouTubeEngine {
 
   pause() { try { this.player && this.player.pauseVideo(); } catch (_) {} }
 
-  toggle() { this.paused ? this.play() : this.pause(); }
 
   stop() {
     this.pause();
     try { this.player && this.player.seekTo(0, true); } catch (_) {}
   }
 
-  restart() {
-    try { this.player && this.player.seekTo(0, true); } catch (_) {}
-    this.play();
-  }
 
   seek(seconds) {
     try { this.player && this.player.seekTo(Math.max(0, seconds), true); } catch (_) {}

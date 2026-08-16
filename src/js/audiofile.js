@@ -16,6 +16,7 @@
 
 import { KeyShiftChain } from "./pitch-chain.js";
 import { cachedArrayBuffer } from "./asset-cache.js";
+import { MediaEngineBase } from "./media-engine.js";
 
 // Blob MIME by extension (a typed blob is safest for the media element, though it also sniffs).
 const AUDIO_MIME = {
@@ -24,12 +25,13 @@ const AUDIO_MIME = {
 };
 const mimeForUrl = (u) => AUDIO_MIME[(u.split("?")[0].split(".").pop() || "").toLowerCase()] || "";
 
-export class AudioFileEngine {
+export class AudioFileEngine extends MediaEngineBase {
   /**
    * @param {HTMLAudioElement} audioEl  the sound element (#kaudio)
    * @param {import('./audio.js').AudioEngine} audioEngine  shared engine (for the context + worklet)
    */
   constructor(audioEl, audioEngine) {
+    super();
     this.el = audioEl;
     this.engine = audioEngine;
     this.chain = new KeyShiftChain(audioEngine); // WebAudio pitch/volume chain
@@ -112,17 +114,12 @@ export class AudioFileEngine {
   }
 
   pause() { this.el.pause(); }
-  toggle() { this.el.paused ? this.play() : this.pause(); }
 
   stop() {
     this.el.pause();
     try { this.el.currentTime = 0; } catch (_) {}
   }
 
-  restart() {
-    try { this.el.currentTime = 0; } catch (_) {}
-    this.play();
-  }
 
   seek(seconds) {
     try { this.el.currentTime = Math.max(0, seconds); } catch (_) {}

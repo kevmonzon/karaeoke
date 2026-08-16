@@ -29,8 +29,15 @@ import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
+import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
 
 const $ = (id) => document.getElementById(id);
+// What an empty song list should SAY. A bare white panel is indistinguishable from a broken
+// app, and the first-run case has a concrete next action worth naming.
+const EMPTY_LIBRARY = {
+  title: "No songs in the library yet",
+  hint: "Drop .kar/.mid files into data/kar_raw/ (or videos into data/videos/), then ⚙ → Rebuild Catalog.",
+};
 // Source-kind icon shown in the now-playing header (in place of the dial number).
 const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐", audio: "🎵" };
 const npIcon = (kind) => NP_ICON[kind] || "🎵";
@@ -69,6 +76,7 @@ let lastBonusLine = -1;          // guards the per-line bonus flash (one per lyr
 // Boot
 // ---------------------------------------------------------------------------
 async function boot() {
+  document.body.classList.add("booting"); // hairline sweep under the topbar until the catalog lands
   purgeStaleCaches(); // drop the old service-worker cache; keep our asset cache
 
   lyrics = new LyricsEngine($("lyrics"), {
@@ -121,11 +129,17 @@ async function boot() {
     loadBlockedYoutube(); // hide videos that previously failed to embed
     if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
     loadFavorites(); // restore starred songs (resolved by id) before the first render
-    lib.renderList(catalog.search(""));
+    lib.renderList(catalog.search(""), EMPTY_LIBRARY);
     loadSession(); // restore queue + recently-played (no auto-play)
   } catch (e) {
     setStatus("Failed to load catalog.json — is the server running from the project root?");
     console.error(e);
+    lib.renderList([], {
+      title: "Couldn't load the song catalog",
+      hint: "Is the server running? Start it with: python tools/serve.py",
+    });
+  } finally {
+    document.body.classList.remove("booting");
   }
   wireUI();
   settingsUI.wireSettings();
@@ -708,7 +722,7 @@ function syncTransportLabels() {
 // Session persistence — queue + recently played survive reloads (localStorage).
 // The queue is restored but NOT auto-played (no user gesture on load).
 // ---------------------------------------------------------------------------
-const SESSION_KEY = "karaeoke.session.v1";
+const sessionStore = jsonStore("karaeoke.session.v1", null);
 
 // Full factory reset ("Erase all app data"): remove EVERY karaeoke.* localStorage key
 // (settings, session/queue+recents, favorites, ⚙ panel state, remote room code, the
@@ -716,14 +730,7 @@ const SESSION_KEY = "karaeoke.session.v1";
 // + cached songs), then reload into a pristine first-run state. Irreversible — the caller
 // (settings-ui.js) gates it behind a two-step confirm.
 async function eraseAllData() {
-  try {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("karaeoke.")) keys.push(k);
-    }
-    keys.forEach((k) => localStorage.removeItem(k));
-  } catch (_) {}
+  clearAppData();
   await purgeAllCaches();
   location.reload();
 }
@@ -733,21 +740,17 @@ async function eraseAllData() {
 // long enough gap starts a new night. Nothing new is recorded to make this work: it is the
 // same data the queue, the singer banner and the scorer already produce, kept in order.
 // ---------------------------------------------------------------------------
-const RECAP_KEY = "karaeoke.recap.v1";
+const recapStore = jsonStore("karaeoke.recap.v1", null);
 const RECAP_GAP_MS = 6 * 3600 * 1000;   // a gap this long means it's a different night
 let recap = { startedAt: 0, items: [] };
 
 function loadRecap() {
-  try {
-    const r = JSON.parse(localStorage.getItem(RECAP_KEY) || "null");
-    if (r && Array.isArray(r.items)) recap = r;
-  } catch (_) {}
+  const r = recapStore.read();
+  if (r && Array.isArray(r.items)) recap = r;
   const last = recap.items.length ? recap.items[recap.items.length - 1].at : 0;
   if (!last || Date.now() - last > RECAP_GAP_MS) recap = { startedAt: 0, items: [] };
 }
-function saveRecap() {
-  try { localStorage.setItem(RECAP_KEY, JSON.stringify(recap)); } catch (_) {}
-}
+function saveRecap() { recapStore.write(recap); }
 /** Record one finished performance. `score` is null when nothing was scored (mic off, video). */
 function logPerformance(song, by, score) {
   if (!song) return;
@@ -824,23 +827,18 @@ function hideRecap() { const el = $("recap"); if (el) el.classList.add("hidden")
 // the first time it plays and remember it. A library you've used before estimates well; a
 // fresh one falls back to an average (queue-order.js DEFAULT_SONG_SEC).
 // ---------------------------------------------------------------------------
-const DURATIONS_KEY = "karaeoke.durations.v1";
+const durationsStore = jsonStore("karaeoke.durations.v1", {});
 let durationHints = {};
 let _durSongId = null;   // the song we've already recorded during this play
 
-function loadDurationHints() {
-  try {
-    const o = JSON.parse(localStorage.getItem(DURATIONS_KEY) || "{}");
-    durationHints = o && typeof o === "object" ? o : {};
-  } catch (_) { durationHints = {}; }
-}
+function loadDurationHints() { durationHints = durationsStore.read(); }
 function noteDuration(song, d) {
   if (!song || !(d > 0) || _durSongId === song.id) return;
   _durSongId = song.id;                       // once per play — this is called from the rAF loop
   const rounded = Math.round(d);
   if (durationHints[song.id] === rounded) return;
   durationHints[song.id] = rounded;
-  try { localStorage.setItem(DURATIONS_KEY, JSON.stringify(durationHints)); } catch (_) {}
+  durationsStore.write(durationHints);
 }
 
 // Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
@@ -848,39 +846,21 @@ function noteDuration(song, d) {
 // localStorage — a reinstall or a stray "clear site data" takes all of it, and the only
 // control the panel offered for that state was the erase button. Export writes one JSON
 // file; import writes karaeoke.* keys back and reloads so every module re-reads its store.
-const DATA_EXPORT_VERSION = 1;
-
 function exportAppData() {
-  const data = {};
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("karaeoke.")) data[k] = localStorage.getItem(k);
-    }
-  } catch (_) {}
-  const payload = {
-    app: "ka-rae-oke", version: DATA_EXPORT_VERSION,
-    exportedAt: new Date().toISOString(), data,
-  };
+  const payload = { ...collectAppData(), exportedAt: new Date().toISOString() };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   const a = document.createElement("a");
   a.href = url;
   a.download = `karaeoke-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return Object.keys(data).length;
+  return Object.keys(payload.data).length;
 }
 
 /** Restore an exported file. Only karaeoke.* string keys are written, so a foreign or
  *  hand-edited file can't reach any other state this origin keeps. Caller reloads. */
 async function importAppData(file) {
-  const payload = JSON.parse(await file.text());
-  const data = payload && payload.data;
-  if (!data || typeof data !== "object") throw new Error("not a Ka-Rae-oke backup");
-  const keys = Object.keys(data).filter((k) => k.startsWith("karaeoke.") && typeof data[k] === "string");
-  if (!keys.length) throw new Error("no Ka-Rae-oke data in that file");
-  for (const k of keys) localStorage.setItem(k, data[k]);
-  return keys.length;
+  return restoreAppData(JSON.parse(await file.text()));
 }
 
 // Resolve a stored reference to a song. New format = stable id ("midi:5"/"video:5");
@@ -890,14 +870,11 @@ function resolveSong(ref) {
 }
 
 function saveSession() {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ queue: queue.map((s) => s.id), recent }));
-  } catch (_) {}
+  sessionStore.write({ queue: queue.map((s) => s.id), recent });
   saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch (_) {}
+  const data = sessionStore.read();
   if (!data) return;
   recent = (Array.isArray(data.recent) ? data.recent : [])
     .map(resolveSong).filter(Boolean).map((s) => s.id);
@@ -915,7 +892,7 @@ function setRecentMode(on) {
 }
 function showRecent() {
   const songs = recent.map((id) => catalog.getById(id)).filter(Boolean);
-  lib.renderList(songs);
+  lib.renderList(songs, { title: "Nothing played yet tonight", hint: "Songs you play show up here." });
   setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
 }
 
@@ -924,16 +901,15 @@ function showRecent() {
 // Stored as an array of stable ids so KAR/VID are unambiguous (§5.10); old bare
 // codes resolve as MIDI via resolveSong (same back-compat as the queue/recent).
 // ---------------------------------------------------------------------------
-const FAVORITES_KEY = "karaeoke.favorites.v1";
+const favoritesStore = jsonStore("karaeoke.favorites.v1", []);
 
 function loadFavorites() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "null"); } catch (_) {}
+  const data = favoritesStore.read();
   const ids = (Array.isArray(data) ? data : []).map(resolveSong).filter(Boolean).map((s) => s.id);
   favorites = new Set(ids);
 }
 function saveFavorites() {
-  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites])); } catch (_) {}
+  favoritesStore.write([...favorites]);
   saveYoutubeCache(); // a starred YouTube song must keep its pointer so it resolves on reload
 }
 function isFavorite(song) { return !!song && favorites.has(song.id); }
@@ -952,7 +928,7 @@ function setFavoritesMode(on) {
 }
 function showFavorites() {
   const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
-  lib.renderList(songs);
+  lib.renderList(songs, { title: "No favorites yet", hint: "Tap the ☆ on any song to keep it here." });
   setStatus(songs.length ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}` : "no favorites yet — tap ☆ on a song");
 }
 
@@ -964,7 +940,7 @@ function showFavorites() {
 // third localStorage key, independent of settings + session. Chromium-only (needs the
 // credentialless iframe — see src/js/youtube.js); self-disables where unsupported.
 // ---------------------------------------------------------------------------
-const YOUTUBE_KEY = "karaeoke.youtube.v1";
+const youtubeStore = jsonStore("karaeoke.youtube.v1", {});
 const youtubeCache = new Map(); // id → YouTube record (favorites/recent/queue resolution)
 let ytSearchTimer = null;       // the (long) debounce before actually querying YouTube
 
@@ -980,8 +956,7 @@ function registerYoutube(rec) {
   return rec;
 }
 function loadYoutubeCache() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(YOUTUBE_KEY) || "null"); } catch (_) {}
+  const data = youtubeStore.read();
   if (data && typeof data === "object") {
     for (const rec of Object.values(data)) {
       if (rec && rec.id && rec.kind === "youtube") registerYoutube(rec);
@@ -996,25 +971,23 @@ function saveYoutubeCache() {
     const rec = youtubeCache.get(id);
     if (rec && rec.kind === "youtube") obj[id] = rec;
   }
-  try { localStorage.setItem(YOUTUBE_KEY, JSON.stringify(obj)); } catch (_) {}
+  youtubeStore.write(obj);
 }
 
 // A persistent blocklist of YouTube videoIds that failed to embed (owner-disabled / removed /
 // private). We hide them from future search results and skip past them, so a dead video never
 // shows up again. Stored as a plain id array, independent of the pointer cache above.
-const YOUTUBE_BLOCKED_KEY = "karaeoke.youtube.blocked.v1";
+const blockedStore = jsonStore("karaeoke.youtube.blocked.v1", []);
 const blockedYoutube = new Set();
 
 function loadBlockedYoutube() {
-  try {
-    const a = JSON.parse(localStorage.getItem(YOUTUBE_BLOCKED_KEY) || "[]");
-    if (Array.isArray(a)) a.forEach((id) => id && blockedYoutube.add(id));
-  } catch (_) {}
+  const a = blockedStore.read();
+  if (Array.isArray(a)) a.forEach((id) => id && blockedYoutube.add(id));
 }
 function blockYoutube(videoId) {
   if (!videoId || blockedYoutube.has(videoId)) return;
   blockedYoutube.add(videoId);
-  try { localStorage.setItem(YOUTUBE_BLOCKED_KEY, JSON.stringify([...blockedYoutube])); } catch (_) {}
+  blockedStore.write([...blockedYoutube]);
   reportBlockedToServer([videoId]); // share it so every user's results omit it too
 }
 
@@ -1083,7 +1056,10 @@ function nextYoutubeInList(song) {
 /** Render local matches for `query`, optionally appending the given YouTube records. */
 function renderSearchResults(query, ytRecords) {
   const local = catalog.search(query);
-  lib.renderList(ytRecords && ytRecords.length ? [...local, ...ytRecords] : local);
+  const rows = ytRecords && ytRecords.length ? [...local, ...ytRecords] : local;
+  lib.renderList(rows, query.trim()
+    ? { title: `No matches for "${query.trim()}"`, hint: "Try fewer words, or a dial number." }
+    : EMPTY_LIBRARY);
 }
 
 /** After a long idle, query YouTube — but only when enabled and the local list came up
@@ -1643,7 +1619,7 @@ function wireUI() {
     clearTimeout(ytSearchTimer);
     if (recentMode) setRecentMode(false);
     if (favoritesMode) setFavoritesMode(false);
-    lib.renderList(catalog.search(""));
+    lib.renderList(catalog.search(""), EMPTY_LIBRARY);
     search.focus();
   };
   $("btn-recent").onclick = () => {
@@ -1916,23 +1892,17 @@ async function playApplause() {
 // ---------------------------------------------------------------------------
 // Score (videoke). scoring.js does the maths; this is presentation + persistence.
 // ---------------------------------------------------------------------------
-const SCORES_KEY = "karaeoke.scores.v1";
+const scoresStore = jsonStore("karaeoke.scores.v1", {});
 const SCORE_CARD_MS = 4500;   // the card holds the stage this long before the next song starts
 let scTimer = null;
 let bonusTimer = null;
 
-function loadBestScores() {
-  try {
-    const o = JSON.parse(localStorage.getItem(SCORES_KEY) || "{}");
-    return o && typeof o === "object" ? o : {};
-  } catch (_) { return {}; }
-}
-function bestScore(id) { return (id && loadBestScores()[id]) || 0; }
+function bestScore(id) { return (id && scoresStore.read()[id]) || 0; }
 function saveBestScore(id, score) {
   if (!id) return;
-  const all = loadBestScores();
+  const all = scoresStore.read();
   all[id] = score;
-  try { localStorage.setItem(SCORES_KEY, JSON.stringify(all)); } catch (_) {}
+  scoresStore.write(all);
 }
 
 /** Close out the current song's scoring. Returns null when there's nothing worth showing
@@ -2094,7 +2064,7 @@ async function onRebuild() {
   const res = await (await fetch("/api/rebuild-catalog", { method: "POST" })).json();
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
-  lib.renderList(catalog.search($("search").value));
+  lib.renderList(catalog.search($("search").value), EMPTY_LIBRARY);
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };
 }
@@ -2116,9 +2086,9 @@ function setStatus(msg) { $("status").textContent = msg; }
 // as stopped too. Only writes on change so it's cheap to call every rAF frame.
 function setPlayIcon() {
   const playing = !media.paused && !(media === audio && audio.ended);
-  const icon = playing ? "❚❚" : "▶";
-  const el = $("btn-play");
-  if (el.textContent !== icon) el.textContent = icon;
+  const href = playing ? "#i-pause" : "#i-play";
+  const el = $("play-icon");   // the <use> inside the play button's sprite icon
+  if (el && el.getAttribute("href") !== href) el.setAttribute("href", href);
 }
 function fmtKey(s) { return (s > 0 ? "+" : "") + s; }
 function fmt(s) { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, "0")}`; }

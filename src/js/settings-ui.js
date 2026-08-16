@@ -14,8 +14,11 @@
  * player's onSettingChanged (Settings calls it on every change).
  */
 
+import { getCacheStatus } from "./asset-cache.js";
+
 const $ = (id) => document.getElementById(id);
 const pct = (v) => `${Math.round(v * 100)}%`;
+const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0)} MB`;
 
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
@@ -419,9 +422,27 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     }
   }
 
+  // How much the offline cache is holding, and — the part that matters — whether the browser
+  // has started REFUSING writes. That used to fail silently, so repeat plays quietly went back
+  // to re-downloading with nothing on screen to explain it.
+  function updateCacheStatus() {
+    const el = $("cache-status");
+    if (!el) return;
+    const s = getCacheStatus();
+    if (!s.supported) { el.textContent = "Offline cache unavailable in this browser."; return; }
+    const base = s.files
+      ? `Cached offline: ${s.files} file${s.files === 1 ? "" : "s"}, ${mb(s.bytes)} of ${mb(s.budget)}.`
+      : "Nothing cached offline yet.";
+    el.textContent = s.quotaExceeded
+      ? `${base} Storage is full — songs are re-downloading each play. Erase app data to reclaim it.`
+      : base;
+    el.classList.toggle("warn", s.quotaExceeded);
+  }
+
   function syncSettingsUI() {
     autoSync();
     updateMicBtn();
+    updateCacheStatus();
     // bottom transport controls (wired in app.js, but reflected here on reset).
     // Tempo & key are ± steppers (labels only); volume is still a slider.
     if ($("tempo-val")) {

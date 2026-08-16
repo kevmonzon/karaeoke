@@ -15,7 +15,14 @@
 const $ = (id) => document.getElementById(id);
 // Row height comes from the `--row-h` CSS var (set per display-size profile in style.css), so the
 // list scales with the screen (phone → TV). Read once per render; falls back to 46 if unset.
-const rowH = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || 46;
+// getComputedStyle forces a style recalc, and this used to run on EVERY scroll event of a
+// 65k-row virtual list (dozens a second on a trackpad fling) for a value that only changes
+// when the ⚙ font size does. Measured once, re-measured only when something can actually
+// change it: refresh() (the font-size path already calls it) and a resize.
+let _rowH = 0;
+const measureRowH = () =>
+  (_rowH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || 46);
+const rowH = () => _rowH || measureRowH();
 const OVERSCAN = 5;      // extra rows above/below the viewport
 
 // Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube · 🎵 audio.
@@ -49,9 +56,18 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   let songs = [];
   let selectedSong = null;
   let nowPlaying = null;
+  let emptyState = null;   // {title, hint} shown when `songs` is empty — see renderWindow
 
-  viewport.addEventListener("scroll", renderWindow, { passive: true });
-  window.addEventListener("resize", renderWindow);
+  // Coalesce scroll-driven re-renders to one per frame: a fling fires scroll events faster
+  // than the display refreshes, and each one rebuilt the whole visible row set.
+  let framePending = false;
+  const onScroll = () => {
+    if (framePending) return;
+    framePending = true;
+    requestAnimationFrame(() => { framePending = false; renderWindow(); });
+  };
+  viewport.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", () => { measureRowH(); renderWindow(); });
 
   function makeRow(s, i, h) {
     const li = document.createElement("li");
@@ -84,6 +100,25 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
 
   // Render only the rows visible in the viewport (plus overscan).
   function renderWindow() {
+    // An empty list used to be bare whitespace with no explanation — the worst possible
+    // first-run impression, and indistinguishable from a broken search. Say what happened
+    // and what to do about it.
+    if (!songs.length) {
+      const li = document.createElement("li");
+      li.className = "empty-state";
+      const t = document.createElement("div");
+      t.className = "es-title";
+      t.textContent = (emptyState && emptyState.title) || "Nothing here";
+      li.appendChild(t);
+      if (emptyState && emptyState.hint) {
+        const h = document.createElement("div");
+        h.className = "es-hint";
+        h.textContent = emptyState.hint;
+        li.appendChild(h);
+      }
+      viewport.replaceChildren(li);
+      return;
+    }
     const vh = viewport.clientHeight || 1;
     const top = viewport.scrollTop;
     const h = rowH();
@@ -101,8 +136,10 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
   }
 
-  function renderList(newSongs) {
+  /** @param {{title:string, hint?:string}} [empty] what to say when the list comes back empty */
+  function renderList(newSongs, empty) {
     songs = newSongs;
+    emptyState = empty || null;
     setScrollHeight();
     viewport.scrollTop = 0;
     renderWindow();
@@ -113,6 +150,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   // Re-measure the row height and repaint — for un-collapsing and, crucially, after a
   // display-size profile switch changes --row-h (else --vlist-h stays at the old height).
   function refresh() {
+    measureRowH();   // the ⚙ font size changes --row-h; this is the one path that knows
     setScrollHeight();
     renderWindow();
   }

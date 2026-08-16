@@ -66,6 +66,7 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 
 /* Topbar — a calm cluster: brand · status eyebrow · grouped view toggles · icon buttons. */
 .topbar {
+  position: relative;   /* anchors the .boot-bar sweep at its bottom edge */
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
   padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(10px);
@@ -115,7 +116,7 @@ body.queue-collapsed .queue { opacity: 0; pointer-events: none; padding: 0; }
 }
 body.controls-hidden .playback-dock {
   opacity: 0; pointer-events: none; transform: translateY(10px);
-  transition: opacity .5s var(--ease), transform .5s var(--ease);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
 }
 /* MIDI mode drops a per-channel mixer band at the bottom of the flow — reserve room so the
    overlay doesn't cover its lowest rows (only mode with in-flow content behind the dock). */
@@ -131,13 +132,13 @@ body.focus-mode .library,
 body.focus-mode .queue { display: none; }
 body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; }
 body.focus-mode .stage { grid-column: 1; }
-body.focus-mode .topbar { opacity: .5; transition: opacity .25s var(--ease); }
+body.focus-mode .topbar { opacity: .5; transition: opacity var(--dur-base) var(--ease); }
 body.focus-mode .topbar:hover { opacity: 1; }
 /* Auto-hide: after a few idle seconds the playback dock fades (handled globally by
    body.controls-hidden .playback-dock above — active in focus mode AND when "Always show
    playback controls" is off). In focus mode ONLY, the topbar also recedes and the cursor
    is hidden for a clean 10-foot view; any pointer/key activity brings them back (app.js). */
-body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity .5s var(--ease); }
+body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease); }
 body.focus-mode.controls-hidden { cursor: none; }
 /* Focus mode: enlarge the "up next" pill (1.75×) so it's legible from across the room. */
 body.focus-mode { --upnext-mult: 1.75; }
@@ -322,11 +323,11 @@ button.fav {
   background: none; border: none; cursor: pointer; padding: 0;
   width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
   border-radius: calc(8px * var(--ui-scale)); line-height: 1;
-  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color .12s, transform .08s;
+  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
-button.fav:hover { color: #ffd23f; }
+button.fav:hover { color: var(--gold); }
 button.fav:active { transform: scale(.85); }
-button.fav.on { color: #ffce3a; }
+button.fav.on { color: var(--gold); }
 
 /* Stage / now playing */
 .now-playing { position: relative; display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
@@ -390,7 +391,7 @@ button.fav.on { color: #ffce3a; }
 /* Pitch guide (scrolling piano-roll) */
 .pitch-guide {
   display: none; width: 100%; height: var(--guide-height, 150px);
-  border-radius: 12px; background: rgba(8, 10, 18, .55);
+  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent);
   border: 1px solid var(--line); margin-bottom: var(--s-2); flex: 0 1 auto; min-height: 0;
 }
 body.guide-on .pitch-guide { display: block; }
@@ -408,14 +409,14 @@ body.chords-on .chords { display: block; }
 .chord-strip {
   position: absolute; top: 0; left: 0; height: 100%;
   display: flex; align-items: center; gap: 0.6em;
-  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  transition: transform var(--dur-slow) var(--ease);
   will-change: transform;
 }
 .chord-chip {
   flex: 0 0 auto; font-weight: 800; letter-spacing: .3px;
   padding: 2px 12px; border-radius: 999px; border: 1px solid var(--line);
   color: var(--muted); background: var(--panel-2);
-  transition: color .3s ease, background .3s ease, transform .3s ease, opacity .3s ease;
+  transition: color var(--dur-base) var(--ease), background var(--dur-base) var(--ease), transform var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease);
 }
 .chord-chip.past     { opacity: .35; }
 .chord-chip.upcoming { opacity: .70; }
@@ -432,7 +433,7 @@ body.chords-on .chords { display: block; }
   display: none; flex: 0 0 auto; width: 100%;
   max-height: 190px; overflow-y: auto;
   padding: 8px 10px; margin-bottom: var(--s-2);
-  border-radius: 12px; background: rgba(8, 10, 18, .55); border: 1px solid var(--line);
+  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent); border: 1px solid var(--line);
   grid-template-columns: 1fr; gap: 4px;
 }
 body.midi-mode .midi-mixer { display: grid; }
@@ -506,13 +507,13 @@ body.midi-mode .midi-mixer { display: grid; }
 .lyric-scroll {
   position: absolute; left: 0; right: 0; top: 0;
   display: flex; flex-direction: column; align-items: center; gap: 0.3em;
-  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  transition: transform var(--dur-slow) var(--ease);
   will-change: transform;
 }
 .line {
   max-width: var(--line-width);
   line-height: 1.32; font-weight: 700; text-align: center;
-  transition: opacity .35s ease, transform .35s ease;
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
 }
 .line.placeholder { color: var(--muted); }
 .line.past     { opacity: .30; }
@@ -602,8 +603,13 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
   overflow: hidden; z-index: 3; border-radius: 12px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; text-align: center; padding: 24px;
-  background: rgba(8, 10, 18, .82); backdrop-filter: blur(4px);
-  opacity: 0; pointer-events: none; transition: opacity .6s ease;
+  /* Brand-tinted rather than a fixed dark rgba: this is the moment the room looks up,
+     and it should look like THIS app in either theme, not like a generic scrim. */
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%),
+    color-mix(in srgb, var(--surface-0) 88%, transparent);
+  backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
 }
 .title-card.show { opacity: 1; }
 /* font-size here is only a pre-JS fallback; fitTitleCard() overrides it inline to fill the card. */
@@ -696,9 +702,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 /* Offset toast */
 .offset-toast {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%) translateY(-8px);
-  background: rgba(10,12,20,.9); border: 1px solid var(--accent-2); color: var(--ink);
+  background: color-mix(in srgb, var(--surface-0) 92%, transparent); border: 1px solid var(--accent-2); color: var(--ink);
   padding: 8px 16px; border-radius: 20px; font-size: 13px; font-variant-numeric: tabular-nums;
-  opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 5;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); z-index: 5;
 }
 .offset-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -707,7 +713,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
   background: var(--surface-1); border-left: 1px solid var(--border); z-index: 60;
   display: flex; flex-direction: column; box-shadow: var(--elev-2);
-  transition: transform .22s var(--ease);
+  transition: transform var(--dur-base) var(--ease);
 }
 .settings-panel.hidden { transform: translateX(102%); }
 /* Make room, don't cover: on a wide desktop the stage + topbar reflow beside the open
@@ -791,7 +797,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 }
 .set-cat > summary::-webkit-details-marker { display: none; }
 .set-cat > summary::after {
-  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .18s ease;
+  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform var(--dur-base) var(--ease);
 }
 .set-cat[open] > summary::after { transform: rotate(90deg); }
 .set-cat > summary:hover { color: var(--accent-2); }
@@ -943,3 +949,73 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   font-variant-numeric: tabular-nums; color: var(--brand-2);
 }
 .rc-score:empty { display: none; }
+
+/* A hint that is telling you something is wrong (e.g. the offline cache is full). */
+.hint.warn { color: var(--warn); }
+
+/* ---------------------------------------------------------------------------
+   Title card entrance. The four lines cascade in rather than appearing as one
+   block — a song starting is an event, and this is the only screen the whole
+   room reliably looks at. transform/opacity only, so it composites cheaply and
+   (importantly) does NOT affect layout: fitTitleCard() measures scrollHeight
+   the moment .show is added, and a translateY would be invisible to it anyway.
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .title-card.show .tc-title  { animation: tc-in 420ms var(--ease) both; }
+  .title-card.show .tc-artist { animation: tc-in 420ms var(--ease) 70ms both; }
+  .title-card.show .tc-singer { animation: tc-in 420ms var(--ease) 140ms both; }
+  .title-card.show .tc-key    { animation: tc-in 420ms var(--ease) 210ms both; }
+}
+@keyframes tc-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* ---------------------------------------------------------------------------
+   Empty states. An empty <ul> used to be bare whitespace — the same picture for
+   "you have no songs yet", "that search found nothing", and "the catalog failed
+   to load". Each now says which it is, and the first-run one says what to do.
+   --------------------------------------------------------------------------- */
+.empty-state {
+  list-style: none; padding: calc(36px * var(--ui-scale)) 20px;
+  text-align: center; color: var(--text-muted);
+}
+.es-title { font-size: calc(15px * var(--ui-scale)); font-weight: 600; color: var(--text); }
+.es-hint { margin-top: 6px; font-size: calc(12.5px * var(--ui-scale)); line-height: 1.5; }
+
+/* ---------------------------------------------------------------------------
+   Boot indicator. Catalog load + (on the first song) a 32 MB soundfont mean
+   several seconds where the only feedback was the word "Loading…". A hairline
+   sweep under the topbar costs nothing and makes the wait feel intentional.
+   --------------------------------------------------------------------------- */
+.boot-bar {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  overflow: hidden; opacity: 0; transition: opacity var(--dur-base) var(--ease);
+  pointer-events: none;
+}
+body.booting .boot-bar { opacity: 1; }
+.boot-bar::after {
+  content: ""; position: absolute; inset: 0; width: 38%;
+  background: linear-gradient(90deg, transparent, var(--brand), var(--brand-2), transparent);
+  animation: boot-sweep 1.15s var(--ease) infinite;
+}
+@keyframes boot-sweep { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-bar::after { animation: none; width: 100%; opacity: .5; }
+}
+
+/* ---------------------------------------------------------------------------
+   Icon primitive (the inline <symbol> sprite in index.html).
+   Sized in `em` so each icon follows its own control's font-size — and therefore
+   --ui-scale — with no per-icon tuning. Painted with currentColor, so every
+   existing state rule (.on, :disabled, :hover, the dimmed .toggles) applies to
+   the icon for free, which raw emoji never did.
+   --------------------------------------------------------------------------- */
+.icon {
+  width: 1.15em; height: 1.15em; display: block; flex: none;
+  fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+/* Any control holding an icon centres it (the .gear primitive already does). */
+.transport button, .stepper button, .search-clear, .set-search-x {
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* The play triangle is a filled shape; keep its own fill and drop the outline weight. */
+.icon [fill="currentColor"] { stroke-width: 1; }

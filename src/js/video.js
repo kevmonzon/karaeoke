@@ -26,16 +26,18 @@
  */
 
 import { KeyShiftChain } from "./pitch-chain.js";
+import { MediaEngineBase } from "./media-engine.js";
 
 const DRIFT_TOLERANCE = 0.08; // seconds of picture↔sound drift we allow before nudging
 
-export class VideoEngine {
+export class VideoEngine extends MediaEngineBase {
   /**
    * @param {HTMLVideoElement} videoEl  the picture element (#kv), kept muted
    * @param {HTMLAudioElement} audioEl  the sound element (#kva)
    * @param {import('./audio.js').AudioEngine} audioEngine  shared engine (context + worklet)
    */
   constructor(videoEl, audioEl, audioEngine) {
+    super();
     this.video = videoEl;
     this.audio = audioEl;
     this.chain = new KeyShiftChain(audioEngine); // key-shift + >100% volume on #kva
@@ -125,7 +127,6 @@ export class VideoEngine {
     this._stopDriftTimer();
   }
 
-  toggle() { this.video.paused ? this.play() : this.pause(); }
 
   stop() {
     this.pause();
@@ -133,10 +134,6 @@ export class VideoEngine {
     try { this.audio.currentTime = this._audioTargetFor(0); } catch (_) {}
   }
 
-  restart() {
-    try { this.video.currentTime = 0; } catch (_) {}
-    this.play();
-  }
 
   /** Seek to a picture time; the sound follows the offset. */
   seek(seconds) {

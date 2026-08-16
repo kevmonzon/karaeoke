@@ -37,13 +37,24 @@ export class Settings {
     } catch (_) {}
     this.data = deepMerge(DEFAULT_CONFIG, saved);
     this._listeners = [];
+    // Leaf-value cache. The rAF loop reads ~15 settings PER FRAME (offset, autotune flags,
+    // guide/chord/mixer toggles…), each of which was a fresh String.split + Array.reduce —
+    // ~900 throwaway arrays a second for values that only change when a human moves a slider.
+    // Only PRIMITIVES are cached: a group path returns a live object that callers could
+    // mutate in place, and caching that reference would hide the mutation.
+    this._cache = new Map();
   }
 
   get(path) {
-    return path.split(".").reduce((o, k) => (o == null ? o : o[k]), this.data);
+    const hit = this._cache.get(path);
+    if (hit !== undefined) return hit;
+    const v = path.split(".").reduce((o, k) => (o == null ? o : o[k]), this.data);
+    if (v === null || typeof v !== "object") this._cache.set(path, v);
+    return v;
   }
 
   set(path, value, { silent = false } = {}) {
+    this._cache.clear();   // a nested write can invalidate any ancestor/descendant path
     const keys = path.split(".");
     let node = this.data;
     for (let i = 0; i < keys.length - 1; i++) {
@@ -66,6 +77,7 @@ export class Settings {
       localStorage.removeItem(STORAGE_KEY);
     } catch (_) {}
     this.data = clone(DEFAULT_CONFIG);
+    this._cache.clear();
     this._emit("*", this.data);
   }
 

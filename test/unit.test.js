@@ -21,6 +21,8 @@ import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile, distr
 import { syncClock, clockTime, SNAP_SEC } from "../src/js/sync-clock.js";
 import { fairInsertIndex, countBy, queueEta, formatEta, DEFAULT_SONG_SEC } from "../src/js/queue-order.js";
 import { yinPitch, MAX_HZ } from "../src/js/pitch-yin.js";
+import { MediaEngineBase } from "../src/js/media-engine.js";
+import { jsonStore, collectAppData, restoreAppData, clearAppData, listAppKeys, APP_PREFIX } from "../src/js/store.js";
 import {
   foldSemitones, pitchCredit, markGolden, curveScore, scoreBand, Scorer,
 } from "../src/js/scoring.js";
@@ -916,4 +918,141 @@ test("yinPitch: refuses frequencies outside a plausible human range", () => {
   assert.equal(yinPitch(tone(30, rate, 8192), rate), -1);   // below MIN_HZ
   const high = yinPitch(tone(2000, rate, 4096), rate);
   assert.ok(high === -1 || high <= MAX_HZ);
+});
+
+// --- MediaEngineBase (the surface all four playback engines share) ----------
+// Four hand-rolled copies of toggle()/restart() had already drifted; these pin the shared
+// behaviour so the next engine added to the app inherits the same contract.
+class FakeEngine extends MediaEngineBase {
+  constructor(opts = {}) {
+    super();
+    this.calls = [];
+    this._paused = true;
+    this._canPlay = opts.canPlay !== false;
+  }
+  get canPlay() { return this._canPlay; }
+  get paused() { return this._paused; }
+  play() { this.calls.push("play"); this._paused = false; }
+  pause() { this.calls.push("pause"); this._paused = true; }
+  seek(s) { this.calls.push(`seek:${s}`); }
+}
+
+test("MediaEngineBase: toggle follows the engine's own paused state", () => {
+  const e = new FakeEngine();
+  e.toggle();
+  assert.deepEqual(e.calls, ["play"]);
+  e.toggle();
+  assert.deepEqual(e.calls, ["play", "pause"]);
+});
+
+test("MediaEngineBase: restart seeks to 0 and plays — in that order", () => {
+  const e = new FakeEngine();
+  e.restart();
+  assert.deepEqual(e.calls, ["seek:0", "play"]);
+});
+
+test("MediaEngineBase: an engine that isn't ready ignores transport commands", () => {
+  // This is AudioEngine before its Sequencer exists — its old `this.seq && …` guard, kept.
+  const e = new FakeEngine({ canPlay: false });
+  e.toggle();
+  e.restart();
+  assert.deepEqual(e.calls, []);
+});
+
+test("MediaEngineBase: setOffset is a no-op unless a subclass means it", () => {
+  const e = new FakeEngine();
+  assert.equal(e.setOffset(500), undefined);
+  assert.deepEqual(e.calls, []);
+});
+
+// --- store (the localStorage layer) ----------------------------------------
+// This is the one module that can destroy a user's whole library state, so it gets a fake
+// Storage and real tests rather than hope.
+function fakeStorage(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return {
+    get length() { return m.size; },
+    key: (i) => [...m.keys()][i] ?? null,
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => { m.set(k, String(v)); },
+    removeItem: (k) => { m.delete(k); },
+    _map: m,
+  };
+}
+
+test("jsonStore: round-trips, and a missing key returns the fallback", () => {
+  const s = fakeStorage();
+  const store = jsonStore(`${APP_PREFIX}test.v1`, { a: 1 }, s);
+  assert.deepEqual(store.read(), { a: 1 });          // fallback
+  store.write({ a: 2 });
+  assert.deepEqual(store.read(), { a: 2 });
+  store.remove();
+  assert.deepEqual(store.read(), { a: 1 });
+});
+
+test("jsonStore: corrupt JSON and a stored null both fall back instead of throwing", () => {
+  const s = fakeStorage({ [`${APP_PREFIX}x`]: "{not json" });
+  assert.deepEqual(jsonStore(`${APP_PREFIX}x`, [], s).read(), []);
+  s.setItem(`${APP_PREFIX}x`, "null");
+  assert.deepEqual(jsonStore(`${APP_PREFIX}x`, [], s).read(), []);
+});
+
+test("jsonStore: the fallback is copied, so a caller can't mutate the default", () => {
+  const fallback = { list: [] };
+  const store = jsonStore(`${APP_PREFIX}y`, fallback, fakeStorage());
+  store.read().list.push("oops");
+  assert.deepEqual(store.read(), { list: [] });
+  assert.deepEqual(fallback, { list: [] });
+});
+
+test("jsonStore: a throwing storage (private mode / full quota) degrades quietly", () => {
+  const boom = {
+    get length() { throw new Error("denied"); },
+    key() { throw new Error("denied"); },
+    getItem() { throw new Error("denied"); },
+    setItem() { throw new Error("denied"); },
+    removeItem() { throw new Error("denied"); },
+  };
+  const store = jsonStore(`${APP_PREFIX}z`, "safe", boom);
+  assert.equal(store.read(), "safe");
+  assert.equal(store.write("x"), false);   // reports failure rather than throwing
+  assert.doesNotThrow(() => store.remove());
+  assert.deepEqual(listAppKeys(boom), []);
+});
+
+test("collectAppData / restoreAppData: a backup round-trips only karaeoke.* keys", () => {
+  const src = fakeStorage({
+    [`${APP_PREFIX}favorites.v1`]: '["midi:1"]',
+    [`${APP_PREFIX}settings.v1`]: '{"audio":{"volume":1}}',
+    "unrelated.other-app": "should not travel",
+  });
+  const payload = collectAppData(src);
+  assert.equal(payload.app, "ka-rae-oke");
+  assert.deepEqual(Object.keys(payload.data).sort(),
+    [`${APP_PREFIX}favorites.v1`, `${APP_PREFIX}settings.v1`]);
+
+  const dest = fakeStorage();
+  assert.equal(restoreAppData(payload, dest), 2);
+  assert.equal(dest.getItem(`${APP_PREFIX}favorites.v1`), '["midi:1"]');
+  assert.equal(dest.getItem("unrelated.other-app"), null);
+});
+
+test("restoreAppData: a foreign or hostile file can't reach other origin state", () => {
+  const dest = fakeStorage({ "someone.elses.token": "secret" });
+  // Non-prefixed keys are dropped even when the file is otherwise well-formed.
+  assert.throws(() => restoreAppData({ data: { "evil.key": "x" } }, dest), /no Ka-Rae-oke data/);
+  assert.equal(dest.getItem("someone.elses.token"), "secret");
+  assert.throws(() => restoreAppData(null, dest), /not a Ka-Rae-oke backup/);
+  assert.throws(() => restoreAppData({ nope: 1 }, dest), /not a Ka-Rae-oke backup/);
+  // Non-string values are ignored rather than stringified into nonsense.
+  assert.throws(() => restoreAppData({ data: { [`${APP_PREFIX}a`]: { obj: 1 } } }, dest), /no Ka-Rae-oke data/);
+});
+
+test("clearAppData: wipes only this app's keys", () => {
+  const s = fakeStorage({
+    [`${APP_PREFIX}a`]: "1", [`${APP_PREFIX}b`]: "2", "other.app": "keep",
+  });
+  assert.equal(clearAppData(s), 2);
+  assert.deepEqual(listAppKeys(s), []);
+  assert.equal(s.getItem("other.app"), "keep");
 });

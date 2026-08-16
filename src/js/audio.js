@@ -16,13 +16,15 @@
 
 import { WorkletSynthesizer, Sequencer } from "spessasynth_lib";
 import { cachedArrayBuffer } from "./asset-cache.js";
+import { MediaEngineBase } from "./media-engine.js";
 
 const PROCESSOR_URL = "./vendor/spessasynth_processor.min.js";
 const SOUNDFONT_URL = "/soundfont.sf2";  // served from DATA_DIR (see tools/serve.py routing)
 const NUM_CHANNELS = 16;
 
-export class AudioEngine {
+export class AudioEngine extends MediaEngineBase {
   constructor() {
+    super();
     this.ctx = null;
     this.gain = null;
     this.synth = null;
@@ -126,13 +128,9 @@ export class AudioEngine {
     this.seq.play();
   }
   pause() { if (this.seq) this.seq.pause(); }
-  toggle() { this.seq && (this.seq.paused ? this.play() : this.pause()); }
-
-  restart() {
-    if (!this.seq) return;
-    this.seq.currentTime = 0;
-    this.play();
-  }
+  /** The one engine that can legitimately not be ready: no Sequencer until init() has
+   *  pulled the ~32 MB soundfont. MediaEngineBase.toggle/restart honour this. */
+  get canPlay() { return !!this.seq; }
 
   stop() {
     if (!this.seq) return;
