@@ -449,6 +449,10 @@ def _room_host_sync(snapshot) -> dict:
             r = _rooms[room] = {"rev": 0, "ts": now, "commands": [], "seq": 0}
         r["rev"] += 1
         r["ts"] = now
+        # Sub-second twin of ts: guests subtract it to learn how STALE the snapshot they
+        # just polled is (their own poll phase is up to a full second). Lyric sync on the
+        # phone rides this — see src/js/sync-clock.js. `ts` stays int for the TTL checks.
+        r["mts"] = time.time()
         r["now"] = snapshot.get("now")
         r["queue"] = snapshot.get("queue") or []
         r["settings"] = snapshot.get("settings") or {}
@@ -471,6 +475,9 @@ def _room_state(code, since) -> dict:
         if since is not None and str(since).isdigit() and int(since) == rev:
             return {"ok": True, "rev": rev, "unchanged": True}
         return {"ok": True, "rev": rev, "ts": r["ts"], "now": r.get("now"),
+                # seconds since the host's push landed here — lets a guest correct for its
+                # own poll phase before extrapolating the playback position (lyric sync)
+                "age": round(max(0.0, time.time() - r.get("mts", r["ts"])), 3),
                 "queue": r.get("queue", []), "settings": r.get("settings", {})}
 
 

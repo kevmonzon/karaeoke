@@ -160,3 +160,23 @@ export function linesFromLyricFile(ext, text) {
     default:    return parsePlainText(text);
   }
 }
+
+/**
+ * Pace UNSYNCED lines (parsePlainText) across a song: a small lead-in, then evenly to
+ * the end, so a plain-text sidecar still scrolls. Mutates `lines` in place. Falls back
+ * to ~1 s/line when the duration isn't known yet. Shared by the host (app.js) and the
+ * phone's Lyrics tab (remote.js).
+ */
+export function distributeLineTimes(lines, duration) {
+  const n = lines.length;
+  if (!n) return;
+  const d = duration && isFinite(duration) && duration > 0 ? duration : n;
+  const lead = Math.min(3, d * 0.05);
+  const span = Math.max(0, d - lead);
+  for (let i = 0; i < n; i++) {
+    const t = lead + (i / n) * span;
+    lines[i].start = t;
+    lines[i].end = t;
+    if (lines[i].syllables[0]) lines[i].syllables[0].time = t;
+  }
+}

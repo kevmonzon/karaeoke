@@ -8,16 +8,30 @@
  * authoritative player — see src/js/remote-host.js and §5.x in CLAUDE.md.
  *
  * A ROOM CODE gates entry: scanning the host's QR fills ?room= and auto-connects; otherwise
- * the guest types the code shown on the karaoke screen. Four tabs: Now / Search / Queue / You.
+ * the guest types the code shown on the karaoke screen. Five tabs: Now / Lyrics / Search /
+ * Queue / You.
+ *
+ * LYRICS: the relay is a ~1 Hz control channel — far too coarse to stream a syllable wipe —
+ * so lyric TEXT never crosses it. The phone resolves the now-playing song in its own Catalog,
+ * fetches and parses the file itself (MIDI via pako+parseMidi, AUDIO via its sidecar), and
+ * renders with the host's own LyricsEngine. Only the CLOCK is synced, disciplined by the
+ * server-measured snapshot `age` — see src/js/sync-clock.js.
  */
 import { Catalog } from "./catalog.js";
+import { LyricsEngine, parseMidi, buildLines, makeTickToSeconds } from "./lyrics.js";
+import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
+import { syncClock, clockTime } from "./sync-clock.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
 const PREFS_KEY = "karaeoke.remote.v1";
 
 // --- device-local state (persisted on the phone) ---------------------------
-let prefs = { nickname: "", theme: "dark", text: "m", room: "" };
+let prefs = {
+  nickname: "", theme: "dark", text: "m", room: "", lyricNudgeMs: 0,
+  lyricLines: 4,     // visible lyric lines on THIS phone (the host keeps its own)
+  lyricScale: 1,     // lyric text multiplier on THIS phone (0.7–1.8)
+};
 // --- live host state -------------------------------------------------------
 let catalog = new Catalog();
 let room = "";           // the room code we're connected to ("" until the gate is passed)
@@ -29,6 +43,14 @@ let ytOn = false;        // include YouTube results in search
 let seeking = false;     // true while the user drags the seek slider (don't fight them)
 let pollTimer = null;
 let uiTimer = null;      // smooth-progress ticker (paired with pollTimer; both cleared on leave)
+let activeTab = "now";
+// --- Lyrics tab ------------------------------------------------------------
+let lyricsEngine = null; // built on first visit to the tab (not at boot — most guests never open it)
+let lyricSongId = null;  // id whose lines are loaded into the engine ("" = nothing playing)
+let lyricToken = 0;      // guards against a slow load landing after the song moved on
+let lyricRaf = 0;        // rAF handle — runs ONLY while the tab is visible (phone battery)
+let clock = null;        // sync-clock state (see sync-clock.js)
+const lyricCache = new Map(); // song id -> { lines } | { baked:true }
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -38,6 +60,7 @@ async function boot() {
   applyPrefs();
   wireTabs();
   wireNow();
+  wireLyrics();
   wireSearch();
   wireSettings();
   wireGate();
@@ -45,7 +68,10 @@ async function boot() {
   $("s-origin").textContent = location.origin;
   try { await catalog.load(); } catch (_) { /* songbook optional for control-only use */ }
 
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && room) poll(); });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && room) poll();
+    syncLyricLoop();   // a backgrounded phone must not burn a rAF loop on lyrics
+  });
 
   // A room code from the scanned QR (?room=) wins; else the last room we used. Validate it
   // against a live host room before entering; otherwise show the gate.
@@ -87,6 +113,8 @@ function showGate(msg) {
   clearInterval(pollTimer); clearInterval(uiTimer);
   pollTimer = uiTimer = null;
   state = null; lastRev = -1;
+  clock = null; lyricSongId = null; lyricToken++;   // stop the lyric clock free-running behind the gate
+  if (lyricsEngine) lyricsEngine.clear();
   document.body.classList.remove("connected");
   $("gate-err").textContent = msg || "";
   $("gate-code").focus();
@@ -123,7 +151,25 @@ function applyPrefs() {
   $("s-nick").value = prefs.nickname;
   $("s-theme").value = prefs.theme;
   $("s-text").value = prefs.text;
+  $("s-lines").value = prefs.lyricLines;
+  $("s-lyricsize").value = Math.round(prefs.lyricScale * 100);
+  applyLyricDisplay();
 }
+
+// Push this phone's lyric-display prefs at the surfaces that render them. Device-local by
+// design: a 400 px phone shouldn't inherit the TV's line count, and a guest must not be able
+// to reshape everyone else's lyrics (contrast the ROOM's lyric offset, which is shared).
+function applyLyricDisplay() {
+  prefs.lyricLines = clamp(prefs.lyricLines, 2, 8) | 0;
+  prefs.lyricScale = clamp(prefs.lyricScale, 0.7, 1.8);
+  $("s-lines-val").textContent = prefs.lyricLines;
+  $("s-lyricsize-val").textContent = `${Math.round(prefs.lyricScale * 100)}%`;
+  // The size is CSS (it composes with the Text-size choice); the line count is the engine's.
+  document.documentElement.style.setProperty("--lyric-scale", prefs.lyricScale);
+  if (lyricsEngine) lyricsEngine.setOptions({ lineCount: prefs.lyricLines });
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, +v || lo)); }
 
 // ---------------------------------------------------------------------------
 // Relay I/O (all scoped to the room)
@@ -137,11 +183,13 @@ async function poll() {
     if (d && d.error === "no-room") {
       // The host stopped pushing (tab closed / server restart) — stay on the code and keep
       // polling; the room resumes when the host comes back. renderConn shows "waiting".
-      state = null; renderNow(); renderQueue(); renderSettingsMirror();
+      state = null; clock = null;
+      renderNow(); renderQueue(); renderSettingsMirror(); refreshLyrics();
     } else if (d && d.ok && !d.unchanged) {
       state = d; lastRev = d.rev; stamp = performance.now();
       reconcile(); // drop optimistic overrides the host has now caught up to
-      renderNow(); renderQueue(); renderSettingsMirror();
+      refreshClock();
+      renderNow(); renderQueue(); renderSettingsMirror(); refreshLyrics();
     }
   } catch (_) { /* server unreachable — the status dot reflects it */ }
   renderConn();
@@ -183,12 +231,29 @@ function effNow() {                                    // now-playing, with opti
   if (!base) return null;
   return { ...base, paused: optGet("paused", base.paused) };
 }
-function effPos(now) {                                  // interpolated position (from the optimistic seek base if held)
+// Interpolated position (from the optimistic seek base when one is held). Two corrections
+// the naive "position + time since we got it" misses, both of which the lyric clock rides on:
+//   - hostAge(): the snapshot was already up to a second old when we polled it (our poll phase
+//     is unrelated to the host's push phase); serve.py measures that staleness for us;
+//   - rate: at tempo ≠ 1 the song advances `rate` seconds per wall second.
+function effPos(now) {
+  const rate = playRate();
   const seek = optActive("position");
-  const base = seek ? opt["position"].v : now.position;
+  const base = seek ? opt["position"].v : now.position + (now.paused ? 0 : hostAge() * rate);
   const from = seek ? opt["position"].t : stamp;
-  return now.paused ? base : base + (performance.now() - from) / 1000;
+  return now.paused ? base : base + ((performance.now() - from) / 1000) * rate;
 }
+// Seconds the last polled snapshot had already been sitting on the server. Clamped: a wild
+// value (clock skew / a stale field from an older server) must not fling the position.
+function hostAge() {
+  const a = state && typeof state.age === "number" ? state.age : 0;
+  return a > 0 && a < 5 ? a : 0;
+}
+const playRate = () => +setVal("audio.tempo", 1) || 1;
+// The host bumps `ts` every ~1 s while it's syncing; a stale/absent ts ⇒ its tab is closed,
+// remote is off, or its push loop is throttled. Drives the header chip AND freezes the lyric
+// clock (a clock with no host behind it is a clock that lies).
+const hostLive = () => !!(state && state.ts && (Date.now() / 1000 - state.ts) < 6);
 // After a fresh poll, drop any optimistic override the host has now caught up to (instant handoff).
 function reconcile() {
   const s = (state && state.settings) || {}, now = state && state.now, q = (state && state.queue) || [];
@@ -214,9 +279,13 @@ function wireTabs() {
   }
 }
 function showTab(name) {
+  activeTab = name;
   for (const p of document.querySelectorAll(".panel")) p.classList.toggle("active", p.id === `tab-${name}`);
   for (const b of document.querySelectorAll(".tabbar .tab")) b.classList.toggle("active", b.dataset.tab === name);
   if (name === "search") $("r-search").focus();
+  // Lyrics are loaded + animated ONLY while their tab is on screen (no wasted fetch/rAF).
+  syncLyricLoop();
+  if (name === "lyrics") refreshLyrics();
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +294,7 @@ function showTab(name) {
 function wireNow() {
   $("now-playpause").onclick = () => {
     const now = effNow();
-    if (now) { optSet("paused", !now.paused); cmd({ type: now.paused ? "play" : "pause" }); renderNow(); }
+    if (now) { optSet("paused", !now.paused); cmd({ type: now.paused ? "play" : "pause" }); renderNow(); refreshClock(); }
     else cmd({ type: "play" });   // nothing loaded → host starts the queue; poll will show it
   };
   $("now-next").onclick = () => {
@@ -235,7 +304,7 @@ function wireNow() {
       optSet("now", { id: nx.id, name: nx.name, artist: nx.artist, kind: nx.kind, by: nx.by || "", position: 0, duration: 0, paused: false });
       optSet("position", 0);
       optSet("queue", q.slice(1));
-      renderNow(); renderQueue();
+      renderNow(); renderQueue(); refreshClock(); refreshLyrics();
     }
     cmd({ type: "next" });
   };
@@ -246,7 +315,7 @@ function wireNow() {
     const now = effNow();
     if (now && now.duration > 0) {
       const pos = (seek.value / 1000) * now.duration;
-      optSet("position", pos); uiTick();
+      optSet("position", pos); uiTick(); refreshClock();   // lyrics jump with the slider
       cmd({ type: "seek", position: pos });
     }
   };
@@ -318,7 +387,167 @@ function uiTick() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Search  (local Catalog + optional YouTube)
+// Tab 2 — Lyrics (rendered on the phone; only the clock comes off the relay)
+// ---------------------------------------------------------------------------
+// Why local: the relay is a ~1 Hz half-duplex poll, so streaming a per-syllable wipe
+// through it is hopeless. Instead the phone fetches + parses the song itself — the same
+// parser and the same LyricsEngine the host uses — and drives it from a locally
+// free-running clock that each poll disciplines (sync-clock.js). Result: lyric motion is
+// frame-accurate on the phone, and the only error left is one-way network latency, which
+// the per-device nudge below absorbs.
+
+function wireLyrics() {
+  const n = $("l-nudge");
+  n.value = prefs.lyricNudgeMs || 0;
+  $("l-nudge-val").textContent = `${prefs.lyricNudgeMs || 0} ms`;
+  // Apply live while dragging (you're nudging against what you see), persist on release.
+  n.oninput = () => { prefs.lyricNudgeMs = +n.value || 0; $("l-nudge-val").textContent = `${prefs.lyricNudgeMs} ms`; };
+  n.onchange = () => savePrefs();
+}
+
+// Fold the newest host snapshot into the local clock (called on every fresh poll AND right
+// after an optimistic transport action, so the lyrics react on the same tick as the button).
+function refreshClock() {
+  const now = effNow();
+  if (!now) { clock = null; return; }
+  clock = syncClock(clock, {
+    position: effPos(now),   // already age-corrected and extrapolated to this instant
+    age: 0,
+    paused: now.paused,
+    rate: playRate(),
+    songId: now.id,
+    at: performance.now(),
+  });
+}
+
+// Total lyric shift: the ROOM's offset (mirrored from the host, moves everyone's lyrics)
+// plus this phone's private nudge. Same sign convention as the host (§5.5).
+function lyricOffsetSec() {
+  return ((+setVal("lyrics.offsetMs", 0) || 0) + (prefs.lyricNudgeMs || 0)) / 1000;
+}
+
+const lyricsTabLive = () => activeTab === "lyrics" && !document.hidden;
+
+// Start/stop the render loop to match the tab's visibility.
+function syncLyricLoop() {
+  if (lyricsTabLive()) {
+    if (!lyricRaf) lyricRaf = requestAnimationFrame(lyricFrame);
+  } else if (lyricRaf) {
+    cancelAnimationFrame(lyricRaf);
+    lyricRaf = 0;
+  }
+}
+
+function lyricFrame() {
+  lyricRaf = lyricsTabLive() ? requestAnimationFrame(lyricFrame) : 0;
+  if (!lyricsEngine || !clock) return;
+  // FREEZE rather than free-run once the host has gone quiet (tab closed, server restarted,
+  // or a backgrounded host whose push loop got throttled). Extrapolating against a host that
+  // may not even be playing is worse than holding — and the header already says "waiting for
+  // host". `syncClock` snaps back the moment real snapshots resume.
+  if (!hostLive()) return;
+  lyricsEngine.update(clockTime(clock, performance.now()) + lyricOffsetSec());
+}
+
+// Load (or reload) the lyrics for whatever is playing now. No-ops unless the tab is on
+// screen, so a guest who never opens it never downloads a song file.
+async function refreshLyrics() {
+  if (!lyricsTabLive()) return;
+  if (!lyricsEngine) lyricsEngine = new LyricsEngine($("l-lyrics"), { lineCount: prefs.lyricLines, smooth: true, mergeLines: 1 });
+  const now = effNow();
+  const id = now ? now.id : "";
+  if (id === lyricSongId) return;          // same song → nothing to do (the rAF loop has it)
+  lyricSongId = id;
+  const token = ++lyricToken;
+  lyricsEngine.clear();
+  setLyricHead(now, id ? "loading lyrics…" : "");
+  if (!id) return;
+  try {
+    const r = await lyricsFor(now);
+    if (token !== lyricToken) return;      // the song moved on while we were fetching
+    if (r.baked) { setLyricHead(now, `lyrics are part of the ${now.kind === "youtube" ? "video" : "picture"}`); return; }
+    setLyricHead(now, lyricsEngine.loadLines(r.lines) ? "" : "instrumental — no lyrics in this file");
+  } catch (e) {
+    if (token !== lyricToken) return;
+    lyricSongId = null;                    // let the next poll retry
+    setLyricHead(now, `couldn't load lyrics — ${e.message}`);
+  }
+}
+
+function setLyricHead(now, note) {
+  $("l-title").textContent = now ? (now.name || "(untitled)") : "Nothing playing";
+  $("l-state").textContent = note || (now && now.artist) || "";
+}
+
+// Resolve one song's lyric lines, cached per id (tab-switching mustn't refetch).
+async function lyricsFor(now) {
+  const hit = lyricCache.get(now.id);
+  if (hit) return hit;
+  // VIDEO / YouTube bake their lyrics into the picture — there is nothing to parse.
+  if (now.kind === "video" || now.kind === "youtube") return cacheLyrics(now.id, { baked: true });
+
+  const song = catalog.getById(now.id);
+  if (!song) throw new Error("not in this phone's songbook");
+
+  if (song.kind === "audio") {             // recorded audio + a sidecar lyric file
+    const url = Catalog.lyricsUrl(song);
+    if (!url) return cacheLyrics(now.id, { lines: [] });
+    const ext = (song.lyrics.split(".").pop() || "").toLowerCase();
+    if (ext === "kar" || ext === "mid" || ext === "midi") {
+      return cacheLyrics(now.id, { lines: await linesFromMidiUrl(url) });
+    }
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`sidecar ${res.status}`);
+    const { lines, synced } = linesFromLyricFile(ext, await res.text());
+    if (!synced) distributeLineTimes(lines, now.duration);  // plain .txt → pace it across the song
+    return cacheLyrics(now.id, { lines, unsynced: !synced });
+  }
+  return cacheLyrics(now.id, { lines: await linesFromMidiUrl(Catalog.fileUrl(song)) });
+}
+
+function cacheLyrics(id, entry) {
+  if (lyricCache.size > 40) lyricCache.clear();   // a party's worth; keeps the phone's memory flat
+  // An unsynced .txt was paced against THIS song's duration — safe to cache, same song.
+  lyricCache.set(id, entry);
+  return entry;
+}
+
+// Fetch a MIDI/KAR file and pull its timed lines out (same path the host takes).
+async function linesFromMidiUrl(url) {
+  if (!url) throw new Error("no file");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`song ${res.status}`);
+  const parsed = parseMidi(await toMidiBytes(await res.arrayBuffer()));
+  return buildLines(parsed.lyricEvents, makeTickToSeconds(parsed));
+}
+
+// Song files are raw-DEFLATE compressed (§5.2). pako is ~46 KB, so it is injected LAZILY —
+// a guest who only ever uses the transport never pays for it.
+let pakoLoad = null;
+function ensurePako() {
+  if (window.pako) return Promise.resolve(window.pako);
+  if (!pakoLoad) {
+    pakoLoad = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "./vendor/pako.min.js";
+      s.onload = () => (window.pako ? resolve(window.pako) : reject(new Error("pako missing")));
+      s.onerror = () => { pakoLoad = null; reject(new Error("pako failed to load")); };
+      document.head.appendChild(s);
+    });
+  }
+  return pakoLoad;
+}
+
+async function toMidiBytes(buf) {
+  const u8 = new Uint8Array(buf);
+  if (u8[0] === 0x4d && u8[1] === 0x54 && u8[2] === 0x68 && u8[3] === 0x64) return buf; // "MThd"
+  const pako = await ensurePako();
+  const out = pako.inflateRaw(u8);
+  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+}
+
+// ---------------------------------------------------------------------------
+// Tab 3 — Search  (local Catalog + optional YouTube)
 // ---------------------------------------------------------------------------
 function wireSearch() {
   const input = $("r-search");
@@ -378,7 +607,7 @@ function songRow(s) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 3 — Queue
+// Tab 4 — Queue
 // ---------------------------------------------------------------------------
 function renderQueue() {
   const now = effNow();
@@ -434,12 +663,17 @@ function mkBtn(label, title, onClick, disabled) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 4 — You (nickname, lyric offset, device prefs, connection + room)
+// Tab 5 — You (nickname, lyric offset, device prefs, connection + room)
 // ---------------------------------------------------------------------------
 function wireSettings() {
   $("s-nick").oninput = (e) => { prefs.nickname = e.target.value.slice(0, 24); savePrefs(); };
   $("s-theme").onchange = (e) => { prefs.theme = e.target.value; document.documentElement.dataset.theme = prefs.theme; savePrefs(); };
   $("s-text").onchange = (e) => { prefs.text = e.target.value; document.documentElement.dataset.text = prefs.text; savePrefs(); };
+  // Lyric display (this phone only) — apply live while dragging, persist on release.
+  $("s-lines").oninput = (e) => { prefs.lyricLines = +e.target.value; applyLyricDisplay(); };
+  $("s-lines").onchange = () => savePrefs();
+  $("s-lyricsize").oninput = (e) => { prefs.lyricScale = +e.target.value / 100; applyLyricDisplay(); };
+  $("s-lyricsize").onchange = () => savePrefs();
   $("s-offset").onchange = (e) => {
     const v = +e.target.value;
     optSet("set:lyrics.offsetMs", v); renderSettingsMirror();
@@ -461,11 +695,9 @@ function renderSettingsMirror() {
 // ---------------------------------------------------------------------------
 function renderConn() {
   const reachable = performance.now() - lastOk < 4000;
-  // The host bumps `ts` every ~1s while it's syncing; stale/absent ts ⇒ host tab closed or remote off.
-  const hostLive = state && state.ts && (Date.now() / 1000 - state.ts) < 6;
   let label, cls;
   if (!reachable) { label = "offline"; cls = "bad"; }
-  else if (!hostLive) { label = "waiting for host"; cls = "warn"; }
+  else if (!hostLive()) { label = "waiting for host"; cls = "warn"; }
   else { label = "connected"; cls = "ok"; }
   $("conn").className = `conn ${cls}`;
   $("conn-label").textContent = label;

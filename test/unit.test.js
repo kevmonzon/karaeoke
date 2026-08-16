@@ -17,7 +17,8 @@ import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 import { matchesQuery } from "../src/js/settings-ui.js";
 import { pickRemoteBaseUrl } from "../src/js/remote-host.js";
-import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile } from "../src/js/lyrics-formats.js";
+import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile, distributeLineTimes } from "../src/js/lyrics-formats.js";
+import { syncClock, clockTime, SNAP_SEC } from "../src/js/sync-clock.js";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -588,4 +589,67 @@ test("buildLines: groups KAR syllables into a timed line", () => {
   assert.equal(lines.length, 2);
   assert.deepEqual(lines[0].syllables.map((s) => s.text), ["Hel", "lo"]);
   assert.equal(lines[1].syllables[0].text, "world");
+});
+
+// --- distributeLineTimes (unsynced .txt pacing; shared host ↔ phone) ---------
+test("distributeLineTimes: paces unsynced lines across the duration", () => {
+  const { lines } = parsePlainText("a\nb\nc\nd");
+  distributeLineTimes(lines, 100);
+  const lead = Math.min(3, 100 * 0.05);              // 3 s lead-in
+  assert.equal(lines[0].start, lead);
+  assert.equal(lines[0].syllables[0].time, lead);    // the syllable rides the line
+  assert.ok(lines[3].start > lines[2].start && lines[3].start < 100);
+  const gaps = [1, 2, 3].map((i) => lines[i].start - lines[i - 1].start);
+  assert.ok(Math.max(...gaps) - Math.min(...gaps) < 1e-9); // evenly spread
+});
+
+test("distributeLineTimes: falls back to ~1 s/line without a duration", () => {
+  const { lines } = parsePlainText("a\nb\nc");
+  distributeLineTimes(lines, 0);
+  assert.ok(lines[2].start > lines[0].start && lines[2].start < 3);
+  distributeLineTimes([], 100);                      // empty input must not throw
+});
+
+// --- sync-clock (the phone's lyric clock; see src/js/sync-clock.js) ----------
+test("syncClock: first sample corrects the position by the snapshot's age", () => {
+  const c = syncClock(null, { position: 10, age: 0.4, paused: false, rate: 1, songId: "midi:1", at: 1000 });
+  assert.equal(c.base, 10.4);                        // the snapshot was already 0.4 s stale
+  assert.equal(clockTime(c, 1000), 10.4);
+  assert.ok(Math.abs(clockTime(c, 2000) - 11.4) < 1e-9); // free-runs a second later
+});
+
+test("clockTime: extrapolation follows the playback rate, and freezes when paused", () => {
+  const fast = syncClock(null, { position: 10, age: 0, paused: false, rate: 1.5, songId: "s", at: 0 });
+  assert.ok(Math.abs(clockTime(fast, 2000) - 13) < 1e-9);   // 2 s wall × 1.5 = 3 s of song
+  const held = syncClock(null, { position: 10, age: 5, paused: true, rate: 1, songId: "s", at: 0 });
+  assert.equal(held.base, 10);                              // a paused host doesn't age forward
+  assert.equal(clockTime(held, 99999), 10);
+});
+
+test("syncClock: small drift is eased, not snapped (no visible stutter)", () => {
+  const a = syncClock(null, { position: 10, age: 0, paused: false, rate: 1, songId: "s", at: 0 });
+  // One second later the host reports 10.9 — 100 ms behind our free-running 11.0.
+  const b = syncClock(a, { position: 10.9, age: 0, paused: false, rate: 1, songId: "s", at: 1000 });
+  const now = clockTime(b, 1000);
+  assert.ok(now < 11 && now > 10.9, `eased toward the target, got ${now}`);
+});
+
+test("syncClock: a seek, a song change or a pause flip snaps immediately", () => {
+  const a = syncClock(null, { position: 10, age: 0, paused: false, rate: 1, songId: "s", at: 0 });
+  const seek = syncClock(a, { position: 90, age: 0, paused: false, rate: 1, songId: "s", at: 0 });
+  assert.equal(seek.base, 90);                              // > SNAP_SEC error → snap
+  assert.ok(SNAP_SEC > 0 && SNAP_SEC < 1);
+  const swap = syncClock(a, { position: 0, age: 0, paused: false, rate: 1, songId: "other", at: 0 });
+  assert.equal(swap.base, 0);                               // new song → no easing from the old one
+  const paused = syncClock(a, { position: 10.2, age: 0, paused: true, rate: 1, songId: "s", at: 0 });
+  assert.equal(paused.base, 10.2);
+});
+
+test("syncClock: junk input can't fling the clock", () => {
+  const c = syncClock(null, { position: 5, age: -3, paused: false, rate: 0, songId: "s", at: 0 });
+  assert.equal(c.base, 5);      // negative age ignored
+  assert.equal(c.rate, 1);      // a 0/absent rate falls back to 1×
+  const d = syncClock(null, { position: undefined, age: undefined, paused: false, at: 0 });
+  assert.equal(d.base, 0);
+  assert.equal(clockTime(null, 123), 0);
 });

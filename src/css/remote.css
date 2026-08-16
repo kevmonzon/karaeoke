@@ -15,10 +15,15 @@
   --accent-2: var(--brand-2);
   --line: var(--border);
   --fs: 16px;
+  /* Lyric sizing composes two independent choices: --text-mult tracks the device Text size
+     (so "Large" enlarges the lyrics too, not just the chrome) and --lyric-scale is the
+     Lyrics-size slider on top. Both are per-phone; the host's own lyric layout is separate. */
+  --text-mult: 1;
+  --lyric-scale: 1;
 }
-:root[data-text="s"] { --fs: 14px; }
-:root[data-text="m"] { --fs: 16px; }
-:root[data-text="l"] { --fs: 18px; }
+:root[data-text="s"] { --fs: 14px; --text-mult: .875; }
+:root[data-text="m"] { --fs: 16px; --text-mult: 1; }
+:root[data-text="l"] { --fs: 18px; --text-mult: 1.125; }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body { margin: 0; height: 100%; }
@@ -67,7 +72,63 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .ctl:active { transform: scale(.94); }
 .vol { display: flex; align-items: center; gap: 10px; font-size: 18px; }
 
-/* --- Tab 2: Search --- */
+/* --- Tab 2: Lyrics ---
+   The DOM inside .l-lyrics is built by the host's LyricsEngine (src/js/lyrics.js), so these
+   rules are a phone-sized port of the host's .lyric-view/.lyric-scroll/.line/.syl block in
+   style.css — kept SCOPED under .l-lyrics so nothing else on this page inherits them.
+   --sung / --unsung come from the shared tokens.css. */
+#tab-lyrics.active { display: flex; flex-direction: column; }
+/* A DEFINITE height (not just a min-height) for the space between the header and the tab bar.
+   It has to be a cap as well as a floor: the lyric column's height is line-count × font-size,
+   so a big "Lyric lines" + "Lyrics size" combo would otherwise grow the card until it pushed
+   the sync row under the tab bar. With this fixed and min-height:0 on the card below, the
+   card is a definite box, `.lyric-view { max-height:100% }` finally clamps, and the mask
+   fades whatever doesn't fit instead of overflowing the page. */
+#tab-lyrics { height: calc(100dvh - 172px - env(safe-area-inset-bottom)); }
+.l-head { text-align: center; padding: 0 4px 8px; }
+.l-title { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.l-state { color: var(--muted); font-size: 12px; min-height: 16px; }
+.l-lyrics {
+  --line-width: 100%;
+  flex: 1 1 auto; min-height: 0;   /* min-height:0 lets it shrink below its content (see above) */
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; padding: 10px 8px; overflow: hidden;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+  font-size: calc(clamp(19px, 6.4vw, 30px) * var(--text-mult) * var(--lyric-scale));
+}
+.l-lyrics .lyric-view {
+  position: relative; width: 100%; overflow: hidden;
+  height: calc(var(--vis-lines, 4) * 1.68em); max-height: 100%;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, #000 20%, #000 80%, transparent 100%);
+}
+.l-lyrics .lyric-scroll {
+  position: absolute; left: 0; right: 0; top: 0;
+  display: flex; flex-direction: column; align-items: center; gap: .3em;
+  transition: transform .45s cubic-bezier(.33, 0, .1, 1); will-change: transform;
+}
+.l-lyrics .line {
+  max-width: var(--line-width); line-height: 1.32; font-weight: 700; text-align: center;
+  transition: opacity .35s ease, transform .35s ease;
+}
+.l-lyrics .line.placeholder { color: var(--muted); font-size: .55em; font-weight: 600; }
+.l-lyrics .line.past     { opacity: .30; }
+.l-lyrics .line.upcoming { opacity: .48; }
+.l-lyrics .line.current  { opacity: 1; transform: scale(1.04); }
+/* Syllable wipe: a hard-edged gradient clipped to the glyphs, --fill driven per frame. */
+.l-lyrics .syl {
+  --fill: 0%;
+  background-image: linear-gradient(90deg,
+    var(--sung) 0%, var(--sung) var(--fill),
+    var(--unsung) var(--fill), var(--unsung) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+.l-lyrics .line.past .syl { --fill: 100%; }
+.l-foot { padding-top: 6px; }
+.l-foot .frow { padding: 6px 0; }
+
+/* --- Tab 3: Search --- */
 .search-bar { display: flex; gap: 8px; position: sticky; top: 0; padding-bottom: 10px; background: var(--bg); }
 #r-search { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); outline: none; }
 #r-search:focus { border-color: var(--accent); }
@@ -83,7 +144,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .song .add { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); font-size: 20px; }
 .song .add.done { background: var(--accent-2); border-color: var(--accent-2); color: #04231f; }
 
-/* --- Tab 3: Queue --- */
+/* --- Tab 4: Queue --- */
 .q-now-card { background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .q-now-card .np { font-size: 11px; font-weight: 700; color: var(--accent); letter-spacing: 1px; }
 .q-now-card .t { font-weight: 600; } .q-now-card .a { color: var(--muted); font-size: 13px; }
@@ -98,7 +159,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .qctl button:disabled { opacity: .3; }
 .qctl .rm { color: var(--bad); }
 
-/* --- Tab 4: You / Settings --- */
+/* --- Tab 5: You / Settings --- */
 .set-group { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
 .set-group h3 { margin: 0 0 10px; font-size: 15px; }
 .frow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; }
@@ -113,7 +174,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 /* --- Bottom tab bar --- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   background: var(--panel); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom);
 }
