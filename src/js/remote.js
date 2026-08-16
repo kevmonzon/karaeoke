@@ -408,6 +408,9 @@ function renderNow() {
   $("now-kind").textContent = now ? (KIND_ICON[now.kind] || "🎵") : "🎤";
   $("now-title").textContent = now ? (now.name || "(untitled)") : "Nothing playing";
   $("now-artist").textContent = now ? (now.artist || "") : "";
+  // Live score (host mirrors it only while a song is actually being scored).
+  const sc = $("now-score");
+  if (sc) sc.textContent = now && now.score != null ? `★ ${now.score}` : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
   // reflect the effective key/tempo/volume (optimistic if the guest just changed it, else the host mirror)
   const vol = Math.round(setVal("audio.volume", 0.9) * 100);

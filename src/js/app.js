@@ -606,6 +606,9 @@ function remoteSnapshot() {
     position: (media && media.currentTime) || 0,
     duration: (media && media.duration) || 0,
     paused: media ? media.paused : true,
+    // Live score, so the room can watch the number climb on their own phones. Null unless
+    // the song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
+    score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
   } : null;
   const q = queue.map((s, i) => ({
     id: s.id, name: s.name || "", artist: s.artistName || "",

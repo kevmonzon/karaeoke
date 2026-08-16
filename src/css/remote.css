@@ -264,3 +264,10 @@ body.kiosk #tab-lyrics {
 /* The song title and the per-device sync nudge both stay: a monitor that reads late is worse
    than no monitor, and knowing what you're about to sing is the point. */
 body.kiosk .l-lyrics { font-size: calc(clamp(24px, 5vw, 56px) * var(--text-mult) * var(--lyric-scale)); }
+
+/* Live score mirrored from the host (blank unless the song is actually being scored). */
+.now-score {
+  margin-top: 6px; font-weight: 800; color: var(--accent);
+  font-variant-numeric: tabular-nums; font-size: 1.25em;
+}
+.now-score:empty { display: none; }

@@ -1019,3 +1019,21 @@ body.booting .boot-bar { opacity: 1; }
 }
 /* The play triangle is a filled shape; keep its own fill and drop the outline weight. */
 .icon [fill="currentColor"] { stroke-width: 1; }
+
+/* ---------------------------------------------------------------------------
+   Per-kind tint on the song rows. The library holds four kinds of song and the
+   only signal was an emoji glyph — useless from a sofa, and a COLOUR tint can't
+   help either, because the OS renders 🎤🎞️🌐🎵 as colour emoji regardless of
+   `color`. So the tint goes BEHIND the glyph as a chip, which reads at distance
+   and works whatever the emoji font does.
+   --------------------------------------------------------------------------- */
+.song .kind, .queue-list .kind {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+.song .kind.kar, .queue-list .kind.kar { background: color-mix(in srgb, var(--brand-2) 20%, transparent); }
+.song .kind.vid, .queue-list .kind.vid { background: color-mix(in srgb, var(--brand) 20%, transparent); }
+.song .kind.aud, .queue-list .kind.aud { background: color-mix(in srgb, var(--gold) 22%, transparent); }
+.song .kind.yt,  .queue-list .kind.yt  { background: color-mix(in srgb, var(--bad) 18%, transparent); }
