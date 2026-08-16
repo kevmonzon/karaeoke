@@ -292,14 +292,20 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 ### 📱 Remote control (phones)
 Turn on **⚙ → Sources → Remote** and a **QR code + room code** appear on the queue panel. Guests
 scan the QR with their phones (same network) to open **`/remote`**. Scanning auto-connects; anyone
-typing the URL by hand enters the **room code** shown on screen. Four tabs:
+typing the URL by hand enters the **room code** shown on screen. Five tabs:
 - **Now** — the current song with play/pause, next, seek, **key / tempo / volume** (tempo is a −/＋
   stepper), and a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from their phone
   (mirrors the host's 🎵 button).
+- **🎤 Lyrics** — the current song's lyrics, scrolling and wiping syllable-by-syllable **on your own
+  phone**, in time with the room. Handy when you're away from the TV, or reading ahead. Works for MIDI
+  and audio+lyrics songs; video / YouTube songs have their lyrics baked into the picture, so the tab
+  says so. If your phone reads a touch early or late, nudge it with the **sync** slider at the bottom —
+  it only moves *your* screen (the **You** tab's lyric offset moves everyone's).
 - **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
 - **Queue** — the live queue with an "added by" name, plus remove / reorder.
-- **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size, and
-  the connection status + room code.
+- **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size,
+  **how the lyrics look on your phone** (lyric lines 2–8 and lyrics size 70–180% — yours alone; the
+  karaoke screen keeps its own layout), and the connection status + room code.
 
 The host stays the real player — phones send requests that the host applies, so the whole room can
 build the queue together. When a song was queued from a phone, the host shows **who's singing** above
@@ -438,7 +444,8 @@ karaoke-clone/
     ├── css/style.css · css/remote.css
     ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
     ├── js/                   ← app modules (app, catalog, audio, video, youtube, audiofile, lyrics,
-    │                            lyrics-formats, mic, melody, remote-host, remote [phone], asset-cache, …)
+    │                            lyrics-formats, mic, melody, remote-host, remote [phone], sync-clock,
+    │                            asset-cache, …)
     └── vendor/               ← SpessaSynth engine + pako + qrcode (committed)
 ```
 

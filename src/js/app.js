@@ -17,7 +17,7 @@ import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
 import { AudioFileEngine } from "./audiofile.js";
 import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
-import { linesFromLyricFile } from "./lyrics-formats.js";
+import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
 import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
@@ -950,10 +950,17 @@ async function playNow(song, by = "") {
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
-  if (song.kind === "youtube") return playYoutube(song);
-  if (song.kind === "video") return playVideo(song);
-  if (song.kind === "audio") return playAudio(song);
-  return playMidi(song);
+  try {
+    if (song.kind === "youtube") return await playYoutube(song);
+    if (song.kind === "video") return await playVideo(song);
+    if (song.kind === "audio") return await playAudio(song);
+    return await playMidi(song);
+  } finally {
+    // A song change is the one transition phones can't extrapolate through (their local
+    // lyric clock has to re-base and their Lyrics tab refetches), so push the moment the
+    // new song is loaded instead of waiting for the next ~1 s host tick.
+    if (remoteHost) remoteHost.push();
+  }
 }
 
 // Clear the MIDI-only stage surfaces (lyrics / guide / key / title card) without
@@ -1084,21 +1091,8 @@ async function loadAudioLyrics(song) {
   }
 }
 
-// Spread unsynced lyric lines evenly across the song (a small lead-in, then paced to
-// the end) so a plain-text sidecar still scrolls. Falls back to ~1s/line if no duration.
-function distributeLineTimes(lines, duration) {
-  const n = lines.length;
-  if (!n) return;
-  const d = duration && isFinite(duration) && duration > 0 ? duration : n;
-  const lead = Math.min(3, d * 0.05);
-  const span = Math.max(0, d - lead);
-  for (let i = 0; i < n; i++) {
-    const t = lead + (i / n) * span;
-    lines[i].start = t;
-    lines[i].end = t;
-    if (lines[i].syllables[0]) lines[i].syllables[0].time = t;
-  }
-}
+// (distributeLineTimes — unsynced-line pacing — now lives in lyrics-formats.js, shared
+//  with the phone remote's Lyrics tab.)
 
 // YOUTUBE song (BYOC): no synth/soundfont, no lyric parsing — the official YouTube IFrame
 // player fills the stage. Mirrors playVideo. Offset/key/guide/auto-tune don't apply (the

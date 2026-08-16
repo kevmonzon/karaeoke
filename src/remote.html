@@ -60,7 +60,25 @@
       </div>
     </section>
 
-    <!-- Tab 2: Search -->
+    <!-- Tab 2: Lyrics — rendered LOCALLY on the phone (the relay only carries the clock).
+         The page fetches + parses the song itself, so the ~1 Hz relay never has to stream
+         lyric text; see src/js/sync-clock.js and §5.21 in CLAUDE.md. -->
+    <section id="tab-lyrics" class="panel">
+      <div class="l-head">
+        <div id="l-title" class="l-title">Nothing playing</div>
+        <div id="l-state" class="l-state"></div>
+      </div>
+      <div id="l-lyrics" class="l-lyrics"></div>
+      <div class="l-foot">
+        <label class="frow"><span>Sync nudge <em id="l-nudge-val">0 ms</em></span>
+          <input id="l-nudge" type="range" min="-1000" max="1000" step="25" value="0"
+                 aria-label="Lyric sync nudge for this phone" /></label>
+        <div class="hint">Shifts lyrics on <strong>this phone only</strong> — the room's
+          offset (You tab) moves everyone's.</div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Search -->
     <section id="tab-search" class="panel">
       <div class="search-bar">
         <input id="r-search" type="search" inputmode="search" autocomplete="off"
@@ -71,14 +89,14 @@
       <p id="r-search-hint" class="empty">Type to search the songbook.</p>
     </section>
 
-    <!-- Tab 3: Queue -->
+    <!-- Tab 4: Queue -->
     <section id="tab-queue" class="panel">
       <div id="q-now" class="q-now"></div>
       <ul id="r-queue" class="queue-list"></ul>
       <p id="q-empty" class="empty">Queue is empty — add songs from Search.</p>
     </section>
 
-    <!-- Tab 4: Settings / You -->
+    <!-- Tab 5: Settings / You -->
     <section id="tab-settings" class="panel">
       <div class="set-group">
         <h3>You</h3>
@@ -100,6 +118,13 @@
           <select id="s-theme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
         <label class="frow"><span>Text size</span>
           <select id="s-text"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
+        <label class="frow"><span>Lyric lines <em id="s-lines-val">4</em></span>
+          <input id="s-lines" type="range" min="2" max="8" step="1" value="4"
+                 aria-label="Lyric lines shown on this phone" /></label>
+        <label class="frow"><span>Lyrics size <em id="s-lyricsize-val">100%</em></span>
+          <input id="s-lyricsize" type="range" min="70" max="180" step="5" value="100"
+                 aria-label="Lyrics size on this phone" /></label>
+        <div class="hint">Only this phone — the karaoke screen keeps its own lyric layout.</div>
       </div>
 
       <div class="set-group">
@@ -115,6 +140,7 @@
 
   <nav class="tabbar">
     <button data-tab="now" class="tab active"><span class="ti">▶</span><span>Now</span></button>
+    <button data-tab="lyrics" class="tab"><span class="ti">🎤</span><span>Lyrics</span></button>
     <button data-tab="search" class="tab"><span class="ti">🔎</span><span>Search</span></button>
     <button data-tab="queue" class="tab"><span class="ti">≣</span><span>Queue</span></button>
     <button data-tab="settings" class="tab"><span class="ti">⚙</span><span>You</span></button>
