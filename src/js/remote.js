@@ -637,11 +637,15 @@ function queueRow(s, i, n) {
   if (s.by) { const b = document.createElement("span"); b.className = "by"; b.textContent = ` · ${s.by}`; a.appendChild(b); }
   meta.append(t, a);
   const ctr = document.createElement("div"); ctr.className = "qctl";
-  const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1 }); }, i === 0);
-  const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1 }); }, i === n - 1);
+  // Every queue mutation carries the song's stable id alongside the index: this phone's view
+  // can be up to ~2 s behind the host, so by the time the command lands the index may point at
+  // a different song (auto-advance, or another guest acting first). The host verifies the id
+  // and ignores the command rather than mutating the wrong row.
+  const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1, id: s.id }); }, i === 0);
+  const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1, id: s.id }); }, i === n - 1);
   const rm = mkBtn("✕", "Remove", () => {
     optSet("queue", effQueue().filter((_, idx) => idx !== i)); renderQueue();
-    cmd({ type: "remove", index: i });
+    cmd({ type: "remove", index: i, id: s.id });
   });
   rm.classList.add("rm");
   ctr.append(up, dn, rm);

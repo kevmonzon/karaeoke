@@ -79,7 +79,18 @@ export class AudioEngine {
    */
   async init(onProgress = () => {}, soundfontUrl = SOUNDFONT_URL) {
     if (this.ready) return;
+    // `ready` only flips at the END of a multi-second init (32 MB soundfont), so a second
+    // caller arriving mid-flight used to pass the guard and build a SECOND WorkletSynthesizer,
+    // clobbering this.synth and the channel meters. Concurrent callers share one promise; a
+    // rejected init is forgotten so a later attempt can retry.
+    if (!this._initPromise) {
+      this._initPromise = this._doInit(onProgress, soundfontUrl)
+        .catch((e) => { this._initPromise = null; throw e; });
+    }
+    return this._initPromise;
+  }
 
+  async _doInit(onProgress, soundfontUrl) {
     onProgress("Starting audio engine…");
     await this.ensureContext();
     await this.ctx.audioWorklet.addModule(PROCESSOR_URL);

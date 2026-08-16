@@ -395,6 +395,33 @@ Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi.
 > localhost for mic access) — playback, lyrics, and the pitch guide still work. On Windows,
 > allow Python through the firewall on **Private** networks.
 
+### 🎮 Steam Deck (portable, no-install)
+
+Run the whole thing from a **USB stick / SD card** — nothing is installed on the Deck (SteamOS
+already ships Python 3, and the synth engine is vendored). Great as a party rig: the Deck drives the
+TV and hosts a Wi-Fi hotspot; guests connect and control it from their phones.
+
+1. **Bake a portable copy** (on a machine with internet): run `python tools/serve.py` once so `data/`
+   holds `soundfont.sf2` + the catalogs + your songs, then copy the whole project folder to the
+   drive. Format the drive **ext4** (preserves the executable bit); on exFAT/FAT, launch with
+   `bash tools/serve-lan.sh` instead of `./`.
+2. **On the Deck** (Desktop Mode): start a Wi-Fi **hotspot** yourself (KDE network menu), plug into
+   the TV, then run:
+   ```bash
+   ./tools/serve-lan.sh
+   ```
+   On SteamOS this auto-enters **kiosk mode**: it serves **offline** (`--no-setup`) and opens the
+   Deck's browser **fullscreen** at `http://localhost:8080/`. It uses a **browser you already have**
+   (Flatpak Chromium / Chrome / Brave / Firefox — nothing is installed); force one with
+   `KARAEOKE_BROWSER=org.mozilla.firefox ./tools/serve-lan.sh`. `Alt+F4` exits the browser, `Ctrl+C`
+   in the terminal stops the server.
+3. **Guests** join the Deck's hotspot and open the printed `http://<deck-ip>:8080/` (typically
+   `http://10.42.0.1:8080/`), or scan the phone-remote QR — see below.
+
+> The Deck's **own** browser opens `localhost`, so the host mic still works there; guests just
+> queue/control (no mic on remote devices, as above). Force kiosk mode on any Linux box with
+> `./tools/serve-lan.sh --kiosk`.
+
 ### 📱 Phone remote control
 
 Once you're serving on the LAN, turn on **⚙ → Sources → Remote** on the host. A **QR code + a room

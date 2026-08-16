@@ -25,7 +25,7 @@ import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melod
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
-import { createRemoteHost, pickRemoteBaseUrl } from "./remote-host.js";
+import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 
 const $ = (id) => document.getElementById(id);
@@ -82,12 +82,17 @@ async function boot() {
   youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
   youtube.onEnded = () => { if (media === youtube) endOfSong(); };   // unload on end → no suggested-videos screen
   youtube.onError = (code) => onYoutubeError(code);                  // embed-blocked/unavailable → skip + remember
+  video.onError = (why) => onMediaError("video", why);               // missing/corrupt file → skip, don't hang
+  audioFile.onError = (why) => onMediaError("audio", why);
 
   lib = createLibraryUI({
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: toggleFavorite, isFavorite,
   });
-  settingsUI = createSettingsUI({ settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData });
+  settingsUI = createSettingsUI({
+    settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
+    onExportData: exportAppData, onImportData: importAppData,
+  });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
@@ -425,6 +430,9 @@ function enqueue(song, by = "") {
   if (!current) advanceQueue();
 }
 function removeFromQueue(i) {
+  // Bounds-check like reorderQueue does: splice(-1, 1) counts from the END, so an out-of-range
+  // index would silently delete the wrong song rather than doing nothing.
+  if (!Number.isInteger(i) || i < 0 || i >= queue.length) return;
   queue.splice(i, 1);
   queueBy.splice(i, 1);
   lib.renderQueue(queue, queueBy);
@@ -463,11 +471,10 @@ function advanceQueue() {
 // ---------------------------------------------------------------------------
 // The host-settings subset mirrored to phones AND the allowlist a guest may change.
 // A guest `setting` command with any other path is ignored — never settings.set() an
-// arbitrary path off the network.
-const REMOTE_SETTABLE = new Set([
-  "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume",
-  "guide.vocal.mute",
-]);
+// arbitrary path off the network. The paths AND their legal value ranges live together
+// in remote-host.js (REMOTE_SETTING_RANGES): allowlisting the path is not enough, since
+// the phone UI clamps client-side and a raw POST doesn't — see clampRemoteSetting.
+const REMOTE_SETTABLE = new Set(REMOTE_SETTABLE_PATHS);
 
 // Room code — OWNED BY THIS HOST BROWSER (generated once, kept in localStorage). Each host has
 // its own code; guests reach THIS host's room by it (baked into the QR). The server keys its
@@ -595,6 +602,16 @@ function remoteResolveSong(c) {
   return null;
 }
 
+// A guest computes a queue index from a snapshot that can already be up to ~2 s stale, so a
+// bare index may point at a DIFFERENT song by the time the command lands (the song auto-
+// advanced, or another guest removed one first). When the command carries the song's stable
+// id we require it to match, so the worst case becomes "nothing happened" instead of "the
+// wrong song vanished". Commands without an id (older phone build) still apply by index.
+function queueItemMatches(index, id) {
+  if (!Number.isInteger(index) || index < 0 || index >= queue.length) return false;
+  return !id || queue[index].id === id;
+}
+
 // Apply one guest command (already validated server-side to a known type).
 function applyRemoteCommand(cmd) {
   switch (cmd.type) {
@@ -604,28 +621,32 @@ function applyRemoteCommand(cmd) {
       break;
     }
     case "remove":
-      if (Number.isInteger(cmd.index)) removeFromQueue(cmd.index);
+      if (queueItemMatches(cmd.index, cmd.id)) removeFromQueue(cmd.index);
       break;
     case "reorder":
-      if (Number.isInteger(cmd.from) && Number.isInteger(cmd.to)) reorderQueue(cmd.from, cmd.to);
+      if (Number.isInteger(cmd.to) && queueItemMatches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
       break;
     case "play":  remotePlay();  break;
     case "pause": remotePause(); break;
-    case "next":  advanceQueue(); break;
+    case "next":  skipCurrent(); break;
     case "seek":
-      if (current && media.duration > 0 && typeof cmd.position === "number")
+      if (current && media.duration > 0 && Number.isFinite(cmd.position))
         media.seek(Math.max(0, Math.min(media.duration, cmd.position)));
       break;
     case "volume":
-      if (typeof cmd.value === "number") setRemoteVolume(cmd.value);
+      if (Number.isFinite(cmd.value)) setRemoteVolume(cmd.value);
       break;
-    case "setting":
-      if (typeof cmd.path === "string" && REMOTE_SETTABLE.has(cmd.path)) {
-        settings.set(cmd.path, cmd.value);   // → onSettingChanged fans it out
-        settingsUI.syncSettingsUI();          // refresh the ⚙ panel controls
-        syncTransportLabels();                // …and the bottom key/tempo/volume labels
-      }
+    case "setting": {
+      // Two gates, not one: the PATH must be allowlisted and the VALUE must be in range.
+      // A raw POST is unclamped, and audio.volume goes straight to a GainNode.
+      if (typeof cmd.path !== "string" || !REMOTE_SETTABLE.has(cmd.path)) break;
+      const v = clampRemoteSetting(cmd.path, cmd.value);
+      if (v === undefined) break;             // wrong type / NaN / unknown path → ignore
+      settings.set(cmd.path, v);              // → onSettingChanged fans it out
+      settingsUI.syncSettingsUI();            // refresh the ⚙ panel controls
+      syncTransportLabels();                  // …and the bottom key/tempo/volume labels
       break;
+    }
   }
 }
 
@@ -674,6 +695,46 @@ async function eraseAllData() {
   } catch (_) {}
   await purgeAllCaches();
   location.reload();
+}
+
+// Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
+// layout, the remote room code, saved-YouTube pointers) lives ONLY in this browser's
+// localStorage — a reinstall or a stray "clear site data" takes all of it, and the only
+// control the panel offered for that state was the erase button. Export writes one JSON
+// file; import writes karaeoke.* keys back and reloads so every module re-reads its store.
+const DATA_EXPORT_VERSION = 1;
+
+function exportAppData() {
+  const data = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("karaeoke.")) data[k] = localStorage.getItem(k);
+    }
+  } catch (_) {}
+  const payload = {
+    app: "ka-rae-oke", version: DATA_EXPORT_VERSION,
+    exportedAt: new Date().toISOString(), data,
+  };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `karaeoke-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return Object.keys(data).length;
+}
+
+/** Restore an exported file. Only karaeoke.* string keys are written, so a foreign or
+ *  hand-edited file can't reach any other state this origin keeps. Caller reloads. */
+async function importAppData(file) {
+  const payload = JSON.parse(await file.text());
+  const data = payload && payload.data;
+  if (!data || typeof data !== "object") throw new Error("not a Ka-Rae-oke backup");
+  const keys = Object.keys(data).filter((k) => k.startsWith("karaeoke.") && typeof data[k] === "string");
+  if (!keys.length) throw new Error("no Ka-Rae-oke data in that file");
+  for (const k of keys) localStorage.setItem(k, data[k]);
+  return keys.length;
 }
 
 // Resolve a stored reference to a song. New format = stable id ("midi:5"/"video:5");
@@ -852,7 +913,7 @@ function onYoutubeError(code) {
   setStatus(`"${current.name}" ${why} — skipping…`);
   const next = nextYoutubeInList(current);
   if (next) return playNow(next);      // walk to the next result the user was browsing
-  if (queue.length) return advanceQueue();
+  if (queue.length) return skipCurrent();  // same single "move on now" path as ⏭ / a failure
   youtube.unload();                    // nothing to fall back to → clear the stage
   document.body.classList.remove("youtube-mode");
   clearStage();
@@ -944,17 +1005,33 @@ async function ensureEngine() {
   }
 }
 
+// Every play* function awaits a fetch (and, on the first song, the ~32 MB soundfont) BEFORE
+// it writes the shared player state. Without a generation token the chain that resolves LAST
+// wins even if it was requested first — so a double-click, or picking a second song during a
+// cold start, can leave the title, lyrics and audio describing different songs. Each call
+// takes a ticket; anything stale bails out at its next checkpoint instead of writing.
+let playGen = 0;
+const stalePlay = (gen) => gen !== playGen;
+
 // Dispatch on the song's kind: VIDEO songs take the (synth-free) video path; MIDI
 // songs take the existing SpessaSynth path.
 async function playNow(song, by = "") {
+  const gen = ++playGen;
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
   try {
-    if (song.kind === "youtube") return await playYoutube(song);
-    if (song.kind === "video") return await playVideo(song);
-    if (song.kind === "audio") return await playAudio(song);
-    return await playMidi(song);
+    if (song.kind === "youtube") return await playYoutube(song, gen);
+    if (song.kind === "video") return await playVideo(song, gen);
+    if (song.kind === "audio") return await playAudio(song, gen);
+    return await playMidi(song, gen);
+  } catch (e) {
+    // A play* that throws (corrupt file, engine refusal) must not strand the stage.
+    console.error("Playback failed:", e);
+    if (!stalePlay(gen)) {
+      setStatus(`Could not play "${song.name || song.code || "that song"}" — skipping.`);
+      onSongFailed();
+    }
   } finally {
     // A song change is the one transition phones can't extrapolate through (their local
     // lyric clock has to re-base and their Lyrics tab refetches), so push the moment the
@@ -981,7 +1058,7 @@ function hideMidiSurfaces() {
 
 // VIDEO song: no synth/soundfont, no lyric parsing. The picture fills the stage; the
 // offset feature moves the audio (handled inside VideoEngine).
-async function playVideo(song) {
+async function playVideo(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   youtube.unload();         // stop any YouTube video that was playing
   audioFile.unload();       // …and any audio song
@@ -1008,6 +1085,7 @@ async function playVideo(song) {
   video.load(url);
   setStatus(`Now playing: ${song.code} — ${song.name}`);
   await video.play();
+  if (stalePlay(gen)) return;  // a newer song took over while the picture was loading
   setPlayIcon();
 }
 
@@ -1030,7 +1108,7 @@ function hideNoteSurfaces() {
 // exceed 100%. KEEPS the scrolling lyric surface (loaded from the sidecar); hides the
 // note-derived surfaces (guide/chords/mixer) which need MIDI data. Offset moves the
 // LYRIC time (handled in the rAF loop), not the audio.
-async function playAudio(song) {
+async function playAudio(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   video.unload();           // …and any video
   youtube.unload();         // …and any YouTube video
@@ -1054,10 +1132,13 @@ async function playAudio(song) {
   audioFile.setTempo(settings.get("audio.tempo"));
   audioFile.setKey(settings.get("audio.key"));
   await audioFile.load(url);   // fetch the audio into an in-memory blob (reliable load/seek)
+  if (stalePlay(gen)) return;  // a newer song was picked while this one was downloading
   await loadAudioLyrics(song); // fetch + parse the sidecar into the lyric surface
+  if (stalePlay(gen)) return;
   showTitleCard(song);
   setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
   await audioFile.play();
+  if (stalePlay(gen)) return;
   setPlayIcon();
 }
 
@@ -1097,7 +1178,7 @@ async function loadAudioLyrics(song) {
 // YOUTUBE song (BYOC): no synth/soundfont, no lyric parsing — the official YouTube IFrame
 // player fills the stage. Mirrors playVideo. Offset/key/guide/auto-tune don't apply (the
 // lyrics are baked into the video), so the MIDI-only surfaces stay hidden.
-async function playYoutube(song) {
+async function playYoutube(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   video.unload();           // …and any video
   audioFile.unload();       // …and any audio song
@@ -1122,12 +1203,14 @@ async function playYoutube(song) {
   youtube.load(song.videoId);
   setStatus(`Now playing: ${song.name}`);
   await youtube.play();
+  if (stalePlay(gen)) return;
   setPlayIcon();
 }
 
 // MIDI song: the original SpessaSynth path.
-async function playMidi(song) {
+async function playMidi(song, gen = playGen) {
   if (!(await ensureEngine())) return;
+  if (stalePlay(gen)) return;  // engine start is slow (32 MB soundfont) — a newer pick wins
   video.unload();          // stop any video that was playing
   youtube.unload();        // …and any YouTube video
   audioFile.unload();      // …and any audio song
@@ -1139,7 +1222,6 @@ async function playMidi(song) {
   userPaused = false;
   autoAdvancing = false;
   lib.setNowPlaying(song);
-  pushRecent(song);
   setStatus(`Loading: ${song.code} — ${song.name}`);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
@@ -1149,31 +1231,60 @@ async function playMidi(song) {
   let buf;
   try {
     const raw = await cachedArrayBuffer(url); // cache-first via Cache Storage
+    if (stalePlay(gen)) return;
     buf = toMidiBytes(raw); // song files may be raw-deflate compressed
   } catch (e) {
-    setStatus(`Could not read file for #${song.code}: ${e.message}`);
+    if (stalePlay(gen)) return;
     console.error(e);
+    setStatus(`Could not read file for #${song.code}: ${e.message}`);
+    onSongFailed();  // don't leave `current` pointing at a song that never loaded
     return;
   }
 
+  let parsed = null;
   try {
-    const parsed = parseMidi(buf.slice(0));
+    parsed = parseMidi(buf.slice(0));
     lastParsed = parsed;
     const hasLyrics = lyrics.load(parsed);
     $("lyric-badge").textContent = hasLyrics ? "" : "instrumental";
-    loadMelody(parsed);
-    chordEngine.load(parsed);                            // detect chords (once, on load)
-    chordEngine.setTranspose(settings.get("audio.key")); // reflect the current Key transpose
-    midiMixer.load(parsed); // reset the channel mixer for the new song
   } catch (e) {
     console.warn("Parse failed:", e);
-    lyrics.lines = []; lyrics.hasLyrics = false; lyrics.reset();
-    chordEngine.clear();
+    lyrics.clear();  // clear() empties the rendered lines; reset() only scrolls them
+    $("lyric-badge").textContent = "no lyrics";
     lastParsed = null;
+  }
+
+  // Derived surfaces in their OWN try: a melody/chord/mixer failure must not roll back the
+  // lyrics that already loaded successfully (they used to share one catch, so a late throw
+  // discarded a good parse and left the previous song's lines on screen).
+  if (parsed) {
+    try {
+      loadMelody(parsed);
+      chordEngine.load(parsed);                            // detect chords (once, on load)
+      chordEngine.setTranspose(settings.get("audio.key")); // reflect the current Key transpose
+      midiMixer.load(parsed); // reset the channel mixer for the new song
+    } catch (e) {
+      console.warn("Chord/melody/mixer setup failed:", e);
+      chordEngine.clear();
+      midiMixer.clear();
+    }
+  } else {
+    chordEngine.clear();
     midiMixer.clear();
   }
 
-  audio.loadSong(buf);
+  // A file can pass the MThd check and still be rejected by the sequencer; without this the
+  // throw escaped playNow entirely, leaving "Now playing" on screen over silence.
+  try {
+    audio.loadSong(buf);
+  } catch (e) {
+    console.error("Sequencer rejected the file:", e);
+    setStatus(`#${song.code} looks corrupt — skipping.`);
+    onSongFailed();
+    return;
+  }
+
+  pushRecent(song);    // only once the song has actually loaded — a failed load isn't "played"
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
   setStatus(`Now playing: ${song.code} — ${song.name}`);
 
@@ -1182,6 +1293,7 @@ async function playMidi(song) {
   const tcSecs = settings.get("titleCard.seconds") || 0;
   const delayMs = tcSecs > 1 ? (tcSecs - 1) * 1000 : 0;
   const startPlayback = async () => {
+    if (stalePlay(gen)) return;   // title-card hold outlived by a newer song pick
     await audio.play();
     setPlayIcon();
     setTimeout(applyGuideVocal, 350); // re-apply once the new song's channels are live
@@ -1199,7 +1311,7 @@ async function playMidi(song) {
 // ---------------------------------------------------------------------------
 // rAF loop — lyric sync, pitch guide + scoring, auto-tune, seek bar, end-of-song
 // ---------------------------------------------------------------------------
-let endGuard = false;
+let endGuard = false, endTimer = null;
 // End the current song: clear the stage (which also unloads the video / YouTube player, so
 // YouTube never gets to paint its suggested-videos end screen) then advance the queue. Guarded
 // so the rAF end-detection and YouTube's ENDED event can't both fire it.
@@ -1207,7 +1319,45 @@ function endOfSong() {
   if (endGuard) return;
   endGuard = true;
   clearStage();
-  setTimeout(() => { endGuard = false; advanceQueue(); }, 700);
+  endTimer = setTimeout(() => { endGuard = false; endTimer = null; advanceQueue(); }, 700);
+}
+
+// The ONE path for "move on to the next song now" — the ⏭ button, the phone's Next, and any
+// failure. endGuard only ever protected endOfSong from itself, so a Next click inside the
+// 700 ms hand-off window used to land a SECOND advanceQueue() and skip an extra song.
+function skipCurrent() {
+  clearTimeout(endTimer);
+  endTimer = null;
+  endGuard = false;
+  advanceQueue();
+}
+
+// A song that cannot play must not strand the stage: drop it and move on if anything is queued.
+function onSongFailed() {
+  current = null;
+  clearStage();
+  setPlayIcon();
+  if (queue.length) skipCurrent();
+}
+
+// A missing or unreadable local file used to hang the night: the media element reports an
+// error, duration stays 0, and the end-of-song check is gated on duration > 0 — so the stage
+// sat blank and silent forever and the queue never advanced.
+function onMediaError(kind, why) {
+  if (!current) return;
+  console.warn(`${kind} playback failed:`, why);
+  setStatus(`Could not play "${current.name || current.code || "that song"}" — file missing or unreadable. Skipping.`);
+  onSongFailed();
+}
+
+// True when the active engine has reached the end of the current song. MIDI is special: the
+// sequencer stalls with `paused` false and the clock plateaued just short of duration, so it
+// reports via `ended`; video/audio reach duration cleanly; YouTube fires its own onEnded.
+function songHasEnded() {
+  if (!current || !media || media.paused) return false;
+  if (media === audio) return !!audio.ended;
+  const d = media.duration;
+  return d > 0 && media.currentTime >= d - 0.15;
 }
 function tick() {
   setPlayIcon(); // keep the transport button mirroring the real play/pause state every frame
@@ -1288,13 +1438,11 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
-      // MIDI: the sequencer stalls at the end (paused stays false, clock plateaus
-      // short of duration) so rely on its `ended` flag; video reaches duration
-      // cleanly; YouTube ends via its own onEnded callback. The `!media.paused`
-      // guard is essential: seq.play() clears `isFinished`, so an unpaused song can
-      // never show a stale end flag left over from the previous song's title-card hold.
-      if (!media.paused && ((isMidi && audio.ended) || t >= d - 0.15)) endOfSong();
     }
+    // End-of-song detection lives in songHasEnded() so the hidden-tab watchdog below can
+    // run the SAME predicate. Deliberately outside the `d > 0` block: a MIDI song reports
+    // through `ended`, and gating on duration hid that case when duration never arrived.
+    if (songHasEnded()) endOfSong();
   } else {
     if (mic.autotuneActive) mic.clearAutotune(); // release correction when nothing is playing
     // Nothing is playing and it wasn't a deliberate pause → play the next queued song.
@@ -1382,8 +1530,11 @@ function wireUI() {
     document.addEventListener(ev, () => { if (autoHideActive()) showControls(); }, { passive: true }));
   document.addEventListener("keydown", (e) => {
     // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
+    // The settings drawer is modal and owns Escape while it's open (settings-ui.js closes it),
+    // so one press must not also drop you out of focus mode.
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
-    if (e.key === "Escape" && !typing && document.body.classList.contains("focus-mode")) setFocus(false);
+    const modalOpen = document.body.classList.contains("settings-open");
+    if (e.key === "Escape" && !typing && !modalOpen && document.body.classList.contains("focus-mode")) setFocus(false);
   });
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
@@ -1409,7 +1560,17 @@ function wireUI() {
     userPaused = media.paused; // pausing here is a deliberate hold (no auto-advance)
     setPlayIcon();
   };
-  $("btn-next").onclick = () => advanceQueue();
+  $("btn-next").onclick = () => skipCurrent();
+
+  // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
+  // background tab while the AudioContext keeps playing — so a song that ended while the host
+  // was alt-tabbed never advanced the queue, which is the whole point of having one. A plain
+  // interval keeps firing (a page playing audio is exempt from Chrome's intensive throttling),
+  // and visibilitychange catches up the instant the tab comes back.
+  setInterval(() => { if (songHasEnded()) endOfSong(); }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && songHasEnded()) endOfSong();
+  });
   // 🎵 melody toggle — flips the guide-vocal mute (melody channel audible on/off). Same setting
   // the ⚙ "Mute melody" checkbox and the phone remote drive, so all three stay in sync.
   $("btn-melody").onclick = () => settings.set("guide.vocal.mute", !settings.get("guide.vocal.mute"));

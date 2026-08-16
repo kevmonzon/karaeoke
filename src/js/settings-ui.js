@@ -121,6 +121,8 @@ const SEARCH_KEYWORDS = {
   "set-remote-url": "phone qr url tunnel address host",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
+  "export-data": "backup save download favorites queue settings json",
+  "import-data": "restore load upload backup json",
 };
 
 const CAT_STATE_KEY = "karaeoke.settingsUI.v1"; // transient UI: category open/closed
@@ -145,7 +147,7 @@ export function matchesQuery(text, query) {
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -179,7 +181,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog"; // matchable controls + action buttons
+  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog, #export-data, #import-data"; // matchable controls + action buttons
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -288,18 +290,39 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     btn.classList.toggle("on", mic.enabled);
   }
 
+  // The drawer is a modal dialog (role/aria-modal live on the element in index.html), so it
+  // owes keyboard users three things it never had: Escape to dismiss, focus moved INTO it on
+  // open, and focus returned to the ⚙ button on close.
+  let lastFocus = null;
+
+  function openSettings() {
+    syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
+    lastFocus = document.activeElement;
+    $("settings-panel").classList.remove("hidden");
+    document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
+    const s = $("set-search");
+    if (s) setTimeout(() => s.focus(), 60); // after the slide-in
+  }
+
+  function closeSettings() {
+    if ($("settings-panel").classList.contains("hidden")) return;
+    $("settings-panel").classList.add("hidden");
+    document.body.classList.remove("settings-open");
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
   function wireSettings() {
-    $("btn-settings").onclick = () => {
-      syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
-      $("settings-panel").classList.remove("hidden");
-      document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
-      const s = $("set-search");
-      if (s) setTimeout(() => s.focus(), 60); // after the slide-in
-    };
-    $("settings-close").onclick = () => {
-      $("settings-panel").classList.add("hidden");
-      document.body.classList.remove("settings-open");
-    };
+    $("btn-settings").onclick = openSettings;
+    $("settings-close").onclick = closeSettings;
+
+    // Escape closes the drawer. The panel's own search box handles Escape first (it clears the
+    // field and stopPropagation()s), so typing isn't interrupted — a second Escape closes.
+    $("settings-panel").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); closeSettings(); }
+    });
+    // …and when focus sits outside the drawer (opened, then clicked the stage).
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeSettings(); });
 
     autoBind();
     wireSearch();
@@ -336,6 +359,33 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       if (s && s.value) { s.value = ""; applyFilter(""); } // drop any active search filter
       resetCatState();                  // clears karaeoke.settingsUI.v1 → default panel layout
     };
+
+    // Backup / restore. Favorites, the queue and every setting exist ONLY in this browser, so
+    // the panel must offer a way out that isn't the delete button. Import reloads: modules read
+    // their stores at boot, so restoring underneath a live page would show stale state.
+    const exp = $("export-data"), imp = $("import-data"), impFile = $("import-file"), st = $("data-status");
+    if (exp && onExportData) {
+      exp.onclick = () => {
+        try {
+          const n = onExportData();
+          if (st) st.textContent = `Exported ${n} item${n === 1 ? "" : "s"}.`;
+        } catch (e) { if (st) st.textContent = "Export failed: " + e.message; }
+      };
+    }
+    if (imp && impFile && onImportData) {
+      imp.onclick = () => impFile.click();   // the real <input type=file> stays visually hidden
+      impFile.onchange = async () => {
+        const file = impFile.files && impFile.files[0];
+        impFile.value = "";                  // allow re-picking the same file after a failure
+        if (!file) return;
+        if (st) st.textContent = "Restoring…";
+        try {
+          const n = await onImportData(file);
+          if (st) st.textContent = `Restored ${n} item${n === 1 ? "" : "s"} — reloading…`;
+          setTimeout(() => location.reload(), 600);
+        } catch (e) { if (st) st.textContent = "Import failed: " + e.message; }
+      };
+    }
 
     // "Erase all app data" — full factory reset (settings + library data + caches). Guarded
     // by a two-step confirm on the button itself (no native dialog, matches the app's style):

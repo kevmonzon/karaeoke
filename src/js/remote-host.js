@@ -15,6 +15,48 @@
  *   → { start, stop, push, running }
  */
 /**
+ * The settings a guest may change, WITH the range each value must fall in.
+ *
+ * The allowlist used to gate the *path* only, so the value arrived untrusted: the phone UI
+ * clamps client-side (stepKey −12..12, stepTempo 0.5..1.5), but nothing stops a curl/script
+ * on the LAN from POSTing `{"path":"audio.volume","value":1e6}` straight into the host's
+ * GainNode — or an absurd semitone count into the pitch-shift worklet. The host is the
+ * authority for a room full of people, so it re-validates every value here.
+ *
+ * Keep these ranges in step with the ⚙ controls in index.html (and remote.html's steppers).
+ *
+ * NOTE the null prototype: with a normal object literal, a lookup of the attacker-supplied
+ * path "__proto__" returns Object.prototype — truthy — and the value would sail past the
+ * "unknown path" check into the numeric branch (returning NaN). A prototype-less table has
+ * no such inherited key. Caught by a unit test, not by inspection.
+ */
+export const REMOTE_SETTING_RANGES = Object.assign(Object.create(null), {
+  "lyrics.offsetMs":  { type: "int",  min: -2000, max: 2000 },
+  "audio.key":        { type: "int",  min: -12,   max: 12 },
+  "audio.tempo":      { type: "num",  min: 0.5,   max: 1.5 },
+  "audio.volume":     { type: "num",  min: 0,     max: 2 },
+  "guide.vocal.mute": { type: "bool" },
+});
+
+/** The allowlisted paths — the mirrored-to-phones subset AND what a guest may write. */
+export const REMOTE_SETTABLE_PATHS = Object.keys(REMOTE_SETTING_RANGES);
+
+/**
+ * Validate + clamp one guest `setting` value (pure — unit-tested).
+ * Returns the value to store, or `undefined` when the command must be IGNORED
+ * (unknown path, wrong type, NaN/Infinity). `undefined` is the only rejection
+ * sentinel because `0`, `false` and `-12` are all legitimate values.
+ */
+export function clampRemoteSetting(path, value) {
+  const r = REMOTE_SETTING_RANGES[path];
+  if (!r) return undefined;
+  if (r.type === "bool") return typeof value === "boolean" ? value : undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const v = Math.max(r.min, Math.min(r.max, value));
+  return r.type === "int" ? Math.round(v) : v;
+}
+
+/**
  * Choose the base URL the QR should encode (pure — unit-tested).
  *   1. an explicit user override (settings) wins;
  *   2. else the host page's own origin, when it's already phone-reachable (not loopback) —

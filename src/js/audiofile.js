@@ -35,10 +35,28 @@ export class AudioFileEngine {
     this.chain = new KeyShiftChain(audioEngine); // WebAudio pitch/volume chain
     this._rate = 1;
     this._objUrl = null; // in-memory blob URL for the current file
+    this._live = false;  // true between load() and unload() — see _bindErrors
+    this.onError = null; // set by app.js: (reason) => skip this song
 
     this.el.preload = "auto";
     this.el.volume = 1;                 // level is controlled by the chain's GainNode once wired
     try { this.el.preservesPitch = true; } catch (_) {} // tempo must not change pitch
+    this._bindErrors();
+  }
+
+  /**
+   * Report a dead file instead of hanging. `_ready()` resolves on a 4 s timeout even when the
+   * source never loads and duration stays 0, so without this a missing/corrupt audio file left
+   * the stage silent with no auto-advance. `_live` suppresses the spurious "Empty src" error
+   * that unload()'s removeAttribute + load() raises. Fires once per load.
+   */
+  _bindErrors() {
+    this.el.addEventListener("error", (ev) => {
+      if (!this._live) return;
+      this._live = false;
+      const err = ev && ev.target && ev.target.error;
+      if (this.onError) this.onError(err ? (err.message || "error " + err.code) : "error");
+    });
   }
 
   // --- loading --------------------------------------------------------------
@@ -50,6 +68,7 @@ export class AudioFileEngine {
    *  behavior. Falls back to direct streaming if the fetch fails. */
   async load(url) {
     this._revokeObjUrl();
+    this._live = true;   // arm error reporting for this file
     try {
       const buf = await cachedArrayBuffer(url); // cache-first (Cache Storage), like MIDI + soundfont
       this._objUrl = URL.createObjectURL(new Blob([buf], { type: mimeForUrl(url) }));
@@ -68,6 +87,7 @@ export class AudioFileEngine {
   /** Detach the source (switching away to another kind) — frees the decoder + blob. */
   unload() {
     this.stop();
+    this._live = false;  // the src-removal below fires a spurious error — ignore it
     this.el.removeAttribute("src");
     this._revokeObjUrl();
     try { this.el.load(); } catch (_) {}

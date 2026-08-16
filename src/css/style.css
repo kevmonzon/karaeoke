@@ -49,6 +49,21 @@ body {
 /* subtle lift on song-row hover so browsing feels alive (transform only → cheap) */
 .song:hover { transform: translateX(2px); }
 
+/* ---------------------------------------------------------------------------
+   Keyboard focus. This is a 10-foot app — someone will drive it from a couch
+   with a keyboard, and it had NO visible focus state anywhere (several rules
+   below explicitly cleared the browser default and replaced it with nothing but
+   a border tint). One rule covers every control; :focus-visible keeps it off
+   for pointer users. --focus is the token tokens.css defined for exactly this
+   purpose and nothing referenced. The outline follows each control's own
+   border-radius automatically, so no per-component tuning is needed.
+   --------------------------------------------------------------------------- */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* Topbar — a calm cluster: brand · status eyebrow · grouped view toggles · icon buttons. */
 .topbar {
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
@@ -239,7 +254,7 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 #search {
   flex: 1; padding: calc(11px * var(--ui-scale)) calc(32px * var(--ui-scale)) calc(11px * var(--ui-scale)) calc(14px * var(--ui-scale));
   border-radius: var(--r-md); border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale)); outline: none;
+  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale));
 }
 #search:focus { border-color: var(--brand); }
 .search-clear {
@@ -264,7 +279,7 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 /* text input in the ⚙ panel (e.g. YouTube append-keyword) */
 .set-text {
   width: 130px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: 13px; outline: none;
+  background: var(--panel); color: var(--ink); font-size: 13px;
 }
 .set-text:focus { border-color: var(--accent); }
 /* icon-only pills (★ favorites · ⟲ recent): square, centered glyph */
@@ -664,7 +679,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 120px;
 }
-.settings-body select:focus { outline: none; border-color: var(--brand-2); }
+.settings-body select:focus { border-color: var(--brand-2); }
 .hint.sub { margin: -6px 0 var(--s-3); font-size: 11px; }
 #rebuild-status { margin: 8px 0 0; } /* sits below the rebuild button, not crammed against it */
 #rebuild-status:empty { margin: 0; }
@@ -691,7 +706,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   border-radius: 10px; padding: 9px 12px; font-size: 13px; -webkit-appearance: none; appearance: none;
 }
 .set-search input::-webkit-search-cancel-button { display: none; }
-.set-search input:focus { outline: none; border-color: var(--accent-2); }
+.set-search input:focus { border-color: var(--accent-2); }
 .set-search-x {
   flex: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px;

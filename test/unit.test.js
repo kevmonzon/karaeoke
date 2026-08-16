@@ -16,7 +16,7 @@ import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuff
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 import { matchesQuery } from "../src/js/settings-ui.js";
-import { pickRemoteBaseUrl } from "../src/js/remote-host.js";
+import { pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "../src/js/remote-host.js";
 import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile, distributeLineTimes } from "../src/js/lyrics-formats.js";
 import { syncClock, clockTime, SNAP_SEC } from "../src/js/sync-clock.js";
 
@@ -488,6 +488,48 @@ test("pickRemoteBaseUrl: loopback page origin falls back to the server LAN URL",
 });
 test("pickRemoteBaseUrl: loopback + no LAN URL yields empty string", () => {
   assert.equal(pickRemoteBaseUrl("", "http://localhost:8080", ""), "");
+});
+
+// --- clampRemoteSetting (a guest `setting` command's VALUE, not just its path) ------
+// The phone UI clamps client-side; a raw POST from anything else on the LAN does not, and
+// audio.volume goes straight to a GainNode. `undefined` is the reject sentinel because 0,
+// false and -12 are all legitimate stored values.
+test("clampRemoteSetting: clamps each path to its own range", () => {
+  assert.equal(clampRemoteSetting("audio.volume", 1e6), 2);      // the deafen-the-room case
+  assert.equal(clampRemoteSetting("audio.volume", -5), 0);
+  assert.equal(clampRemoteSetting("audio.volume", 1.25), 1.25);  // in range → untouched
+  assert.equal(clampRemoteSetting("audio.key", 999999999), 12);
+  assert.equal(clampRemoteSetting("audio.key", -99), -12);
+  assert.equal(clampRemoteSetting("audio.tempo", 40), 1.5);
+  assert.equal(clampRemoteSetting("audio.tempo", 0.1), 0.5);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", 99999), 2000);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", -99999), -2000);
+});
+test("clampRemoteSetting: integer paths round, and legitimate zero/false survive", () => {
+  assert.equal(clampRemoteSetting("audio.key", 3.7), 4);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", -50.4), -50);
+  assert.equal(clampRemoteSetting("audio.key", 0), 0);          // not rejected
+  assert.equal(clampRemoteSetting("audio.volume", 0), 0);       // not rejected
+  assert.equal(clampRemoteSetting("guide.vocal.mute", false), false);
+  assert.equal(clampRemoteSetting("guide.vocal.mute", true), true);
+});
+test("clampRemoteSetting: rejects unknown paths and junk values with undefined", () => {
+  assert.equal(clampRemoteSetting("mic.volume", 1), undefined);        // not allowlisted
+  assert.equal(clampRemoteSetting("__proto__", 1), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", "loud"), undefined); // wrong type
+  assert.equal(clampRemoteSetting("audio.volume", NaN), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", Infinity), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", null), undefined);
+  assert.equal(clampRemoteSetting("guide.vocal.mute", "yes"), undefined); // bool path, string value
+  assert.equal(clampRemoteSetting("guide.vocal.mute", 1), undefined);
+});
+test("clampRemoteSetting: every allowlisted path is actually validatable", () => {
+  // Guards the allowlist and the range table against drifting apart — a path with no range
+  // would silently become un-settable, a range with no path would be dead code.
+  for (const p of REMOTE_SETTABLE_PATHS) {
+    const v = clampRemoteSetting(p, p === "guide.vocal.mute" ? true : 0);
+    assert.notEqual(v, undefined, `${p} should accept a legal value`);
+  }
 });
 
 // --- Catalog.lyricsUrl (AUDIO sidecar) --------------------------------------

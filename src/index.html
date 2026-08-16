@@ -36,12 +36,12 @@
     <div class="brand">Ka-<span>Rae</span>-oke</div>
     <div id="status" class="status">Loading…</div>
     <div class="toggles">
-      <button id="toggle-lib" class="gear" title="Toggle song list">🔍</button>
-      <button id="toggle-queue" class="gear" title="Toggle queue">▦</button>
+      <button id="toggle-lib" class="gear" title="Toggle song list" aria-label="Toggle song list">🔍</button>
+      <button id="toggle-queue" class="gear" title="Toggle queue" aria-label="Toggle queue">▦</button>
     </div>
     <button id="btn-focus" class="gear" title="Focus mode — hide panels for a full-screen lyrics view (Esc to exit)" aria-label="Focus mode">◎</button>
-    <button id="btn-settings" class="gear" title="Settings">⚙</button>
-    <button id="btn-fullscreen" class="gear" title="Full screen">⛶</button>
+    <button id="btn-settings" class="gear" title="Settings" aria-label="Settings">⚙</button>
+    <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen">⛶</button>
   </header>
 
   <main class="layout">
@@ -149,27 +149,27 @@
            .playbar flex directly (even space-between); it regroups on phones. -->
       <div class="playbar">
         <div class="transport">
-          <button id="btn-play" class="primary" title="Play/Pause (Space)">▶</button>
-          <button id="btn-next" title="Next in queue">⏭</button>
-          <button id="btn-melody" class="melody-toggle" title="Melody guide on/off">🎵</button>
-          <button id="btn-mic" class="mic-toggle" title="Microphone on/off">🎤</button>
+          <button id="btn-play" class="primary" title="Play/Pause (Space)" aria-label="Play or pause">▶</button>
+          <button id="btn-next" title="Next in queue" aria-label="Next song in queue">⏭</button>
+          <button id="btn-melody" class="melody-toggle" title="Melody guide on/off" aria-label="Melody guide on or off">🎵</button>
+          <button id="btn-mic" class="mic-toggle" title="Microphone on/off" aria-label="Microphone on or off">🎤</button>
         </div>
 
         <div class="controls">
           <div class="ctl">
             <label>Key <em id="key-name"></em></label>
             <div class="stepper">
-              <button id="key-down">−</button>
+              <button id="key-down" aria-label="Key down one semitone">−</button>
               <span id="key-val">0</span>
-              <button id="key-up">＋</button>
+              <button id="key-up" aria-label="Key up one semitone">＋</button>
             </div>
           </div>
           <div class="ctl">
             <label>Tempo</label>
             <div class="stepper">
-              <button id="tempo-down">−</button>
+              <button id="tempo-down" aria-label="Slower">−</button>
               <span id="tempo-val">1.00×</span>
-              <button id="tempo-up">＋</button>
+              <button id="tempo-up" aria-label="Faster">＋</button>
             </div>
           </div>
           <div class="ctl">
@@ -197,10 +197,10 @@
   </main>
 
   <!-- settings drawer -->
-  <div id="settings-panel" class="settings-panel hidden">
+  <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <div class="settings-head">
-      <h3>Settings</h3>
-      <button id="settings-close" class="gear" title="Close">✕</button>
+      <h3 id="settings-title">Settings</h3>
+      <button id="settings-close" class="gear" title="Close" aria-label="Close settings">✕</button>
     </div>
     <div class="settings-body">
       <div class="set-search">
@@ -447,6 +447,15 @@
 
       <button id="settings-reset" class="reset-btn">Reset to defaults</button>
       <p class="hint">Defaults live in <code>src/config.js</code>. Edit it, then Reset.</p>
+
+      <section>
+        <h4>Backup</h4>
+        <div class="hint sub">Your favorites, queue and settings live only in this browser. Export a copy before you clear site data or move to another machine.</div>
+        <button id="export-data" class="reset-btn">⭳ Export app data</button>
+        <button id="import-data" class="reset-btn">⭱ Import app data…</button>
+        <input id="import-file" type="file" accept="application/json,.json" hidden />
+        <div id="data-status" class="hint sub"></div>
+      </section>
 
       <div class="danger-zone">
         <button id="erase-all" class="reset-btn danger">Erase all app data</button>
