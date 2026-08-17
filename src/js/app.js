@@ -28,6 +28,7 @@ import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createReactions } from "./reactions.js";
+import { createDurationHints } from "./duration-hints.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -48,6 +49,7 @@ const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
+const durations = createDurationHints();
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
@@ -125,7 +127,7 @@ async function boot() {
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
-    loadDurationHints(); // learned song lengths → queue ETA on the phones
+    durations.load(); // learned song lengths → queue ETA on the phones
     loadRecap();         // tonight's performance log (reset after a long enough gap)
     loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
     loadBlockedYoutube(); // hide videos that previously failed to embed
@@ -619,7 +621,7 @@ function remoteSnapshot() {
   const q = queue.map((s, i) => ({
     id: s.id, name: s.name || "", artist: s.artistName || "",
     kind: s.kind, code: s.code || "", by: queueBy[i] || "",
-    dur: durationHints[s.id] || null,   // learned length → the phone computes "how long until mine"
+    dur: durations.get(s.id),   // learned length → the phone computes "how long until mine"
   }));
   const settingsSub = {};
   for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
@@ -824,26 +826,6 @@ function recapStat(n, k) {
   return d;
 }
 function hideRecap() { const el = $("recap"); if (el) el.classList.add("hidden"); }
-
-// ---------------------------------------------------------------------------
-// Song-length hints. The catalog carries no duration (it's built from filenames), so the
-// only honest way to answer a guest's "how long until mine?" is to LEARN each song's length
-// the first time it plays and remember it. A library you've used before estimates well; a
-// fresh one falls back to an average (queue-order.js DEFAULT_SONG_SEC).
-// ---------------------------------------------------------------------------
-const durationsStore = jsonStore("karaeoke.durations.v1", {});
-let durationHints = {};
-let _durSongId = null;   // the song we've already recorded during this play
-
-function loadDurationHints() { durationHints = durationsStore.read(); }
-function noteDuration(song, d) {
-  if (!song || !(d > 0) || _durSongId === song.id) return;
-  _durSongId = song.id;                       // once per play — this is called from the rAF loop
-  const rounded = Math.round(d);
-  if (durationHints[song.id] === rounded) return;
-  durationHints[song.id] = rounded;
-  durationsStore.write(durationHints);
-}
 
 // Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
 // layout, the remote room code, saved-YouTube pointers) lives ONLY in this browser's
@@ -1150,7 +1132,7 @@ let loadingSong = false;
 async function playNow(song, by = "") {
   const gen = ++playGen;
   loadingSong = true;   // suppress the idle auto-advance until this song owns the stage
-  _durSongId = null;    // re-arm the song-length learner for the incoming song
+  durations.arm();      // re-arm the song-length learner for the incoming song
   hideScoreCard();      // a new song takes the stage back from the previous song's verdict
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
@@ -1598,7 +1580,7 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
-      noteDuration(current, d);   // learn this song's length for the phones' queue ETA
+      durations.note(current, d);   // learn this song's length for the phones' queue ETA
     }
     // End-of-song detection lives in songHasEnded() so the hidden-tab watchdog below can
     // run the SAME predicate. Deliberately outside the `d > 0` block: a MIDI song reports

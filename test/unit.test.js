@@ -27,6 +27,7 @@ import {
   foldSemitones, pitchCredit, markGolden, curveScore, scoreBand, Scorer,
 } from "../src/js/scoring.js";
 import { REACTIONS, createReactions } from "../src/js/reactions.js";
+import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js";
 import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
@@ -1122,4 +1123,55 @@ test("reactions: applause is throttled, and only 👏 fires it", async () => {
     await new Promise((res) => setTimeout(res, 0));
     assert.equal(muted.calls.ensure, 0);
   } finally { delete globalThis.document; }
+});
+
+// --- duration hints ---------------------------------------------------------
+test("durationHints: learns a length once per play and persists it", () => {
+  const store = fakeStorage();
+  const d = createDurationHints(store);
+  d.load();
+  const song = { id: "midi:1" }, other = { id: "midi:2" };
+
+  d.arm();
+  d.note(song, 214.6);
+  assert.equal(d.get("midi:1"), 215, "rounded to whole seconds");
+  assert.deepEqual(JSON.parse(store.getItem(DURATIONS_KEY)), { "midi:1": 215 });
+
+  // Called every frame by the rAF loop: after the first hit it must stop writing.
+  const writes = [];
+  const spied = { ...store, setItem: (k, v) => { writes.push(k); store.setItem(k, v); } };
+  const d2 = createDurationHints(spied);
+  d2.load(); d2.arm(); d2.note(song, 100);
+  for (let i = 0; i < 50; i++) d2.note(song, 100);
+  assert.equal(writes.length, 1, "one write per play, not one per frame");
+
+  // A second song in the same session is learned independently.
+  d.arm(); d.note(other, 90);
+  assert.equal(d.get("midi:2"), 90);
+  assert.equal(d.get("midi:1"), 215);
+});
+
+test("durationHints: ignores junk, and a fresh library reports nothing", () => {
+  const d = createDurationHints(fakeStorage());
+  d.load(); d.arm();
+  d.note(null, 100);
+  d.note({ id: "x" }, 0);            // a song that never got a duration
+  d.note({ id: "x" }, -5);
+  d.note({ id: "x" }, NaN);
+  assert.equal(d.get("x"), null);    // null, not 0 — queue-order.js falls back on null
+  assert.equal(d.get("never-played"), null);
+});
+
+test("durationHints: survives a reload, and arm() re-opens the next song", () => {
+  const store = fakeStorage();
+  const first = createDurationHints(store);
+  first.load(); first.arm(); first.note({ id: "midi:7" }, 180);
+
+  const reloaded = createDurationHints(store);
+  reloaded.load();
+  assert.equal(reloaded.get("midi:7"), 180);
+
+  // Same song again after a re-arm: a corrected length replaces the old one.
+  reloaded.arm(); reloaded.note({ id: "midi:7" }, 200);
+  assert.equal(reloaded.get("midi:7"), 200);
 });
