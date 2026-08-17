@@ -330,7 +330,13 @@ button.fav:active { transform: scale(.85); }
 button.fav.on { color: var(--gold); }
 
 /* Stage / now playing */
-.now-playing { position: relative; display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
+/* The badges (key · lyric state · queue count) are `flex: none`, so on a narrow stage — the
+   settings drawer open on a laptop is enough — they took the whole row and squeezed .np-meta
+   to ZERO width: the song title disappeared entirely and the bar overflowed. Let the row wrap
+   and give the title a floor to claim, so the badges drop to a second line instead of evicting
+   the one piece of information the bar exists to show. */
+.now-playing { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
+.now-playing .np-meta { flex: 1 1 min(220px, 100%); }
 
 /* Singer badge — sits in the now-playing header (was a separate banner row). */
 .now-singer {

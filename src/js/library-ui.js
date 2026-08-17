@@ -260,7 +260,10 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       li.appendChild(rm);
       q.appendChild(li);
     });
-    $("queue-count").textContent = queue.length ? `(${queue.length})` : "";
+    // NOT "queue-count": that id also belonged to the now-playing chip in the stage header,
+    // so getElementById returned the chip and this overwrote it — the chip read "(1)" instead
+    // of "⏭ 1" and the queue heading never showed a count at all. Two writers, one id.
+    $("queue-heading-count").textContent = queue.length ? `(${queue.length})` : "";
   }
 
   return {

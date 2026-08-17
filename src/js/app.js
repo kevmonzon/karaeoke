@@ -1137,11 +1137,18 @@ async function ensureEngine() {
 // takes a ticket; anything stale bails out at its next checkpoint instead of writing.
 let playGen = 0;
 const stalePlay = (gen) => gen !== playGen;
+// True while a play* is between its first await and actually owning the stage. `armed` flips
+// the instant a user picks a song, but on a COLD START `current` stays null for the seconds the
+// ~32 MB soundfont takes — and the rAF idle branch reads exactly that gap as "nothing playing,
+// something queued" and auto-advances. The user's double-clicked song then loses to whatever was
+// in the queue. Found in a browser, not by a test: it needs a real soundfont load to reproduce.
+let loadingSong = false;
 
 // Dispatch on the song's kind: VIDEO songs take the (synth-free) video path; MIDI
 // songs take the existing SpessaSynth path.
 async function playNow(song, by = "") {
   const gen = ++playGen;
+  loadingSong = true;   // suppress the idle auto-advance until this song owns the stage
   _durSongId = null;    // re-arm the song-length learner for the incoming song
   hideScoreCard();      // a new song takes the stage back from the previous song's verdict
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
@@ -1160,6 +1167,7 @@ async function playNow(song, by = "") {
       onSongFailed();
     }
   } finally {
+    if (gen === playGen) loadingSong = false;   // a newer play owns the flag now
     // A song change is the one transition phones can't extrapolate through (their local
     // lyric clock has to re-base and their Lyrics tab refetches), so push the moment the
     // new song is loaded instead of waiting for the next ~1 s host tick.
@@ -1591,7 +1599,7 @@ function tick() {
     // Nothing is playing and it wasn't a deliberate pause → play the next queued song.
     // (`armed` gates this to after the user has started playback, so a restored queue
     //  on a fresh load is NOT auto-played — there's no user gesture yet.)
-    if (armed && !current && !autoAdvancing && !userPaused && queue.length) {
+    if (armed && !current && !loadingSong && !autoAdvancing && !userPaused && queue.length) {
       autoAdvancing = true;
       advanceQueue();
     }
