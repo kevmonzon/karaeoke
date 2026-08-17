@@ -13,6 +13,15 @@ import { jsonStore } from "./store.js";
 export const SCORES_KEY = "karaeoke.scores.v1";
 export const SCORE_CARD_MS = 4500;   // the card holds the stage this long before the next song
 
+/**
+ * How long the card's opacity transition runs. MUST match `--dur-slow` in tokens.css: the card
+ * has to be FULLY transparent before endOfSong hands over, or the next song's title card — same
+ * size, same position, same tint, but a lower z-index — fades in underneath a score card that is
+ * still on screen, and the two smear together.
+ */
+const CARD_FADE_MS = 450;
+const CARD_FADE_MARGIN_MS = 100;   // land the fade just before the hand-off, not exactly on it
+
 const $ = (id) => document.getElementById(id);
 
 /** How a finished lyric line is rated. Ordered high→low; the first threshold met wins. */
@@ -81,7 +90,8 @@ export function createScorePresentation({ settings, storage } = {}) {
         : (res.previous ? `best ${res.previous}` : "");
       card.classList.add("show");
       clearTimeout(cardTimer);
-      cardTimer = setTimeout(() => card.classList.remove("show"), SCORE_CARD_MS - 400);
+      cardTimer = setTimeout(() => card.classList.remove("show"),
+        Math.max(0, SCORE_CARD_MS - CARD_FADE_MS - CARD_FADE_MARGIN_MS));
     },
 
     hideCard() {
