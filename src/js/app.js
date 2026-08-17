@@ -30,6 +30,7 @@ import { createMidiMixer } from "./midi-mixer.js";
 import { createReactions } from "./reactions.js";
 import { createDurationHints } from "./duration-hints.js";
 import { createRecap } from "./recap.js";
+import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -52,6 +53,7 @@ const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
 const recap = createRecap();
+const score = createScorePresentation({ settings });
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
@@ -76,7 +78,6 @@ let currentKey = null;
 let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
 let currentMelodyChannel = -1;
 let scorer = null;               // scoring.js Scorer for the current MIDI song (null = nothing to score)
-let lastBonusLine = -1;          // guards the per-line bonus flash (one per lyric line)
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -418,8 +419,7 @@ function loadMelody(parsed) {
     pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
     scorer = null;
   }
-  lastBonusLine = -1;
-  hideLineBonus();
+  score.resetLineBonus();
   pitchGuide.setScore(null);
 
   currentKey = settings.get("key.autoDetect") ? detectKey(parsed) : null;
@@ -1049,7 +1049,7 @@ async function playNow(song, by = "") {
   const gen = ++playGen;
   loadingSong = true;   // suppress the idle auto-advance until this song owns the stage
   durations.arm();      // re-arm the song-length learner for the incoming song
-  hideScoreCard();      // a new song takes the stage back from the previous song's verdict
+  score.hideCard();     // a new song takes the stage back from the previous song's verdict
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
@@ -1089,7 +1089,7 @@ function hideMidiSurfaces() {
   lastParsed = null;
   currentKey = null;
   scorer = null;          // no MIDI note data → nothing to score against
-  hideLineBonus();
+  score.resetLineBonus();
 }
 
 // VIDEO song: no synth/soundfont, no lyric parsing. The picture fills the stage; the
@@ -1138,7 +1138,7 @@ function hideNoteSurfaces() {
   lastParsed = null;
   currentKey = null;
   scorer = null;          // no MIDI note data → nothing to score against
-  hideLineBonus();
+  score.resetLineBonus();
 }
 
 // AUDIO song: a recorded audio file + a separate lyric sidecar. Routed through WebAudio
@@ -1357,11 +1357,11 @@ function endOfSong() {
   if (endGuard) return;
   endGuard = true;
   // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
-  const res = finishScore();
+  const res = score.finish(scorer, current, currentBy);
   recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
-  hideLineBonus();
+  score.resetLineBonus();
   clearStage();
-  if (res) showScoreCard(res);
+  if (res) score.showCard(res);
   // Hold the stage while the score is up — the verdict is half the point of a videoke night,
   // and the next song's title card would otherwise land on top of it.
   const hold = res && settings.get("score.card") ? SCORE_CARD_MS : 700;
@@ -1375,7 +1375,7 @@ function skipCurrent() {
   clearTimeout(endTimer);
   endTimer = null;
   endGuard = false;
-  hideScoreCard();
+  score.hideCard();
   advanceQueue();
 }
 
@@ -1459,7 +1459,7 @@ function tick() {
       // score nothing (you have to be allowed to breathe). See scoring.js.
       if (scoringOn) {
         scorer.addFrame(gt, micMidi);
-        updateLineBonus(gt);
+        score.lineBonus(scorer, lyrics);
       }
 
       if (guideOn) {
@@ -1749,91 +1749,6 @@ function fitTitleCard() {
     }
     st.fontSize = Math.floor(lo) + "px";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Score (videoke). scoring.js does the maths; this is presentation + persistence.
-// ---------------------------------------------------------------------------
-const scoresStore = jsonStore("karaeoke.scores.v1", {});
-const SCORE_CARD_MS = 4500;   // the card holds the stage this long before the next song starts
-let scTimer = null;
-let bonusTimer = null;
-
-function bestScore(id) { return (id && scoresStore.read()[id]) || 0; }
-function saveBestScore(id, score) {
-  if (!id) return;
-  const all = scoresStore.read();
-  all[id] = score;
-  scoresStore.write(all);
-}
-
-/** Close out the current song's scoring. Returns null when there's nothing worth showing
- *  (no melody, mic off, or the singer never made a sound). MUST run before clearStage(),
- *  which drops `current`/`currentBy`. */
-function finishScore() {
-  if (!scorer || !settings.get("score.enabled")) return null;
-  const res = scorer.finish();
-  if (!res) return null;
-  const id = current ? current.id : null;
-  const previous = bestScore(id);
-  const isBest = res.score > previous;
-  if (isBest) saveBestScore(id, res.score);
-  return { ...res, isBest, previous, song: current, by: currentBy };
-}
-
-function showScoreCard(res) {
-  const card = $("score-card");
-  if (!card || !settings.get("score.card")) return;
-  $("sc-song").textContent = res.song ? `${res.song.name || ""}${res.song.artistName ? ` · ${res.song.artistName}` : ""}` : "";
-  $("sc-score").textContent = String(res.score);
-  const band = $("sc-band");
-  band.textContent = res.band.label;
-  band.className = `sc-band ${res.band.tier}`;
-  $("sc-singer").textContent = res.by ? `🎤 ${res.by}` : "";
-  $("sc-best").textContent = res.isBest
-    ? (res.previous ? `★ New best — beat ${res.previous}` : "★ New best")
-    : (res.previous ? `best ${res.previous}` : "");
-  card.classList.add("show");
-  clearTimeout(scTimer);
-  scTimer = setTimeout(() => card.classList.remove("show"), SCORE_CARD_MS - 400);
-}
-function hideScoreCard() {
-  clearTimeout(scTimer);
-  const card = $("score-card");
-  if (card) card.classList.remove("show");
-}
-
-// Per-line bonus: rate the line that just finished. The drip of feedback between the start
-// and the final number is what keeps a room engaged — the final score alone comes too late.
-const BONUS_BANDS = [
-  [0.90, "Perfect!", "perfect"],
-  [0.75, "Great!", "great"],
-  [0.50, "Good", ""],
-  [0.25, "Almost", ""],
-  [0.00, "Miss", "miss"],
-];
-function updateLineBonus() {
-  if (!scorer || !lyrics || !lyrics.lines || !lyrics.lines.length) return;
-  const idx = lyrics.activeLine;
-  if (idx === lastBonusLine) return;
-  const prev = lastBonusLine;
-  lastBonusLine = idx;
-  if (prev < 0 || prev >= lyrics.lines.length) return;   // nothing finished yet
-  const line = lyrics.lines[prev];
-  const r = scorer.windowRatio(line.start, line.end);
-  if (r == null) return;                                  // instrumental line — don't rate it
-  const [, label, cls] = BONUS_BANDS.find(([min]) => r >= min) || BONUS_BANDS[BONUS_BANDS.length - 1];
-  const el = $("line-bonus");
-  if (!el) return;
-  el.textContent = label;
-  el.className = `line-bonus show ${cls}`;
-  clearTimeout(bonusTimer);
-  bonusTimer = setTimeout(() => el.classList.remove("show"), 1100);
-}
-function hideLineBonus() {
-  clearTimeout(bonusTimer);
-  const el = $("line-bonus");
-  if (el) { el.classList.remove("show"); el.textContent = ""; }
 }
 
 // Singer + "up next" banner above the melody guide. Shows the current singer (only when the

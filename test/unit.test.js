@@ -29,6 +29,7 @@ import {
 import { REACTIONS, createReactions } from "../src/js/reactions.js";
 import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js";
 import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY } from "../src/js/recap.js";
+import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-presentation.js";
 import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
@@ -1245,4 +1246,72 @@ test("recap.log/load: persists, and a stale night is discarded on load", () => {
   later.log(null, "Rae", 50, t0 + 1000 + RECAP_GAP_MS + 1);
   assert.equal(later.items.length, 0);
   assert.ok(JSON.parse(store.getItem(RECAP_KEY)).items.length > 0, "the key itself is real");
+});
+
+// --- score presentation -----------------------------------------------------
+test("bonusBand: bands a finished line, and refuses to rate an instrumental one", () => {
+  assert.equal(bonusBand(1).label, "Perfect!");
+  assert.equal(bonusBand(0.9).label, "Perfect!");       // inclusive at the threshold
+  assert.equal(bonusBand(0.899).label, "Great!");
+  assert.equal(bonusBand(0.75).label, "Great!");
+  assert.equal(bonusBand(0.5).label, "Good");
+  assert.equal(bonusBand(0.25).label, "Almost");
+  assert.equal(bonusBand(0).label, "Miss");
+  assert.equal(bonusBand(null), null, "an unsung/instrumental line is not rated at all");
+  assert.equal(bonusBand(undefined), null);
+  assert.equal(bonusBand(NaN), null);
+  // The chip's CSS class is part of the contract — only the extremes are coloured.
+  assert.equal(bonusBand(0.95).cls, "perfect");
+  assert.equal(bonusBand(0.6).cls, "");
+});
+
+const fakeScorer = (result) => ({ finish: () => result, windowRatio: () => null });
+const fakeSettings = (over = {}) => {
+  const f = { "score.enabled": true, "score.card": true, ...over };
+  return { get: (p) => f[p] };
+};
+
+test("score.finish: records a personal best, and reports beating the old one", () => {
+  const storage = fakeStorage();
+  const settings = fakeSettings();
+  const song = { id: "midi:1", name: "Tahan" };
+  const sp = createScorePresentation({ settings, storage });
+
+  const first = sp.finish(fakeScorer({ score: 72, band: { label: "Good job!", tier: "good" } }), song, "Rae");
+  assert.equal(first.score, 72);
+  assert.equal(first.isBest, true);
+  assert.equal(first.previous, 0, "a first attempt has no previous best");
+  assert.equal(first.by, "Rae");
+  assert.equal(sp.best("midi:1"), 72);
+
+  const worse = sp.finish(fakeScorer({ score: 65, band: {} }), song, "Mia");
+  assert.equal(worse.isBest, false);
+  assert.equal(worse.previous, 72);
+  assert.equal(sp.best("midi:1"), 72, "a lower score must not overwrite the best");
+
+  const better = sp.finish(fakeScorer({ score: 91, band: {} }), song, "Mia");
+  assert.equal(better.isBest, true);
+  assert.equal(better.previous, 72);
+  assert.equal(JSON.parse(storage.getItem(SCORES_KEY))["midi:1"], 91);
+});
+
+test("score.finish: returns null rather than a zero when there is nothing to show", () => {
+  const settings = fakeSettings();
+  const sp = createScorePresentation({ settings, storage: fakeStorage() });
+  const song = { id: "midi:1" };
+
+  assert.equal(sp.finish(null, song, ""), null, "no melody / no scorer → no card");
+  assert.equal(sp.finish(fakeScorer(null), song, ""), null, "nobody sang → no card, not a 0");
+
+  const off = createScorePresentation({ settings: fakeSettings({ "score.enabled": false }), storage: fakeStorage() });
+  assert.equal(off.finish(fakeScorer({ score: 90, band: {} }), song, ""), null);
+});
+
+test("score.finish: a song with no id still scores, it just isn't remembered", () => {
+  const storage = fakeStorage();
+  const sp = createScorePresentation({ settings: fakeSettings(), storage });
+  const res = sp.finish(fakeScorer({ score: 80, band: {} }), null, "");
+  assert.equal(res.score, 80);
+  assert.equal(res.song, null);
+  assert.equal(storage.getItem(SCORES_KEY), null, "nothing keyed on null");
 });
