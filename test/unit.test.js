@@ -26,6 +26,8 @@ import { jsonStore, collectAppData, restoreAppData, clearAppData, listAppKeys, A
 import {
   foldSemitones, pitchCredit, markGolden, curveScore, scoreBand, Scorer,
 } from "../src/js/scoring.js";
+import { REACTIONS, createReactions } from "../src/js/reactions.js";
+import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -1055,4 +1057,69 @@ test("clearAppData: wipes only this app's keys", () => {
   assert.equal(clearAppData(s), 2);
   assert.deepEqual(listAppKeys(s), []);
   assert.equal(s.getItem("other.app"), "keep");
+});
+
+// --- reactions --------------------------------------------------------------
+// The allowlist is a security boundary: whatever it contains is rendered on a television
+// from a stranger's phone. It must have exactly ONE definition, or the two ends can drift.
+test("REACTIONS: one shared allowlist, no second copy in the phone or the host", () => {
+  assert.ok(REACTIONS.length > 0);
+  assert.ok(REACTIONS.every((e) => typeof e === "string" && e.length > 0));
+
+  const literal = /REACTIONS\s*=\s*\[/;           // a re-declared array literal, anywhere
+  for (const f of ["remote.js", "app.js"]) {
+    const src = readFileSync(new URL(`../src/js/${f}`, import.meta.url), "utf8");
+    assert.ok(!literal.test(src), `${f} re-declares the REACTIONS allowlist`);
+  }
+  const remote = readFileSync(new URL("../src/js/remote.js", import.meta.url), "utf8");
+  assert.match(remote, /import\s*\{\s*REACTIONS\s*\}\s*from\s*"\.\/reactions\.js"/);
+});
+
+// The host gate + the applause throttle, which a browser can't show: without a user gesture
+// the AudioContext never runs, so the audible half is invisible there but observable here.
+function fakeReactionDeps(overrides = {}) {
+  const calls = { ensure: 0 };
+  const flags = { "reactions.enabled": true, "reactions.sound": true, ...overrides };
+  const audio = {
+    ctx: null,                                   // never "running" → applause stops after the throttle
+    async ensureContext() { calls.ensure++; },
+  };
+  return { calls, deps: { settings: { get: (p) => flags[p] }, audio } };
+}
+
+test("reactions.handle: refuses anything off the allowlist, and obeys the enable flag", async () => {
+  globalThis.document = { querySelector: () => null };   // float() no-ops without a stage
+  try {
+    const { deps } = fakeReactionDeps();
+    const r = createReactions(deps);
+    assert.equal(r.handle("👏"), true);
+    assert.equal(r.handle("💀"), false);          // not on the list
+    assert.equal(r.handle("<img src=x>"), false); // free text is never rendered
+    assert.equal(r.handle(""), false);
+    assert.equal(r.handle(undefined), false);
+
+    const off = createReactions(fakeReactionDeps({ "reactions.enabled": false }).deps);
+    assert.equal(off.handle("👏"), false);
+  } finally { delete globalThis.document; }
+});
+
+test("reactions: applause is throttled, and only 👏 fires it", async () => {
+  globalThis.document = { querySelector: () => null };
+  try {
+    const { calls, deps } = fakeReactionDeps();
+    const r = createReactions(deps);
+    r.handle("🎉");
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(calls.ensure, 0, "only 👏 claps");
+
+    r.handle("👏");
+    r.handle("👏");                                // same tick — inside the 1.5 s gap
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(calls.ensure, 1, "a rapid tapper can't machine-gun the applause");
+
+    const muted = fakeReactionDeps({ "reactions.sound": false });
+    createReactions(muted.deps).handle("👏");
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(muted.calls.ensure, 0);
+  } finally { delete globalThis.document; }
 });

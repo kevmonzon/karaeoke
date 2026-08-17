@@ -27,6 +27,7 @@ import { fairInsertIndex, countBy } from "./queue-order.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
+import { createReactions } from "./reactions.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -46,6 +47,7 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 const settings = new Settings();
 const catalog = new Catalog();
 const audio = new AudioEngine();
+const reactions = createReactions({ settings, audio });
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
@@ -669,15 +671,10 @@ function applyRemoteCommand(cmd) {
     case "reorder":
       if (Number.isInteger(cmd.to) && queueItemMatches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
       break;
-    case "react": {
-      if (!settings.get("reactions.enabled")) break;
+    case "react":
       // Allowlisted, never free text: this is drawn on the host's TV from a stranger's phone.
-      const emoji = String(cmd.emoji || "");
-      if (!REACTIONS.includes(emoji)) break;
-      floatReaction(emoji);
-      if (emoji === "👏") playApplause();
+      reactions.handle(cmd.emoji);
       break;
-    }
     case "play":  remotePlay();  break;
     case "pause": remotePause(); break;
     case "next":  skipCurrent(); break;
@@ -1858,63 +1855,6 @@ function fitTitleCard() {
     }
     st.fontSize = Math.floor(lo) + "px";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Reactions — the crowd noise a videoke box has a physical Applause button for. A guest taps
-// an emoji on their phone; it floats up the host's screen, and 👏 also fires a burst of
-// applause. The set is an ALLOWLIST: this is rendered on a TV from a stranger's phone.
-// ---------------------------------------------------------------------------
-export const REACTIONS = ["👏", "🎉", "🔥", "❤️", "😂", "🙌"];
-const MAX_FLOATING = 24;
-let lastApplauseAt = 0;
-
-function floatReaction(emoji) {
-  const stage = document.querySelector(".stage");
-  if (!stage) return;
-  const live = stage.querySelectorAll(".reaction");
-  if (live.length >= MAX_FLOATING) live[0].remove();   // a spammer can't bury the lyrics
-  const el = document.createElement("div");
-  el.className = "reaction";
-  el.textContent = emoji;
-  el.style.left = `${6 + Math.random() * 88}%`;
-  el.style.setProperty("--drift", `${Math.round((Math.random() * 2 - 1) * 70)}px`);
-  el.addEventListener("animationend", () => el.remove(), { once: true });
-  stage.appendChild(el);
-  setTimeout(() => el.remove(), 4000); // belt-and-braces if the animation never runs
-}
-
-/** Applause, SYNTHESIZED — the app ships no audio files, so a few hundred filtered noise
- *  bursts stand in for a small crowd. Silent (rather than throwing) if the AudioContext has
- *  never been unlocked by a gesture; throttled so a rapid tapper can't machine-gun it. */
-async function playApplause() {
-  if (!settings.get("reactions.sound")) return;
-  const now = performance.now();
-  if (now - lastApplauseAt < 1500) return;
-  lastApplauseAt = now;
-  try {
-    await audio.ensureContext();
-    const ctx = audio.ctx;
-    if (!ctx || ctx.state !== "running") return;
-    const rate = ctx.sampleRate, len = Math.ceil(rate * 1.6);
-    const buf = ctx.createBuffer(1, len, rate);
-    const d = buf.getChannelData(0);
-    for (let c = 0; c < 700; c++) {           // each "clap" is a short, fast-decaying burst
-      const at = Math.floor(Math.random() * (len - 900));
-      const n = 100 + Math.floor(Math.random() * 380);
-      const amp = 0.25 + Math.random() * 0.75;
-      for (let j = 0; j < n; j++) d[at + j] += (Math.random() * 2 - 1) * Math.pow(1 - j / n, 3) * amp;
-    }
-    for (let i = 0; i < len; i++) {           // swell in, decay out — a room reacting
-      const p = i / len;
-      d[i] *= (p < 0.12 ? p / 0.12 : Math.pow(1 - (p - 0.12) / 0.88, 1.6)) * 0.45;
-    }
-    const src = ctx.createBufferSource(); src.buffer = buf;
-    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1800; bp.Q.value = 0.7;
-    const g = ctx.createGain(); g.gain.value = 0.6;
-    src.connect(bp).connect(g).connect(ctx.destination);
-    src.start();
-  } catch (_) { /* no context, no applause — never break playback over a sound effect */ }
 }
 
 // ---------------------------------------------------------------------------

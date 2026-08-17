@@ -22,6 +22,7 @@ import { LyricsEngine, parseMidi, buildLines, makeTickToSeconds } from "./lyrics
 import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
 import { syncClock, clockTime } from "./sync-clock.js";
 import { queueEta, formatEta } from "./queue-order.js";
+import { REACTIONS } from "./reactions.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
@@ -303,10 +304,9 @@ function reconcile() {
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
-// Reactions — the crowd noise. Allowlisted here AND on the host (which is what actually
-// renders them), because a stranger's phone should never be able to put arbitrary text on
-// someone's television.
-const REACTIONS = ["👏", "🎉", "🔥", "❤️", "😂", "🙌"];
+// Reactions — the crowd noise. The allowlist is imported from reactions.js so this phone and
+// the host that actually renders them can never drift apart: a stranger's phone must not be
+// able to put arbitrary text on someone's television.
 function wireReactions() {
   const row = $("react-row");
   if (!row) return;
