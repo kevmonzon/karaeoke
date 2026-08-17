@@ -28,6 +28,7 @@ import {
 } from "../src/js/scoring.js";
 import { REACTIONS, createReactions } from "../src/js/reactions.js";
 import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js";
+import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY } from "../src/js/recap.js";
 import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
@@ -1174,4 +1175,74 @@ test("durationHints: survives a reload, and arm() re-opens the next song", () =>
   // Same song again after a re-arm: a corrected length replaces the old one.
   reloaded.arm(); reloaded.note({ id: "midi:7" }, 200);
   assert.equal(reloaded.get("midi:7"), 200);
+});
+
+// --- tonight's recap --------------------------------------------------------
+test("recapSummary: counts songs and singers, and finds the top score", () => {
+  const items = [
+    { by: "Rae", score: 78 }, { by: "Mia", score: 91 }, { by: "Rae", score: null }, { by: "", score: 64 },
+  ];
+  const s = recapSummary(items);
+  assert.equal(s.songs, 4);
+  assert.equal(s.singers, 3);            // Rae, Mia, and the host ("")
+  assert.equal(s.top.score, 91);
+  assert.equal(s.top.by, "Mia");
+
+  const none = recapSummary([{ by: "Rae", score: null }]);
+  assert.equal(none.top, null, "an unscored night has no top score, not a zero");
+  assert.deepEqual(recapSummary([]), { songs: 0, singers: 0, top: null });
+  assert.deepEqual(recapSummary(null), { songs: 0, singers: 0, top: null });
+});
+
+test("appendPerformance: a long gap starts a new night", () => {
+  const t0 = 1_700_000_000_000;
+  let r = appendPerformance({ startedAt: 0, items: [] }, { name: "A" }, t0);
+  assert.equal(r.startedAt, t0);
+  assert.equal(r.items.length, 1);
+
+  r = appendPerformance(r, { name: "B" }, t0 + 60_000);       // same night
+  assert.equal(r.items.length, 2);
+  assert.equal(r.startedAt, t0);
+
+  // The gap is measured from the LAST song, not from when the night started.
+  const nextNight = t0 + 60_000 + RECAP_GAP_MS + 1;
+  r = appendPerformance(r, { name: "C" }, nextNight);
+  assert.deepEqual(r.items.map((i) => i.name), ["C"]);
+  assert.equal(r.startedAt, nextNight);
+});
+
+test("appendPerformance: a very long night stays bounded, oldest dropped first", () => {
+  let r = { startedAt: 0, items: [] };
+  for (let i = 0; i < 205; i++) r = appendPerformance(r, { name: `S${i}` }, 1000 + i * 1000);
+  assert.equal(r.items.length, 200);
+  assert.equal(r.items[0].name, "S5");
+  assert.equal(r.items[199].name, "S204");
+});
+
+test("recap.log/load: persists, and a stale night is discarded on load", () => {
+  const store = fakeStorage();
+  const t0 = 1_700_000_000_000;
+  const r = createRecap(store);
+  r.load(t0);
+  r.log({ id: "midi:1", name: "Tahan", artistName: "Bryan Chong" }, "Rae", 88, t0);
+  r.log({ id: "midi:2", name: "Beer" }, "", null, t0 + 1000);
+  assert.equal(r.items.length, 2);
+  assert.equal(r.items[0].score, 88);
+  assert.equal(r.items[1].score, null, "an unscored song logs null, not 0");
+  assert.equal(r.items[0].artist, "Bryan Chong");
+
+  // Same night: the log comes back.
+  const same = createRecap(store);
+  same.load(t0 + 60_000);
+  assert.equal(same.items.length, 2);
+
+  // Next evening: it starts empty, but the stored copy is only replaced on the next log().
+  const later = createRecap(store);
+  later.load(t0 + 1000 + RECAP_GAP_MS + 1);   // measured from the last song logged
+  assert.equal(later.items.length, 0);
+
+  // A missing song is ignored rather than logging a blank row.
+  later.log(null, "Rae", 50, t0 + 1000 + RECAP_GAP_MS + 1);
+  assert.equal(later.items.length, 0);
+  assert.ok(JSON.parse(store.getItem(RECAP_KEY)).items.length > 0, "the key itself is real");
 });

@@ -29,6 +29,7 @@ import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createReactions } from "./reactions.js";
 import { createDurationHints } from "./duration-hints.js";
+import { createRecap } from "./recap.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -50,6 +51,7 @@ const catalog = new Catalog();
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
+const recap = createRecap();
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
@@ -106,7 +108,7 @@ async function boot() {
   });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
-    onExportData: exportAppData, onImportData: importAppData, onShowRecap: showRecap,
+    onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => recap.show(),
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
@@ -128,7 +130,7 @@ async function boot() {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
     durations.load(); // learned song lengths → queue ETA on the phones
-    loadRecap();         // tonight's performance log (reset after a long enough gap)
+    recap.load();        // tonight's performance log (reset after a long enough gap)
     loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
     loadBlockedYoutube(); // hide videos that previously failed to embed
     if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
@@ -740,92 +742,6 @@ async function eraseAllData() {
   await purgeAllCaches();
   location.reload();
 }
-
-// ---------------------------------------------------------------------------
-// Tonight's recap. Every performance is logged as it finishes — song, singer, score — and a
-// long enough gap starts a new night. Nothing new is recorded to make this work: it is the
-// same data the queue, the singer banner and the scorer already produce, kept in order.
-// ---------------------------------------------------------------------------
-const recapStore = jsonStore("karaeoke.recap.v1", null);
-const RECAP_GAP_MS = 6 * 3600 * 1000;   // a gap this long means it's a different night
-let recap = { startedAt: 0, items: [] };
-
-function loadRecap() {
-  const r = recapStore.read();
-  if (r && Array.isArray(r.items)) recap = r;
-  const last = recap.items.length ? recap.items[recap.items.length - 1].at : 0;
-  if (!last || Date.now() - last > RECAP_GAP_MS) recap = { startedAt: 0, items: [] };
-}
-function saveRecap() { recapStore.write(recap); }
-/** Record one finished performance. `score` is null when nothing was scored (mic off, video). */
-function logPerformance(song, by, score) {
-  if (!song) return;
-  const now = Date.now();
-  const last = recap.items.length ? recap.items[recap.items.length - 1].at : 0;
-  if (!recap.items.length || now - last > RECAP_GAP_MS) recap = { startedAt: now, items: [] };
-  recap.items.push({
-    id: song.id, name: song.name || "", artist: song.artistName || "",
-    by: by || "", score: Number.isFinite(score) ? score : null, at: now,
-  });
-  if (recap.items.length > 200) recap.items.shift();   // a very long night still bounded
-  saveRecap();
-}
-
-function showRecap() {
-  const el = $("recap");
-  if (!el) return;
-  const items = recap.items;
-  const body = $("recap-body");
-  body.replaceChildren();
-  if (!items.length) {
-    const p = document.createElement("p");
-    p.className = "hint";
-    p.textContent = "No songs yet tonight. Sing something.";
-    body.appendChild(p);
-  } else {
-    const scored = items.filter((i) => i.score != null).sort((a, b) => b.score - a.score);
-    const singers = new Map();
-    for (const i of items) singers.set(i.by || "—", (singers.get(i.by || "—") || 0) + 1);
-
-    const stats = document.createElement("div");
-    stats.className = "recap-stats";
-    const top = scored[0];
-    stats.append(
-      recapStat(String(items.length), items.length === 1 ? "song" : "songs"),
-      recapStat(String(singers.size), singers.size === 1 ? "singer" : "singers"),
-      recapStat(top ? String(top.score) : "—", top ? `top score · ${top.by || "host"}` : "no scores"),
-    );
-    body.appendChild(stats);
-
-    const ul = document.createElement("ul");
-    ul.className = "recap-list";
-    for (const i of [...items].reverse()) {      // most recent first — that's what people ask about
-      const li = document.createElement("li");
-      const t = document.createElement("span");
-      t.className = "rc-title";
-      t.textContent = i.name || "(untitled)";
-      const a = document.createElement("span");
-      a.className = "rc-meta";
-      a.textContent = [i.artist, i.by ? `🎤 ${i.by}` : ""].filter(Boolean).join(" · ");
-      const s = document.createElement("span");
-      s.className = "rc-score";
-      s.textContent = i.score != null ? String(i.score) : "";
-      li.append(t, a, s);
-      ul.appendChild(li);
-    }
-    body.appendChild(ul);
-  }
-  el.classList.remove("hidden");
-}
-function recapStat(n, k) {
-  const d = document.createElement("div");
-  d.className = "recap-stat";
-  const a = document.createElement("b"); a.textContent = n;
-  const b = document.createElement("span"); b.textContent = k;
-  d.append(a, b);
-  return d;
-}
-function hideRecap() { const el = $("recap"); if (el) el.classList.add("hidden"); }
 
 // Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
 // layout, the remote room code, saved-YouTube pointers) lives ONLY in this browser's
@@ -1442,7 +1358,7 @@ function endOfSong() {
   endGuard = true;
   // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
   const res = finishScore();
-  logPerformance(current, currentBy, res ? res.score : null);   // one line in tonight's recap
+  recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
   hideLineBonus();
   clearStage();
   if (res) showScoreCard(res);
@@ -1679,8 +1595,7 @@ function wireUI() {
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
     // Modals own Escape while they're up: one press must close the thing in front of you,
     // not drop you out of focus mode behind it.
-    const recapOpen = !$("recap").classList.contains("hidden");
-    if (recapOpen) { hideRecap(); return; }
+    if (recap.isOpen()) { recap.hide(); return; }
     const modalOpen = document.body.classList.contains("settings-open");
     if (!typing && !modalOpen && document.body.classList.contains("focus-mode")) setFocus(false);
   });
@@ -1709,10 +1624,7 @@ function wireUI() {
     setPlayIcon();
   };
   $("btn-next").onclick = () => skipCurrent();
-  const recapClose = $("recap-close");
-  if (recapClose) recapClose.onclick = hideRecap;
-  const recapEl = $("recap");
-  if (recapEl) recapEl.onclick = (e) => { if (e.target === recapEl) hideRecap(); }; // click the scrim to dismiss
+  recap.wire();   // close button + click-the-scrim-to-dismiss
 
   // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
   // background tab while the AudioContext keeps playing — so a song that ended while the host
