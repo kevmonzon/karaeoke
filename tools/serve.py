@@ -64,6 +64,18 @@ AUDIO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-audio.json")
 # report them via POST /api/youtube-block; /api/youtube-search filters them out for EVERY user.
 YOUTUBE_BLOCKLIST_PATH = os.path.join(DATA_DIR, "youtube-blocklist.json")
 
+# Largest request body any endpoint here accepts. The biggest legitimate POST is a host
+# snapshot carrying the queue (a few KB); the cap exists because this is one thread per
+# connection, so an unbounded Content-Length is a cheap way to pin memory and threads.
+MAX_POST_BYTES = 1_000_000
+
+# Origins allowed to POST, for deployments behind a Host-rewriting reverse proxy. Empty (the
+# default) means "compare Origin against the request's own Host", which is correct for direct
+# LAN use and for cloudflared. Comma-separated, e.g. "https://karaoke.example.com".
+ALLOWED_ORIGINS = {
+    o.strip().rstrip("/") for o in (os.environ.get("KARAEOKE_ALLOWED_ORIGINS") or "").split(",") if o.strip()
+}
+
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
 DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/audio_lyrics/")
 DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/catalog-audio.json", "/soundfont.sf2")
@@ -268,6 +280,33 @@ def _save_yt_blocklist() -> None:
         print(f"  ! could not write youtube-blocklist.json: {exc}", file=sys.stderr)
 
 
+# Per-IP rate limit on block reports. The endpoint is unauthenticated by design (self-hosted
+# trust model), but a blocked id is PERSISTENT and shared with every user of the deployment,
+# with no un-block UI — so an unthrottled reporter can quietly censor real karaoke videos for
+# the whole house. A generous bucket still stops a script; a real client reports one id at a
+# time when a video actually fails to embed.
+_yt_block_rate: dict[str, list] = {}
+YT_BLOCK_RATE_MAX = 30      # reports per window, per client
+YT_BLOCK_RATE_WINDOW = 60.0  # seconds
+
+
+def _yt_block_allowed(client: str) -> bool:
+    """Token-bucket check for one block reporter. Call under no lock; takes its own."""
+    now = time.time()
+    with _yt_blocklist_lock:
+        start, count = _yt_block_rate.get(client, [now, 0])
+        if now - start >= YT_BLOCK_RATE_WINDOW:
+            start, count = now, 0
+        if count >= YT_BLOCK_RATE_MAX:
+            _yt_block_rate[client] = [start, count]
+            return False
+        _yt_block_rate[client] = [start, count + 1]
+        if len(_yt_block_rate) > 512:  # bound the table; stale windows are worthless anyway
+            for key in [k for k, v in _yt_block_rate.items() if now - v[0] >= YT_BLOCK_RATE_WINDOW]:
+                _yt_block_rate.pop(key, None)
+        return True
+
+
 def _add_yt_blocked(ids) -> int:
     """Add valid videoIds to the shared blocklist (persisting on change). Returns the new total."""
     with _yt_blocklist_lock:
@@ -374,6 +413,7 @@ _remote_lock = threading.Lock()
 _rooms: dict = {}             # roomCode(upper) -> {rev, ts, now, queue, settings, commands:[], seq}
 REMOTE_CMD_TYPES = frozenset((
     "enqueue", "remove", "reorder", "play", "pause", "next", "seek", "volume", "setting",
+    "react",   # an emoji (+ applause) sent to the host screen; the host allowlists the emoji
 ))
 REMOTE_CMD_MAX = 200          # per-room inbox cap (host-less safety)
 ROOM_TTL = 90                 # secs; a room whose host hasn't pushed in this long is dropped
@@ -650,13 +690,69 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _origin_ok(self) -> bool:
+        """Reject cross-site POSTs — drive-by CSRF from any other tab open on the LAN.
+
+        Every mutating endpoint here is unauthenticated, and the README recommends exposing
+        this server on a LAN or through a tunnel, so a page on any other site could otherwise
+        POST to /api/rebuild-catalog or /api/remote/command using the victim's browser as a
+        confused deputy. Browsers always attach Origin to a fetch POST and Sec-Fetch-Site to
+        every request; non-browser clients (curl, a scripted host) send neither, and those are
+        still allowed — this closes the browser vector, not the same-LAN trust model.
+        """
+        site = self.headers.get("Sec-Fetch-Site")
+        if site and site not in ("same-origin", "same-site", "none"):
+            self._log_origin_refusal(f"Sec-Fetch-Site: {site}")
+            return False
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        try:
+            netloc = urllib.parse.urlparse(origin).netloc
+        except ValueError:
+            return False
+        # A reverse proxy that rewrites Host (nginx's default proxy_pass does) would make the
+        # comparison below fail for a perfectly legitimate request, so ALLOWED_ORIGINS is the
+        # escape hatch: set KARAEOKE_ALLOWED_ORIGINS to the public origin(s) in that setup.
+        if ALLOWED_ORIGINS:
+            if origin.rstrip("/") in ALLOWED_ORIGINS:
+                return True
+            self._log_origin_refusal(f"Origin {origin} not in KARAEOKE_ALLOWED_ORIGINS")
+            return False
+        if netloc == (self.headers.get("Host") or ""):
+            return True
+        self._log_origin_refusal(f"Origin {origin} != Host {self.headers.get('Host')}")
+        return False
+
+    def _log_origin_refusal(self, why: str) -> None:
+        # Loud on purpose: behind a Host-rewriting proxy this is the difference between
+        # "the remote mysteriously stopped working" and a one-line fix.
+        sys.stderr.write(
+            f"  ! refused cross-origin POST {self.path} ({why}).\n"
+            f"    If this is your own reverse proxy, set KARAEOKE_ALLOWED_ORIGINS=<your public origin>.\n"
+        )
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         # Read (and thus CONSUME) the whole request body once, up front. Under HTTP/1.1
         # keep-alive an un-drained body would desync the next request on the socket, so
         # every branch below — including the 404 — works from this drained buffer.
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        # The length is CAPPED first: this is one thread per connection, so a client claiming
+        # a multi-gigabyte body could otherwise pin memory and a thread. Every real body here
+        # is a few KB (the largest is a host snapshot carrying the queue).
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            length = -1
+        if length < 0 or length > MAX_POST_BYTES:
+            self._send_json({"ok": False, "error": "request too large"}, 413)
+            self.close_connection = True  # body was never drained → this socket can't be reused
+            return
         raw = self.rfile.read(length) if length else b""
+
+        if not self._origin_ok():
+            self._send_json({"ok": False, "error": "cross-origin request refused"}, 403)
+            return
 
         if path == "/api/rebuild-catalog":
             if not _rebuild_lock.acquire(blocking=False):
@@ -739,10 +835,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Client reports videoIds that can't be embedded → shared blocklist (filtered for all).
             # Body: {"videoIds":[...]} or {"videoId":"..."} → {"ok", "count": total}.
             try:
+                if not _yt_block_allowed(self.client_address[0]):
+                    self._send_json({"ok": False, "error": "rate limited"}, 429)
+                    return
                 payload = json.loads(raw or b"{}")
                 ids = payload.get("videoIds")
                 if not isinstance(ids, list):
                     ids = [payload.get("videoId")] if payload.get("videoId") else []
+                ids = ids[:500]  # bounded, but roomy enough for a client's boot-time seed
                 self._send_json({"ok": True, "count": _add_yt_blocked(ids)})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]})

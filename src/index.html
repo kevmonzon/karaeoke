@@ -32,16 +32,42 @@
   </script>
 </head>
 <body>
+  <!-- Icon sprite. The chrome used to be raw system emoji, which meant the transport row mixed
+       full-colour emoji (🎤 🎵) with monochrome glyphs (▶ ⏭ − ＋) at different weights and
+       baselines on every OS — noise rather than one instrument, and unreadable across a room.
+       One inline <symbol> sheet: no dependency, crisp at any --ui-scale, and every icon
+       inherits currentColor so the whole row finally runs through the token system.
+       Stroke-based on a 24-grid, 2px round caps — one drawing language.
+       (Deliberately NOT converted: the per-song kind icons 🎤🎞️🎵🌐, which are generated in JS
+       and shared with the phone remote — see CLAUDE.md.) -->
+  <svg class="sprite" aria-hidden="true" focusable="false" width="0" height="0" style="position:absolute">
+    <defs>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></symbol>
+      <symbol id="i-queue" viewBox="0 0 24 24"><path d="M4 7h16M4 12h12M4 17h8"/></symbol>
+      <symbol id="i-focus" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 8h16M4 16h16"/><circle cx="9" cy="8" r="2.4"/><circle cx="15" cy="16" r="2.4"/></symbol>
+      <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke-linejoin="round"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 5.5v13l9-6.5z" fill="currentColor" stroke-linejoin="round"/><path d="M18 5v14"/></symbol>
+      <symbol id="i-melody" viewBox="0 0 24 24"><circle cx="8" cy="17" r="3"/><path d="M11 17V5l9-2v12"/><circle cx="17" cy="15" r="3"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    </defs>
+  </svg>
+
   <header class="topbar">
     <div class="brand">Ka-<span>Rae</span>-oke</div>
     <div id="status" class="status">Loading…</div>
     <div class="toggles">
-      <button id="toggle-lib" class="gear" title="Toggle song list">🔍</button>
-      <button id="toggle-queue" class="gear" title="Toggle queue">▦</button>
+      <button id="toggle-lib" class="gear" title="Toggle song list" aria-label="Toggle song list"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
+      <button id="toggle-queue" class="gear" title="Toggle queue" aria-label="Toggle queue"><svg class="icon" aria-hidden="true"><use href="#i-queue"></use></svg></button>
     </div>
-    <button id="btn-focus" class="gear" title="Focus mode — hide panels for a full-screen lyrics view (Esc to exit)" aria-label="Focus mode">◎</button>
-    <button id="btn-settings" class="gear" title="Settings">⚙</button>
-    <button id="btn-fullscreen" class="gear" title="Full screen">⛶</button>
+    <button id="btn-focus" class="gear" title="Focus mode — hide panels for a full-screen lyrics view (Esc to exit)" aria-label="Focus mode"><svg class="icon" aria-hidden="true"><use href="#i-focus"></use></svg></button>
+    <button id="btn-settings" class="gear" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
+    <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"></use></svg></button>
+    <div class="boot-bar" aria-hidden="true"></div>
   </header>
 
   <main class="layout">
@@ -123,6 +149,19 @@
           <div id="tc-singer" class="tc-singer"></div>
           <div id="tc-key" class="tc-key"></div>
         </div>
+
+        <!-- The score card: shown at the natural end of a song, over the cleared stage.
+             aria-live so the number is announced, since it appears without interaction. -->
+        <div id="score-card" class="score-card" role="status" aria-live="polite">
+          <div id="sc-song" class="sc-song"></div>
+          <div id="sc-score" class="sc-score">0</div>
+          <div id="sc-band" class="sc-band"></div>
+          <div id="sc-singer" class="sc-singer"></div>
+          <div id="sc-best" class="sc-best"></div>
+        </div>
+
+        <!-- Per-line bonus: a small chip flashed as each lyric line goes by. -->
+        <div id="line-bonus" class="line-bonus" aria-hidden="true"></div>
       </div>
 
       <!-- MIDI mode: per-channel mixer band (volume / mute / solo + live VU). Rows are
@@ -149,27 +188,27 @@
            .playbar flex directly (even space-between); it regroups on phones. -->
       <div class="playbar">
         <div class="transport">
-          <button id="btn-play" class="primary" title="Play/Pause (Space)">▶</button>
-          <button id="btn-next" title="Next in queue">⏭</button>
-          <button id="btn-melody" class="melody-toggle" title="Melody guide on/off">🎵</button>
-          <button id="btn-mic" class="mic-toggle" title="Microphone on/off">🎤</button>
+          <button id="btn-play" class="primary" title="Play/Pause (Space)" aria-label="Play or pause"><svg class="icon" aria-hidden="true"><use id="play-icon" href="#i-play"></use></svg></button>
+          <button id="btn-next" title="Next in queue" aria-label="Next song in queue"><svg class="icon" aria-hidden="true"><use href="#i-next"></use></svg></button>
+          <button id="btn-melody" class="melody-toggle" title="Melody guide on/off" aria-label="Melody guide on or off"><svg class="icon" aria-hidden="true"><use href="#i-melody"></use></svg></button>
+          <button id="btn-mic" class="mic-toggle" title="Microphone on/off" aria-label="Microphone on or off"><svg class="icon" aria-hidden="true"><use href="#i-mic"></use></svg></button>
         </div>
 
         <div class="controls">
           <div class="ctl">
             <label>Key <em id="key-name"></em></label>
             <div class="stepper">
-              <button id="key-down">−</button>
+              <button id="key-down" aria-label="Key down one semitone"><svg class="icon" aria-hidden="true"><use href="#i-minus"></use></svg></button>
               <span id="key-val">0</span>
-              <button id="key-up">＋</button>
+              <button id="key-up" aria-label="Key up one semitone"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
             </div>
           </div>
           <div class="ctl">
             <label>Tempo</label>
             <div class="stepper">
-              <button id="tempo-down">−</button>
+              <button id="tempo-down" aria-label="Slower"><svg class="icon" aria-hidden="true"><use href="#i-minus"></use></svg></button>
               <span id="tempo-val">1.00×</span>
-              <button id="tempo-up">＋</button>
+              <button id="tempo-up" aria-label="Faster"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button>
             </div>
           </div>
           <div class="ctl">
@@ -183,8 +222,8 @@
 
     <!-- RIGHT: queue -->
     <aside class="queue">
-      <h3>Queue <span id="queue-count" class="muted"></span></h3>
-      <!-- Phone-remote QR (shown only while remote.enabled; see app.js refreshRemoteQr). -->
+      <h3>Queue <span id="queue-heading-count" class="muted"></span></h3>
+      <!-- Phone-remote QR (shown only while remote.enabled; see remote-glue.js refreshQr). -->
       <div id="remote-qr" class="remote-qr">
         <div class="remote-qr-title">📱 Scan to control from your phone</div>
         <div id="remote-qr-code" class="remote-qr-code" role="img" aria-label="Remote-control QR code"></div>
@@ -197,10 +236,10 @@
   </main>
 
   <!-- settings drawer -->
-  <div id="settings-panel" class="settings-panel hidden">
+  <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <div class="settings-head">
-      <h3>Settings</h3>
-      <button id="settings-close" class="gear" title="Close">✕</button>
+      <h3 id="settings-title">Settings</h3>
+      <button id="settings-close" class="gear" title="Close" aria-label="Close settings">✕</button>
     </div>
     <div class="settings-body">
       <div class="set-search">
@@ -327,8 +366,16 @@
         </label>
         <label class="row toggle"><span>Overlay my pitch (mic)</span><input id="set-guide-mic" type="checkbox" /></label>
         <label class="row toggle"><span>Soft pitch trail</span><input id="set-guide-trail" type="checkbox" /></label>
-        <label class="row toggle"><span>Scoring</span><input id="set-guide-score" type="checkbox" /></label>
+        <label class="row toggle"><span>Live score on the guide</span><input id="set-guide-score" type="checkbox" /></label>
         <div class="hint sub">Reads the guide melody from the MIDI. Overlay + scoring need the mic on.</div>
+      </section>
+
+      <section>
+        <h4>Score</h4>
+        <label class="row toggle"><span>Score my singing</span><input id="set-score" type="checkbox" /></label>
+        <label class="row toggle"><span>Score card when a song ends</span><input id="set-score-card" type="checkbox" /></label>
+        <label class="row toggle"><span>Golden notes count double</span><input id="set-score-golden" type="checkbox" /></label>
+        <div class="hint sub">Scored per note against the song's own melody, octave-forgivingly. MIDI songs only, and the mic must be on. Your best per song is remembered.</div>
 
         <div class="sub-h">Guide vocal (melody)</div>
         <label class="row"><span>Volume <em id="set-gv-vol-val">100%</em></span><input id="set-gv-vol" type="range" min="0" max="2" step="0.05" value="1" /></label>
@@ -442,16 +489,56 @@
         <div class="hint sub">Showing <em id="list-count">0</em> songs</div>
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
         <div id="rebuild-status" class="hint sub"></div>
+        <div id="cache-status" class="hint sub"></div>
+        <button id="show-recap" class="reset-btn">🏆 Tonight's recap</button>
+        <div class="hint sub">Songs sung, who sang them, and the top scores. Resets after a long break.</div>
+      </section>
+
+      <section>
+        <h4>Queue</h4>
+        <label class="row toggle"><span>Fair play (take turns)</span><input id="set-fairplay" type="checkbox" /></label>
+        <label class="row">
+          <span>Max reservations per guest <em id="set-maxper-val">off</em></span>
+          <input id="set-maxper" type="range" min="0" max="6" step="1" value="0" />
+        </label>
+        <div class="hint sub">Fair play puts each new song at the back of that singer's own round, so everyone sings once before anyone sings twice. Songs already queued never move.</div>
+      </section>
+
+      <section>
+        <h4>Reactions</h4>
+        <label class="row toggle"><span>Let phones send reactions</span><input id="set-reactions" type="checkbox" /></label>
+        <label class="row toggle"><span>Play applause</span><input id="set-reactions-sound" type="checkbox" /></label>
+        <div class="hint sub">Guests can send 👏 🎉 🔥 from the Now tab; it floats up this screen. The applause is synthesized — no audio files.</div>
       </section>
       </details>
 
       <button id="settings-reset" class="reset-btn">Reset to defaults</button>
       <p class="hint">Defaults live in <code>src/config.js</code>. Edit it, then Reset.</p>
 
+      <section>
+        <h4>Backup</h4>
+        <div class="hint sub">Your favorites, queue and settings live only in this browser. Export a copy before you clear site data or move to another machine.</div>
+        <button id="export-data" class="reset-btn">⭳ Export app data</button>
+        <button id="import-data" class="reset-btn">⭱ Import app data…</button>
+        <input id="import-file" type="file" accept="application/json,.json" hidden />
+        <div id="data-status" class="hint sub"></div>
+      </section>
+
       <div class="danger-zone">
         <button id="erase-all" class="reset-btn danger">Erase all app data</button>
         <p class="hint">Factory reset: also clears your queue, recents, favorites, panel layout, phone-remote code, saved YouTube songs, and the cached soundfont. Irreversible.</p>
       </div>
+    </div>
+  </div>
+
+  <!-- Tonight's recap (⚙ → Library). Rendered from the performance log app.js keeps. -->
+  <div id="recap" class="recap hidden" role="dialog" aria-modal="true" aria-labelledby="recap-title">
+    <div class="recap-card">
+      <div class="recap-head">
+        <h3 id="recap-title">🏆 Tonight</h3>
+        <button id="recap-close" class="gear" title="Close" aria-label="Close recap">✕</button>
+      </div>
+      <div id="recap-body" class="recap-body"></div>
     </div>
   </div>
 

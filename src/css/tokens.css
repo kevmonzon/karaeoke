@@ -82,7 +82,6 @@
   --border-soft: #1d2231;
   --text: #eef2ff;
   --text-muted: #8b93ab;
-  --text-dim: #5b627a;
 
   --brand: var(--pink);
   --brand-ink: #ffffff;         /* text/glyph on a brand fill */
@@ -114,20 +113,19 @@
     --border-soft: #e6e9f2;
     --text: #131722;
     --text-muted: #5c667e;
-    --text-dim: #97a0b5;
 
     --brand: #e21e6b;           /* pink, darkened → AA on white */
     --brand-ink: #ffffff;
     --brand-2: #0f8576;         /* teal, darkened → AA on white */
     --brand-2-ink: #ffffff;
 
-    --sung: #b8730a;            /* amber → readable wipe on a light stage */
-    --unsung: #aeb4c6;
+    --sung: #a4650a;            /* amber → readable wipe on a light stage (4.7:1 on white) */
+    --unsung: #8a91a8;          /* the NOT-yet-sung half of every syllable — 3.1:1, was 2.1:1 */
 
     --scrim: rgba(20, 24, 34, .32);
     --focus: #0f8576;
 
-    --ok: #0f8576; --warn: #b7791f; --bad: #d64550;
+    --ok: #0f8576; --warn: #8f5e10; --bad: #d64550;
 
     --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
     --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
@@ -146,20 +144,19 @@
   --border-soft: #e6e9f2;
   --text: #131722;
   --text-muted: #5c667e;
-  --text-dim: #97a0b5;
 
   --brand: #e21e6b;
   --brand-ink: #ffffff;
   --brand-2: #0f8576;
   --brand-2-ink: #ffffff;
 
-  --sung: #b8730a;
-  --unsung: #aeb4c6;
+  --sung: #a4650a;
+  --unsung: #8a91a8;
 
   --scrim: rgba(20, 24, 34, .32);
   --focus: #0f8576;
 
-  --ok: #0f8576; --warn: #b7791f; --bad: #d64550;
+  --ok: #0f8576; --warn: #8f5e10; --bad: #d64550;
 
   --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
   --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);

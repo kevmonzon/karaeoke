@@ -26,16 +26,18 @@
  */
 
 import { KeyShiftChain } from "./pitch-chain.js";
+import { MediaEngineBase } from "./media-engine.js";
 
 const DRIFT_TOLERANCE = 0.08; // seconds of picture↔sound drift we allow before nudging
 
-export class VideoEngine {
+export class VideoEngine extends MediaEngineBase {
   /**
    * @param {HTMLVideoElement} videoEl  the picture element (#kv), kept muted
    * @param {HTMLAudioElement} audioEl  the sound element (#kva)
    * @param {import('./audio.js').AudioEngine} audioEngine  shared engine (context + worklet)
    */
   constructor(videoEl, audioEl, audioEngine) {
+    super();
     this.video = videoEl;
     this.audio = audioEl;
     this.chain = new KeyShiftChain(audioEngine); // key-shift + >100% volume on #kva
@@ -43,12 +45,33 @@ export class VideoEngine {
     this._volume = 0.9;
     this._rate = 1;
     this._driftTimer = null;
+    this._live = false;           // true between load() and unload() — see _bindErrors
+    this.onError = null;          // set by app.js: (reason) => skip this song
 
     this.video.muted = true;      // the picture never makes sound
     this.video.playsInline = true;
     this.video.loop = false;
     this.audio.preload = "auto";
     this.audio.volume = Math.min(1, this._volume);
+    this._bindErrors();
+  }
+
+  /**
+   * Report a dead file instead of hanging. A 404/corrupt clip fires `error` on the element,
+   * but `_ready()`'s 4 s timeout resolves anyway and duration stays 0 — so nothing downstream
+   * ever noticed and the stage sat blank forever.
+   * `_live` gates the handler: unload() removes .src and calls .load(), which itself fires a
+   * spurious "Empty src" error we must not mistake for a real failure. Fires once per load.
+   */
+  _bindErrors() {
+    const fail = (which) => (ev) => {
+      if (!this._live) return;
+      this._live = false;
+      const err = ev && ev.target && ev.target.error;
+      if (this.onError) this.onError(`${which} ${err ? (err.message || "error " + err.code) : "error"}`);
+    };
+    this.video.addEventListener("error", fail("picture"));
+    this.audio.addEventListener("error", fail("sound"));
   }
 
   // --- loading --------------------------------------------------------------
@@ -57,6 +80,7 @@ export class VideoEngine {
    *  playVideo() issues right after, leaving the clip loaded-but-paused. */
   load(url) {
     this._stopDriftTimer();
+    this._live = true;            // arm error reporting for this file
     this.video.src = url;
     this.audio.src = url;
     this.video.playbackRate = this.audio.playbackRate = this._rate;
@@ -68,6 +92,7 @@ export class VideoEngine {
   /** Detach sources (called when switching away to a MIDI song) — frees decoders. */
   unload() {
     this.stop();
+    this._live = false;           // the src-removal below fires a spurious error — ignore it
     this.video.removeAttribute("src");
     this.audio.removeAttribute("src");
     this.video.load();
@@ -102,7 +127,6 @@ export class VideoEngine {
     this._stopDriftTimer();
   }
 
-  toggle() { this.video.paused ? this.play() : this.pause(); }
 
   stop() {
     this.pause();
@@ -110,10 +134,6 @@ export class VideoEngine {
     try { this.audio.currentTime = this._audioTargetFor(0); } catch (_) {}
   }
 
-  restart() {
-    try { this.video.currentTime = 0; } catch (_) {}
-    this.play();
-  }
 
   /** Seek to a picture time; the sound follows the offset. */
   seek(seconds) {

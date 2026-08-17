@@ -16,9 +16,26 @@ import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuff
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
 import { matchesQuery } from "../src/js/settings-ui.js";
-import { pickRemoteBaseUrl } from "../src/js/remote-host.js";
+import { pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "../src/js/remote-host.js";
 import { parseLrc, parseVtt, parseSrt, parsePlainText, linesFromLyricFile, distributeLineTimes } from "../src/js/lyrics-formats.js";
 import { syncClock, clockTime, SNAP_SEC } from "../src/js/sync-clock.js";
+import { fairInsertIndex, countBy, queueEta, formatEta, DEFAULT_SONG_SEC } from "../src/js/queue-order.js";
+import { yinPitch, MAX_HZ } from "../src/js/pitch-yin.js";
+import { MediaEngineBase } from "../src/js/media-engine.js";
+import { jsonStore, collectAppData, restoreAppData, clearAppData, listAppKeys, APP_PREFIX } from "../src/js/store.js";
+import {
+  foldSemitones, pitchCredit, markGolden, curveScore, scoreBand, Scorer,
+} from "../src/js/scoring.js";
+import { REACTIONS, createReactions } from "../src/js/reactions.js";
+import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js";
+import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY } from "../src/js/recap.js";
+import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-presentation.js";
+import { createQueue, queueItemMatches } from "../src/js/queue.js";
+import { createSession, SESSION_KEY } from "../src/js/session.js";
+import { createLibraryView, mergeSearchRows, emptyHint, EMPTY_LIBRARY, FAVORITES_KEY, YOUTUBE_KEY } from "../src/js/library-view.js";
+import { createRemoteGlue, REMOTE_SETTABLE, HOST_ROOM_KEY } from "../src/js/remote-glue.js";
+import { resolveSongRef } from "../src/js/catalog.js";
+import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
 test("snapNote: chromatic rounds to the nearest semitone", () => {
@@ -490,6 +507,48 @@ test("pickRemoteBaseUrl: loopback + no LAN URL yields empty string", () => {
   assert.equal(pickRemoteBaseUrl("", "http://localhost:8080", ""), "");
 });
 
+// --- clampRemoteSetting (a guest `setting` command's VALUE, not just its path) ------
+// The phone UI clamps client-side; a raw POST from anything else on the LAN does not, and
+// audio.volume goes straight to a GainNode. `undefined` is the reject sentinel because 0,
+// false and -12 are all legitimate stored values.
+test("clampRemoteSetting: clamps each path to its own range", () => {
+  assert.equal(clampRemoteSetting("audio.volume", 1e6), 2);      // the deafen-the-room case
+  assert.equal(clampRemoteSetting("audio.volume", -5), 0);
+  assert.equal(clampRemoteSetting("audio.volume", 1.25), 1.25);  // in range → untouched
+  assert.equal(clampRemoteSetting("audio.key", 999999999), 12);
+  assert.equal(clampRemoteSetting("audio.key", -99), -12);
+  assert.equal(clampRemoteSetting("audio.tempo", 40), 1.5);
+  assert.equal(clampRemoteSetting("audio.tempo", 0.1), 0.5);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", 99999), 2000);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", -99999), -2000);
+});
+test("clampRemoteSetting: integer paths round, and legitimate zero/false survive", () => {
+  assert.equal(clampRemoteSetting("audio.key", 3.7), 4);
+  assert.equal(clampRemoteSetting("lyrics.offsetMs", -50.4), -50);
+  assert.equal(clampRemoteSetting("audio.key", 0), 0);          // not rejected
+  assert.equal(clampRemoteSetting("audio.volume", 0), 0);       // not rejected
+  assert.equal(clampRemoteSetting("guide.vocal.mute", false), false);
+  assert.equal(clampRemoteSetting("guide.vocal.mute", true), true);
+});
+test("clampRemoteSetting: rejects unknown paths and junk values with undefined", () => {
+  assert.equal(clampRemoteSetting("mic.volume", 1), undefined);        // not allowlisted
+  assert.equal(clampRemoteSetting("__proto__", 1), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", "loud"), undefined); // wrong type
+  assert.equal(clampRemoteSetting("audio.volume", NaN), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", Infinity), undefined);
+  assert.equal(clampRemoteSetting("audio.volume", null), undefined);
+  assert.equal(clampRemoteSetting("guide.vocal.mute", "yes"), undefined); // bool path, string value
+  assert.equal(clampRemoteSetting("guide.vocal.mute", 1), undefined);
+});
+test("clampRemoteSetting: every allowlisted path is actually validatable", () => {
+  // Guards the allowlist and the range table against drifting apart — a path with no range
+  // would silently become un-settable, a range with no path would be dead code.
+  for (const p of REMOTE_SETTABLE_PATHS) {
+    const v = clampRemoteSetting(p, p === "guide.vocal.mute" ? true : 0);
+    assert.notEqual(v, undefined, `${p} should accept a legal value`);
+  }
+});
+
 // --- Catalog.lyricsUrl (AUDIO sidecar) --------------------------------------
 test("Catalog.lyricsUrl: percent-encodes the sidecar path; null when absent", () => {
   assert.equal(
@@ -652,4 +711,1045 @@ test("syncClock: junk input can't fling the clock", () => {
   const d = syncClock(null, { position: undefined, age: undefined, paused: false, at: 0 });
   assert.equal(d.base, 0);
   assert.equal(clockTime(null, 123), 0);
+});
+
+// --- scoring (the videoke score) --------------------------------------------
+// The maths that decides whether a room cheers. The behaviours pinned here are the ones
+// that make it FEEL right, not just compute — see the rationale block in scoring.js.
+test("foldSemitones: the octave does not matter", () => {
+  assert.equal(foldSemitones(60, 60), 0);
+  assert.equal(foldSemitones(72, 60), 0);      // an octave up is still the right note
+  assert.equal(foldSemitones(48, 60), 0);      // …and an octave down
+  assert.equal(foldSemitones(61, 60), 1);
+  assert.equal(foldSemitones(59, 60), -1);
+  assert.equal(foldSemitones(67, 60), -5);     // folded to the near side (a fifth up = 5 down)
+  assert.equal(Math.abs(foldSemitones(66, 60)), 6);
+});
+
+test("pitchCredit: full inside the window, decaying to zero — never a cliff", () => {
+  assert.equal(pitchCredit(0), 1);
+  assert.equal(pitchCredit(0.5), 1);
+  assert.equal(pitchCredit(-0.5), 1);
+  assert.equal(pitchCredit(2.5), 0);
+  assert.equal(pitchCredit(9), 0);
+  const mid = pitchCredit(1.5);
+  assert.ok(mid > 0 && mid < 1);
+  assert.ok(pitchCredit(1) > pitchCredit(2));  // monotonic decay
+});
+
+test("markGolden: the longest notes become the hooks", () => {
+  const notes = [
+    { note: 60, start: 0, end: 0.2 },
+    { note: 62, start: 1, end: 4 },   // longest
+    { note: 64, start: 5, end: 5.2 },
+    { note: 65, start: 6, end: 6.1 },
+  ];
+  const g = markGolden(notes, 0.25);
+  assert.deepEqual(g, [false, true, false, false]);
+  assert.deepEqual(markGolden([], 0.5), []);
+  assert.deepEqual(markGolden(notes, 0), [false, false, false, false]);
+});
+
+test("curveScore + scoreBand: generous in the middle, Magic Sing's bands", () => {
+  assert.equal(curveScore(0), 0);
+  assert.equal(curveScore(1), 100);
+  assert.ok(curveScore(0.5) > 50);            // the curve lifts an honest amateur
+  assert.equal(curveScore(-1), 0);            // clamped
+  assert.equal(curveScore(9), 100);
+  assert.equal(scoreBand(100).tier, "excellent");
+  assert.equal(scoreBand(96).tier, "excellent");
+  assert.equal(scoreBand(90).tier, "good");
+  assert.equal(scoreBand(75).tier, "ok");
+  assert.equal(scoreBand(40).tier, "meh");
+  assert.equal(scoreBand(0).tier, "none");
+});
+
+test("Scorer: perfect singing scores 100, an octave off still scores 100", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 1, end: 2 }];
+  const perfect = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) perfect.addFrame(t, 60);
+  for (let t = 1; t < 2; t += 0.1) perfect.addFrame(t, 62);
+  assert.equal(perfect.finish().score, 100);
+
+  const octave = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) octave.addFrame(t, 48);
+  for (let t = 1; t < 2; t += 0.1) octave.addFrame(t, 74);
+  assert.equal(octave.finish().score, 100);
+});
+
+test("Scorer: silence is neutral, but a note never sung still costs you", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 1, end: 2 }];
+  const s = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);   // first note nailed
+  for (let t = 1; t < 2; t += 0.1) s.addFrame(t, null); // breathed through the second
+  const res = s.finish();
+  assert.equal(res.sung, 1);
+  assert.ok(res.score > 40 && res.score < 100);          // half the song → not a zero, not a win
+  // A frame of silence must not be counted as a wrong note on the FIRST note either.
+  assert.equal(s.noteRatio(0), 1);
+});
+
+test("Scorer: unvoiced-only or no melody yields no result at all", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }];
+  const quiet = new Scorer(notes);
+  for (let t = 0; t < 1; t += 0.1) quiet.addFrame(t, null);
+  assert.equal(quiet.finish(), null);                    // nobody sang → no card
+  assert.equal(new Scorer([]).finish(), null);
+  assert.equal(new Scorer(null).hasMelody, false);
+});
+
+test("Scorer: golden notes are worth double", () => {
+  // Two notes of equal length; the scorer is told note 0 is golden by making it longest.
+  const notes = [{ note: 60, start: 0, end: 3 }, { note: 62, start: 3, end: 4 }];
+  const hitLong = new Scorer(notes, { goldenFraction: 0.5 });
+  for (let t = 0; t < 3; t += 0.1) hitLong.addFrame(t, 60);   // the golden note, nailed
+  for (let t = 3; t < 4; t += 0.1) hitLong.addFrame(t, 70);   // the other, badly missed
+  const hitShort = new Scorer(notes, { goldenFraction: 0.5 });
+  for (let t = 0; t < 3; t += 0.1) hitShort.addFrame(t, 70);  // golden note missed
+  for (let t = 3; t < 4; t += 0.1) hitShort.addFrame(t, 62);  // the other nailed
+  assert.ok(hitLong.finish().score > hitShort.finish().score);
+});
+
+test("Scorer: noteIndexAt finds the note, and gaps between phrases score nothing", () => {
+  const s = new Scorer([{ note: 60, start: 0, end: 1 }, { note: 62, start: 5, end: 6 }]);
+  assert.equal(s.noteIndexAt(0.5), 0);
+  assert.equal(s.noteIndexAt(5.5), 1);
+  assert.equal(s.noteIndexAt(3), -1);        // instrumental gap
+  assert.equal(s.noteIndexAt(-1), -1);
+  assert.equal(s.addFrame(3, 60), -1);       // singing over the gap is neither rewarded nor punished
+  assert.equal(s.attempted, false);
+});
+
+test("Scorer: the live score only counts notes that have gone by", () => {
+  const notes = [{ note: 60, start: 0, end: 1 }, { note: 62, start: 100, end: 101 }];
+  const s = new Scorer(notes, { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);
+  assert.equal(s.liveScore(), 100);          // not dragged down by a note 99 s away
+  assert.ok(s.finish().score < 100);         // the final tally does include it
+});
+
+test("Scorer: windowRatio rates a lyric line, and returns null for an instrumental one", () => {
+  const s = new Scorer([{ note: 60, start: 0, end: 1 }], { golden: false });
+  for (let t = 0; t < 1; t += 0.1) s.addFrame(t, 60);
+  assert.equal(s.windowRatio(0, 1), 1);
+  assert.equal(s.windowRatio(20, 30), null); // no melody in that window → don't rate the singer
+});
+
+// --- queue-order (fair play + "how long until mine?") -----------------------
+test("fairInsertIndex: round-robin — everyone sings once before anyone sings twice", () => {
+  // Alice, Bob, Alice already queued → rounds [0, 0, 1]. Carl's first song jumps the
+  // second Alice song, because Carl hasn't had a turn at all yet.
+  assert.equal(fairInsertIndex(["alice", "bob", "alice"], "carl"), 2);
+  // Bob's second song goes after Alice's second (both round 1), not before it.
+  assert.equal(fairInsertIndex(["alice", "bob", "alice"], "bob"), 3);
+  // An empty queue is an empty queue.
+  assert.equal(fairInsertIndex([], "alice"), 0);
+  // The host ("") is just another singer: its 2nd song waits behind everyone's 1st.
+  assert.equal(fairInsertIndex(["", "alice"], ""), 2);          // round 1 → the back
+  assert.equal(fairInsertIndex(["", "alice", ""], "bob"), 2);   // Bob's 1st jumps the host's 2nd
+  // A newcomer joins the BACK of the current round, not the front of it.
+  assert.equal(fairInsertIndex(["", "alice"], "bob"), 2);
+  assert.equal(fairInsertIndex(null, "x"), 0);
+});
+
+test("fairInsertIndex: never reorders the existing queue, only chooses an insert point", () => {
+  // Whatever it returns must be a valid splice index into the current list.
+  const q = ["a", "b", "a", "c", "a"];
+  for (const who of ["a", "b", "c", "d", ""]) {
+    const at = fairInsertIndex(q, who);
+    assert.ok(at >= 0 && at <= q.length, `${who} → ${at}`);
+  }
+});
+
+test("countBy: counts one singer's pending reservations", () => {
+  assert.equal(countBy(["a", "b", "a"], "a"), 2);
+  assert.equal(countBy(["a", "b", "a"], "z"), 0);
+  assert.equal(countBy(["", "a"], ""), 1);     // host-added songs count as their own singer
+  assert.equal(countBy(undefined, "a"), 0);
+});
+
+test("queueEta: sums known lengths and falls back to an average for unplayed songs", () => {
+  assert.equal(queueEta(60, [180, 200], 0), 60);            // next up = whatever's left of now
+  assert.equal(queueEta(60, [180, 200], 1), 240);
+  assert.equal(queueEta(60, [180, 200], 2), 440);
+  assert.equal(queueEta(0, [null, undefined], 2), DEFAULT_SONG_SEC * 2); // never played → estimate
+  assert.equal(queueEta(-5, [], 3), 0);                      // junk clamps rather than throwing
+});
+
+test("formatEta: reads like a person would say it", () => {
+  assert.equal(formatEta(0), "now");
+  assert.equal(formatEta(44), "now");
+  assert.equal(formatEta(240), "~4 min");
+  assert.equal(formatEta(3600), "~1 h");
+  assert.equal(formatEta(4200), "~1 h 10 min");
+});
+
+// --- YIN pitch detection ----------------------------------------------------
+// The point of YIN over plain autocorrelation is octave errors, so that's what's tested:
+// a signal with a strong harmonic must still report the FUNDAMENTAL.
+function tone(hz, rate, n, harmonics = [1]) {
+  const b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    harmonics.forEach((amp, k) => { v += amp * Math.sin(2 * Math.PI * hz * (k + 1) * i / rate); });
+    b[i] = v / harmonics.length;
+  }
+  return b;
+}
+
+test("yinPitch: recovers a pure tone to within a few cents", () => {
+  const rate = 44100;
+  for (const hz of [110, 220, 440, 660]) {
+    const got = yinPitch(tone(hz, rate, 4096), rate);
+    assert.ok(Math.abs(got - hz) / hz < 0.01, `${hz} Hz → ${got}`);
+  }
+});
+
+test("yinPitch: a harmonic-rich tone still reports the fundamental, not an octave up", () => {
+  const rate = 44100;
+  // A vowel-ish spectrum: fundamental plus louder 2nd and 3rd harmonics — precisely the case
+  // that makes naive autocorrelation jump an octave.
+  const got = yinPitch(tone(196, rate, 4096, [0.6, 1.0, 0.8, 0.4]), rate);
+  assert.ok(Math.abs(got - 196) / 196 < 0.03, `expected ~196 Hz, got ${got}`);
+});
+
+test("yinPitch: silence and noise are reported as unvoiced, not guessed at", () => {
+  const rate = 44100;
+  assert.equal(yinPitch(new Float32Array(2048), rate), -1);        // digital silence
+  const quiet = tone(440, rate, 2048);
+  for (let i = 0; i < quiet.length; i++) quiet[i] *= 0.0005;       // below the RMS floor
+  assert.equal(yinPitch(quiet, rate), -1);
+  assert.equal(yinPitch(new Float32Array(0), rate), -1);
+  assert.equal(yinPitch(tone(440, rate, 2048), 0), -1);            // junk sample rate
+});
+
+test("yinPitch: refuses frequencies outside a plausible human range", () => {
+  const rate = 44100;
+  assert.equal(yinPitch(tone(30, rate, 8192), rate), -1);   // below MIN_HZ
+  const high = yinPitch(tone(2000, rate, 4096), rate);
+  assert.ok(high === -1 || high <= MAX_HZ);
+});
+
+// --- MediaEngineBase (the surface all four playback engines share) ----------
+// Four hand-rolled copies of toggle()/restart() had already drifted; these pin the shared
+// behaviour so the next engine added to the app inherits the same contract.
+class FakeEngine extends MediaEngineBase {
+  constructor(opts = {}) {
+    super();
+    this.calls = [];
+    this._paused = true;
+    this._canPlay = opts.canPlay !== false;
+  }
+  get canPlay() { return this._canPlay; }
+  get paused() { return this._paused; }
+  play() { this.calls.push("play"); this._paused = false; }
+  pause() { this.calls.push("pause"); this._paused = true; }
+  seek(s) { this.calls.push(`seek:${s}`); }
+}
+
+test("MediaEngineBase: toggle follows the engine's own paused state", () => {
+  const e = new FakeEngine();
+  e.toggle();
+  assert.deepEqual(e.calls, ["play"]);
+  e.toggle();
+  assert.deepEqual(e.calls, ["play", "pause"]);
+});
+
+test("MediaEngineBase: restart seeks to 0 and plays — in that order", () => {
+  const e = new FakeEngine();
+  e.restart();
+  assert.deepEqual(e.calls, ["seek:0", "play"]);
+});
+
+test("MediaEngineBase: an engine that isn't ready ignores transport commands", () => {
+  // This is AudioEngine before its Sequencer exists — its old `this.seq && …` guard, kept.
+  const e = new FakeEngine({ canPlay: false });
+  e.toggle();
+  e.restart();
+  assert.deepEqual(e.calls, []);
+});
+
+test("MediaEngineBase: setOffset is a no-op unless a subclass means it", () => {
+  const e = new FakeEngine();
+  assert.equal(e.setOffset(500), undefined);
+  assert.deepEqual(e.calls, []);
+});
+
+// --- store (the localStorage layer) ----------------------------------------
+// This is the one module that can destroy a user's whole library state, so it gets a fake
+// Storage and real tests rather than hope.
+function fakeStorage(initial = {}) {
+  const m = new Map(Object.entries(initial));
+  return {
+    get length() { return m.size; },
+    key: (i) => [...m.keys()][i] ?? null,
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => { m.set(k, String(v)); },
+    removeItem: (k) => { m.delete(k); },
+    _map: m,
+  };
+}
+
+test("jsonStore: round-trips, and a missing key returns the fallback", () => {
+  const s = fakeStorage();
+  const store = jsonStore(`${APP_PREFIX}test.v1`, { a: 1 }, s);
+  assert.deepEqual(store.read(), { a: 1 });          // fallback
+  store.write({ a: 2 });
+  assert.deepEqual(store.read(), { a: 2 });
+  store.remove();
+  assert.deepEqual(store.read(), { a: 1 });
+});
+
+test("jsonStore: corrupt JSON and a stored null both fall back instead of throwing", () => {
+  const s = fakeStorage({ [`${APP_PREFIX}x`]: "{not json" });
+  assert.deepEqual(jsonStore(`${APP_PREFIX}x`, [], s).read(), []);
+  s.setItem(`${APP_PREFIX}x`, "null");
+  assert.deepEqual(jsonStore(`${APP_PREFIX}x`, [], s).read(), []);
+});
+
+test("jsonStore: the fallback is copied, so a caller can't mutate the default", () => {
+  const fallback = { list: [] };
+  const store = jsonStore(`${APP_PREFIX}y`, fallback, fakeStorage());
+  store.read().list.push("oops");
+  assert.deepEqual(store.read(), { list: [] });
+  assert.deepEqual(fallback, { list: [] });
+});
+
+test("jsonStore: a throwing storage (private mode / full quota) degrades quietly", () => {
+  const boom = {
+    get length() { throw new Error("denied"); },
+    key() { throw new Error("denied"); },
+    getItem() { throw new Error("denied"); },
+    setItem() { throw new Error("denied"); },
+    removeItem() { throw new Error("denied"); },
+  };
+  const store = jsonStore(`${APP_PREFIX}z`, "safe", boom);
+  assert.equal(store.read(), "safe");
+  assert.equal(store.write("x"), false);   // reports failure rather than throwing
+  assert.doesNotThrow(() => store.remove());
+  assert.deepEqual(listAppKeys(boom), []);
+});
+
+test("collectAppData / restoreAppData: a backup round-trips only karaeoke.* keys", () => {
+  const src = fakeStorage({
+    [`${APP_PREFIX}favorites.v1`]: '["midi:1"]',
+    [`${APP_PREFIX}settings.v1`]: '{"audio":{"volume":1}}',
+    "unrelated.other-app": "should not travel",
+  });
+  const payload = collectAppData(src);
+  assert.equal(payload.app, "ka-rae-oke");
+  assert.deepEqual(Object.keys(payload.data).sort(),
+    [`${APP_PREFIX}favorites.v1`, `${APP_PREFIX}settings.v1`]);
+
+  const dest = fakeStorage();
+  assert.equal(restoreAppData(payload, dest), 2);
+  assert.equal(dest.getItem(`${APP_PREFIX}favorites.v1`), '["midi:1"]');
+  assert.equal(dest.getItem("unrelated.other-app"), null);
+});
+
+test("restoreAppData: a foreign or hostile file can't reach other origin state", () => {
+  const dest = fakeStorage({ "someone.elses.token": "secret" });
+  // Non-prefixed keys are dropped even when the file is otherwise well-formed.
+  assert.throws(() => restoreAppData({ data: { "evil.key": "x" } }, dest), /no Ka-Rae-oke data/);
+  assert.equal(dest.getItem("someone.elses.token"), "secret");
+  assert.throws(() => restoreAppData(null, dest), /not a Ka-Rae-oke backup/);
+  assert.throws(() => restoreAppData({ nope: 1 }, dest), /not a Ka-Rae-oke backup/);
+  // Non-string values are ignored rather than stringified into nonsense.
+  assert.throws(() => restoreAppData({ data: { [`${APP_PREFIX}a`]: { obj: 1 } } }, dest), /no Ka-Rae-oke data/);
+});
+
+test("clearAppData: wipes only this app's keys", () => {
+  const s = fakeStorage({
+    [`${APP_PREFIX}a`]: "1", [`${APP_PREFIX}b`]: "2", "other.app": "keep",
+  });
+  assert.equal(clearAppData(s), 2);
+  assert.deepEqual(listAppKeys(s), []);
+  assert.equal(s.getItem("other.app"), "keep");
+});
+
+// --- reactions --------------------------------------------------------------
+// The allowlist is a security boundary: whatever it contains is rendered on a television
+// from a stranger's phone. It must have exactly ONE definition, or the two ends can drift.
+test("REACTIONS: one shared allowlist, no second copy in the phone or the host", () => {
+  assert.ok(REACTIONS.length > 0);
+  assert.ok(REACTIONS.every((e) => typeof e === "string" && e.length > 0));
+
+  const literal = /REACTIONS\s*=\s*\[/;           // a re-declared array literal, anywhere
+  for (const f of ["remote.js", "app.js"]) {
+    const src = readFileSync(new URL(`../src/js/${f}`, import.meta.url), "utf8");
+    assert.ok(!literal.test(src), `${f} re-declares the REACTIONS allowlist`);
+  }
+  const remote = readFileSync(new URL("../src/js/remote.js", import.meta.url), "utf8");
+  assert.match(remote, /import\s*\{\s*REACTIONS\s*\}\s*from\s*"\.\/reactions\.js"/);
+});
+
+// The host gate + the applause throttle, which a browser can't show: without a user gesture
+// the AudioContext never runs, so the audible half is invisible there but observable here.
+function fakeReactionDeps(overrides = {}) {
+  const calls = { ensure: 0 };
+  const flags = { "reactions.enabled": true, "reactions.sound": true, ...overrides };
+  const audio = {
+    ctx: null,                                   // never "running" → applause stops after the throttle
+    async ensureContext() { calls.ensure++; },
+  };
+  return { calls, deps: { settings: { get: (p) => flags[p] }, audio } };
+}
+
+test("reactions.handle: refuses anything off the allowlist, and obeys the enable flag", async () => {
+  globalThis.document = { querySelector: () => null };   // float() no-ops without a stage
+  try {
+    const { deps } = fakeReactionDeps();
+    const r = createReactions(deps);
+    assert.equal(r.handle("👏"), true);
+    assert.equal(r.handle("💀"), false);          // not on the list
+    assert.equal(r.handle("<img src=x>"), false); // free text is never rendered
+    assert.equal(r.handle(""), false);
+    assert.equal(r.handle(undefined), false);
+
+    const off = createReactions(fakeReactionDeps({ "reactions.enabled": false }).deps);
+    assert.equal(off.handle("👏"), false);
+  } finally { delete globalThis.document; }
+});
+
+test("reactions: applause is throttled, and only 👏 fires it", async () => {
+  globalThis.document = { querySelector: () => null };
+  try {
+    const { calls, deps } = fakeReactionDeps();
+    const r = createReactions(deps);
+    r.handle("🎉");
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(calls.ensure, 0, "only 👏 claps");
+
+    r.handle("👏");
+    r.handle("👏");                                // same tick — inside the 1.5 s gap
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(calls.ensure, 1, "a rapid tapper can't machine-gun the applause");
+
+    const muted = fakeReactionDeps({ "reactions.sound": false });
+    createReactions(muted.deps).handle("👏");
+    await new Promise((res) => setTimeout(res, 0));
+    assert.equal(muted.calls.ensure, 0);
+  } finally { delete globalThis.document; }
+});
+
+// --- duration hints ---------------------------------------------------------
+test("durationHints: learns a length once per play and persists it", () => {
+  const store = fakeStorage();
+  const d = createDurationHints(store);
+  d.load();
+  const song = { id: "midi:1" }, other = { id: "midi:2" };
+
+  d.arm();
+  d.note(song, 214.6);
+  assert.equal(d.get("midi:1"), 215, "rounded to whole seconds");
+  assert.deepEqual(JSON.parse(store.getItem(DURATIONS_KEY)), { "midi:1": 215 });
+
+  // Called every frame by the rAF loop: after the first hit it must stop writing.
+  const writes = [];
+  const spied = { ...store, setItem: (k, v) => { writes.push(k); store.setItem(k, v); } };
+  const d2 = createDurationHints(spied);
+  d2.load(); d2.arm(); d2.note(song, 100);
+  for (let i = 0; i < 50; i++) d2.note(song, 100);
+  assert.equal(writes.length, 1, "one write per play, not one per frame");
+
+  // A second song in the same session is learned independently.
+  d.arm(); d.note(other, 90);
+  assert.equal(d.get("midi:2"), 90);
+  assert.equal(d.get("midi:1"), 215);
+});
+
+test("durationHints: ignores junk, and a fresh library reports nothing", () => {
+  const d = createDurationHints(fakeStorage());
+  d.load(); d.arm();
+  d.note(null, 100);
+  d.note({ id: "x" }, 0);            // a song that never got a duration
+  d.note({ id: "x" }, -5);
+  d.note({ id: "x" }, NaN);
+  assert.equal(d.get("x"), null);    // null, not 0 — queue-order.js falls back on null
+  assert.equal(d.get("never-played"), null);
+});
+
+test("durationHints: survives a reload, and arm() re-opens the next song", () => {
+  const store = fakeStorage();
+  const first = createDurationHints(store);
+  first.load(); first.arm(); first.note({ id: "midi:7" }, 180);
+
+  const reloaded = createDurationHints(store);
+  reloaded.load();
+  assert.equal(reloaded.get("midi:7"), 180);
+
+  // Same song again after a re-arm: a corrected length replaces the old one.
+  reloaded.arm(); reloaded.note({ id: "midi:7" }, 200);
+  assert.equal(reloaded.get("midi:7"), 200);
+});
+
+// --- tonight's recap --------------------------------------------------------
+test("recapSummary: counts songs and singers, and finds the top score", () => {
+  const items = [
+    { by: "Rae", score: 78 }, { by: "Mia", score: 91 }, { by: "Rae", score: null }, { by: "", score: 64 },
+  ];
+  const s = recapSummary(items);
+  assert.equal(s.songs, 4);
+  assert.equal(s.singers, 3);            // Rae, Mia, and the host ("")
+  assert.equal(s.top.score, 91);
+  assert.equal(s.top.by, "Mia");
+
+  const none = recapSummary([{ by: "Rae", score: null }]);
+  assert.equal(none.top, null, "an unscored night has no top score, not a zero");
+  assert.deepEqual(recapSummary([]), { songs: 0, singers: 0, top: null });
+  assert.deepEqual(recapSummary(null), { songs: 0, singers: 0, top: null });
+});
+
+test("appendPerformance: a long gap starts a new night", () => {
+  const t0 = 1_700_000_000_000;
+  let r = appendPerformance({ startedAt: 0, items: [] }, { name: "A" }, t0);
+  assert.equal(r.startedAt, t0);
+  assert.equal(r.items.length, 1);
+
+  r = appendPerformance(r, { name: "B" }, t0 + 60_000);       // same night
+  assert.equal(r.items.length, 2);
+  assert.equal(r.startedAt, t0);
+
+  // The gap is measured from the LAST song, not from when the night started.
+  const nextNight = t0 + 60_000 + RECAP_GAP_MS + 1;
+  r = appendPerformance(r, { name: "C" }, nextNight);
+  assert.deepEqual(r.items.map((i) => i.name), ["C"]);
+  assert.equal(r.startedAt, nextNight);
+});
+
+test("appendPerformance: a very long night stays bounded, oldest dropped first", () => {
+  let r = { startedAt: 0, items: [] };
+  for (let i = 0; i < 205; i++) r = appendPerformance(r, { name: `S${i}` }, 1000 + i * 1000);
+  assert.equal(r.items.length, 200);
+  assert.equal(r.items[0].name, "S5");
+  assert.equal(r.items[199].name, "S204");
+});
+
+test("recap.log/load: persists, and a stale night is discarded on load", () => {
+  const store = fakeStorage();
+  const t0 = 1_700_000_000_000;
+  const r = createRecap(store);
+  r.load(t0);
+  r.log({ id: "midi:1", name: "Tahan", artistName: "Bryan Chong" }, "Rae", 88, t0);
+  r.log({ id: "midi:2", name: "Beer" }, "", null, t0 + 1000);
+  assert.equal(r.items.length, 2);
+  assert.equal(r.items[0].score, 88);
+  assert.equal(r.items[1].score, null, "an unscored song logs null, not 0");
+  assert.equal(r.items[0].artist, "Bryan Chong");
+
+  // Same night: the log comes back.
+  const same = createRecap(store);
+  same.load(t0 + 60_000);
+  assert.equal(same.items.length, 2);
+
+  // Next evening: it starts empty, but the stored copy is only replaced on the next log().
+  const later = createRecap(store);
+  later.load(t0 + 1000 + RECAP_GAP_MS + 1);   // measured from the last song logged
+  assert.equal(later.items.length, 0);
+
+  // A missing song is ignored rather than logging a blank row.
+  later.log(null, "Rae", 50, t0 + 1000 + RECAP_GAP_MS + 1);
+  assert.equal(later.items.length, 0);
+  assert.ok(JSON.parse(store.getItem(RECAP_KEY)).items.length > 0, "the key itself is real");
+});
+
+// --- score presentation -----------------------------------------------------
+test("bonusBand: bands a finished line, and refuses to rate an instrumental one", () => {
+  assert.equal(bonusBand(1).label, "Perfect!");
+  assert.equal(bonusBand(0.9).label, "Perfect!");       // inclusive at the threshold
+  assert.equal(bonusBand(0.899).label, "Great!");
+  assert.equal(bonusBand(0.75).label, "Great!");
+  assert.equal(bonusBand(0.5).label, "Good");
+  assert.equal(bonusBand(0.25).label, "Almost");
+  assert.equal(bonusBand(0).label, "Miss");
+  assert.equal(bonusBand(null), null, "an unsung/instrumental line is not rated at all");
+  assert.equal(bonusBand(undefined), null);
+  assert.equal(bonusBand(NaN), null);
+  // The chip's CSS class is part of the contract — only the extremes are coloured.
+  assert.equal(bonusBand(0.95).cls, "perfect");
+  assert.equal(bonusBand(0.6).cls, "");
+});
+
+const fakeScorer = (result) => ({ finish: () => result, windowRatio: () => null });
+const fakeSettings = (over = {}) => {
+  const f = { "score.enabled": true, "score.card": true, ...over };
+  return { get: (p) => f[p] };
+};
+
+test("score.finish: records a personal best, and reports beating the old one", () => {
+  const storage = fakeStorage();
+  const settings = fakeSettings();
+  const song = { id: "midi:1", name: "Tahan" };
+  const sp = createScorePresentation({ settings, storage });
+
+  const first = sp.finish(fakeScorer({ score: 72, band: { label: "Good job!", tier: "good" } }), song, "Rae");
+  assert.equal(first.score, 72);
+  assert.equal(first.isBest, true);
+  assert.equal(first.previous, 0, "a first attempt has no previous best");
+  assert.equal(first.by, "Rae");
+  assert.equal(sp.best("midi:1"), 72);
+
+  const worse = sp.finish(fakeScorer({ score: 65, band: {} }), song, "Mia");
+  assert.equal(worse.isBest, false);
+  assert.equal(worse.previous, 72);
+  assert.equal(sp.best("midi:1"), 72, "a lower score must not overwrite the best");
+
+  const better = sp.finish(fakeScorer({ score: 91, band: {} }), song, "Mia");
+  assert.equal(better.isBest, true);
+  assert.equal(better.previous, 72);
+  assert.equal(JSON.parse(storage.getItem(SCORES_KEY))["midi:1"], 91);
+});
+
+test("score.finish: returns null rather than a zero when there is nothing to show", () => {
+  const settings = fakeSettings();
+  const sp = createScorePresentation({ settings, storage: fakeStorage() });
+  const song = { id: "midi:1" };
+
+  assert.equal(sp.finish(null, song, ""), null, "no melody / no scorer → no card");
+  assert.equal(sp.finish(fakeScorer(null), song, ""), null, "nobody sang → no card, not a 0");
+
+  const off = createScorePresentation({ settings: fakeSettings({ "score.enabled": false }), storage: fakeStorage() });
+  assert.equal(off.finish(fakeScorer({ score: 90, band: {} }), song, ""), null);
+});
+
+test("score.finish: a song with no id still scores, it just isn't remembered", () => {
+  const storage = fakeStorage();
+  const sp = createScorePresentation({ settings: fakeSettings(), storage });
+  const res = sp.finish(fakeScorer({ score: 80, band: {} }), null, "");
+  assert.equal(res.score, 80);
+  assert.equal(res.song, null);
+  assert.equal(storage.getItem(SCORES_KEY), null, "nothing keyed on null");
+});
+
+// --- queue ------------------------------------------------------------------
+const song = (id, name = id) => ({ id, name });
+
+test("queueItemMatches: a stale index can't delete the wrong song", () => {
+  const list = [song("midi:1"), song("midi:2"), song("midi:3")];
+  assert.equal(queueItemMatches(list, 1, "midi:2"), true);
+  assert.equal(queueItemMatches(list, 1, "midi:9"), false, "the queue moved under the guest");
+  assert.equal(queueItemMatches(list, 1, undefined), true, "an older phone sends no id");
+  // Out of range, including the negative index that splice() would count from the END.
+  assert.equal(queueItemMatches(list, -1, undefined), false);
+  assert.equal(queueItemMatches(list, 3, undefined), false);
+  assert.equal(queueItemMatches(list, 1.5, undefined), false);
+  assert.equal(queueItemMatches(list, "1", undefined), false);
+  assert.equal(queueItemMatches(null, 0, undefined), false);
+});
+
+test("queue: add/remove/move keep the song and its singer in lockstep", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+
+  q.add(song("a"), "Rae");
+  q.add(song("b"), "Mia");
+  q.add(song("c"), "");            // host-added
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b", "c"]);
+  assert.deepEqual(q.listBy, ["Rae", "Mia", ""]);
+  assert.equal(q.length, 3);
+  assert.equal(changes, 3);
+
+  assert.equal(q.move(2, 0), true);
+  assert.deepEqual(q.list.map((s) => s.id), ["c", "a", "b"]);
+  assert.deepEqual(q.listBy, ["", "Rae", "Mia"], "attribution moves WITH the song");
+
+  assert.equal(q.removeAt(1), true);
+  assert.deepEqual(q.list.map((s) => s.id), ["c", "b"]);
+  assert.deepEqual(q.listBy, ["", "Mia"]);
+});
+
+test("queue: an out-of-range remove or move does nothing at all", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.add(song("a"), "Rae"); q.add(song("b"), "Mia");
+  changes = 0;
+
+  for (const i of [-1, 2, 1.5, "1", null, undefined, NaN]) assert.equal(q.removeAt(i), false);
+  assert.equal(q.move(0, 5), false);
+  assert.equal(q.move(-1, 0), false);
+  assert.equal(q.move(0, 0), false, "a no-op move is not a change");
+  assert.equal(changes, 0, "a rejected mutation must not render, persist or push");
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b"], "nothing moved");
+});
+
+test("queue: shift hands over the song AND its singer, and survives an empty queue", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.add(song("a"), "Rae");
+  changes = 0;
+
+  const taken = q.shift();
+  assert.equal(taken.song.id, "a");
+  assert.equal(taken.by, "Rae");
+  assert.equal(q.length, 0);
+
+  assert.equal(q.shift(), null, "a drained queue reports nothing, it does not throw");
+  assert.equal(changes, 2, "the empty case still re-renders and clears the saved queue");
+});
+
+test("queue: fair play round-robins new songs; countBy drives the reservation cap", () => {
+  const q = createQueue();
+  q.add(song("a1"), "Rae", true);
+  q.add(song("b1"), "Mia", true);
+  q.add(song("a2"), "Rae", true);   // Rae's 2nd → after everyone's 1st
+  q.add(song("c1"), "Cha", true);   // Cha's 1st → ahead of Rae's 2nd
+  assert.deepEqual(q.list.map((s) => s.id), ["a1", "b1", "c1", "a2"]);
+
+  assert.equal(q.countBy("Rae"), 2);
+  assert.equal(q.countBy("Cha"), 1);
+  assert.equal(q.countBy("nobody"), 0);
+
+  // Fair play off appends, and never reorders what is already waiting.
+  const plain = createQueue();
+  plain.add(song("a1"), "Rae"); plain.add(song("b1"), "Mia"); plain.add(song("a2"), "Rae");
+  assert.deepEqual(plain.list.map((s) => s.id), ["a1", "b1", "a2"]);
+});
+
+test("queue: restore is silent, and drops attribution", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.restore([song("a"), song("b")]);
+  assert.equal(changes, 0, "loading a saved queue is not a change to persist or push");
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b"]);
+  assert.deepEqual(q.listBy, ["", ""], "who queued it last night is not restored");
+
+  // The restored array must be the queue's own copy, not the caller's.
+  const src = [song("x")];
+  q.restore(src);
+  src.push(song("y"));
+  assert.equal(q.length, 1);
+});
+
+// --- session persistence ----------------------------------------------------
+// A catalog stub with the two lookups a stored reference can use.
+function fakeCatalog(songs) {
+  const byId = new Map(songs.map((s) => [s.id, s]));
+  const byCode = new Map();
+  // Mirrors the real Catalog: the FIRST record with a code keeps it, so MIDI wins a
+  // code shared with a video (§5.10).
+  for (const s of songs) if (s.code != null && !byCode.has(String(s.code))) byCode.set(String(s.code), s);
+  return { getById: (id) => byId.get(String(id)), get: (c) => byCode.get(String(c)) };
+}
+const CAT = [
+  { id: "midi:1", code: 1, name: "Tahan" },
+  { id: "midi:2", code: 2, name: "Beer" },
+  { id: "video:1", code: 1, name: "My Way" },
+];
+
+test("resolveSongRef: stable ids win, and a bare code still means MIDI", () => {
+  const cat = fakeCatalog(CAT);
+  assert.equal(resolveSongRef(cat, "video:1").name, "My Way");
+  assert.equal(resolveSongRef(cat, "midi:1").name, "Tahan");
+  assert.equal(resolveSongRef(cat, 1).name, "Tahan", "an old bare code resolves as MIDI");
+  assert.equal(resolveSongRef(cat, "1").name, "Tahan");
+  assert.equal(resolveSongRef(cat, "midi:999"), undefined);
+  assert.equal(resolveSongRef(null, "midi:1"), undefined);
+});
+
+test("session: the queue and recents round-trip a reload", () => {
+  const storage = fakeStorage();
+  const catalog = fakeCatalog(CAT);
+  const s1 = createSession({ catalog, storage });
+
+  s1.push({ id: "midi:1" });
+  s1.push({ id: "video:1" });
+  s1.save(["midi:2", "midi:1"]);
+  assert.deepEqual(s1.recent, ["video:1", "midi:1"], "most recent first");
+
+  const s2 = createSession({ catalog, storage });
+  const out = s2.restore();
+  assert.deepEqual(out.recent, ["video:1", "midi:1"]);
+  assert.deepEqual(out.queue.map((x) => x.id), ["midi:2", "midi:1"]);
+  assert.deepEqual(s2.recentSongs().map((x) => x.name), ["My Way", "Tahan"]);
+});
+
+test("session: a song that has left the library is dropped, not restored as a hole", () => {
+  const storage = fakeStorage({
+    [SESSION_KEY]: JSON.stringify({ queue: ["midi:1", "midi:404", "midi:2"], recent: ["midi:404", "video:1"] }),
+  });
+  const s = createSession({ catalog: fakeCatalog(CAT), storage });
+  const out = s.restore();
+  assert.deepEqual(out.queue.map((x) => x.id), ["midi:1", "midi:2"]);
+  assert.deepEqual(out.recent, ["video:1"]);
+});
+
+test("session: restore tolerates a missing, empty or malformed store", () => {
+  const catalog = fakeCatalog(CAT);
+  assert.deepEqual(createSession({ catalog, storage: fakeStorage() }).restore(), { recent: [], queue: [] });
+  const junk = fakeStorage({ [SESSION_KEY]: JSON.stringify({ queue: "nope", recent: 7 }) });
+  assert.deepEqual(createSession({ catalog, storage: junk }).restore(), { recent: [], queue: [] });
+});
+
+test("session: recents de-duplicate, cap at 40, and ignore a song with no id", () => {
+  const s = createSession({ catalog: fakeCatalog(CAT), storage: fakeStorage() });
+  s.push({ id: "a" }); s.push({ id: "b" }); s.push({ id: "a" });
+  assert.deepEqual(s.recent, ["a", "b"], "replaying a song moves it up, it doesn't duplicate");
+
+  for (let i = 0; i < 60; i++) s.push({ id: `s${i}` });
+  assert.equal(s.recent.length, 40);
+  assert.equal(s.recent[0], "s59");
+
+  const before = s.recent.length;
+  s.push(null); s.push({}); s.push({ id: "" });
+  assert.equal(s.recent.length, before);
+});
+
+// --- library view -----------------------------------------------------------
+test("mergeSearchRows: YouTube results append AFTER the local hits, never interleaved", () => {
+  const local = [{ id: "midi:1" }, { id: "midi:2" }];
+  const yt = [{ id: "youtube:a" }];
+  assert.deepEqual(mergeSearchRows(local, yt).map((s) => s.id), ["midi:1", "midi:2", "youtube:a"]);
+  assert.equal(mergeSearchRows(local, []), local, "no YouTube rows → the local array itself");
+  assert.equal(mergeSearchRows(local, null), local);
+  assert.deepEqual(mergeSearchRows(null, yt).map((s) => s.id), ["youtube:a"]);
+  assert.deepEqual(mergeSearchRows(null, null), []);
+});
+
+test("emptyHint: names the query that found nothing", () => {
+  assert.match(emptyHint("tetoris").title, /tetoris/);
+  assert.equal(emptyHint("  ").title, EMPTY_LIBRARY.title, "an empty search is not a failed search");
+  assert.equal(emptyHint("").title, EMPTY_LIBRARY.title);
+  assert.equal(emptyHint(undefined).title, EMPTY_LIBRARY.title);
+});
+
+// A DOM stub just wide enough for the view flags + favorites persistence.
+function stubLibraryDom() {
+  const nodes = new Map();
+  const make = () => ({ classList: { _on: false, toggle(_c, v) { this._on = !!v; }, contains() { return this._on; } }, checked: false, value: "" });
+  for (const id of ["btn-recent", "btn-favorites", "btn-youtube", "set-youtube", "search"]) nodes.set(id, make());
+  globalThis.document = { getElementById: (id) => nodes.get(id) || null };
+  return nodes;
+}
+
+test("libraryView: Recent and Favorites are mutually exclusive, and the flags are LIVE", () => {
+  stubLibraryDom();
+  try {
+    const view = createLibraryView({
+      catalog: fakeCatalog(CAT), settings: { get: () => false }, getLib: () => ({ renderList() {}, refresh() {} }),
+      setStatus: () => {}, youtubeSupported: () => false,
+      getQueueIds: () => [], getRecentIds: () => [], getRecentSongs: () => [], storage: fakeStorage(),
+    });
+    // A captured copy would go stale here; the getter must track.
+    const readFlags = () => [view.recentMode, view.favoritesMode];
+    assert.deepEqual(readFlags(), [false, false]);
+
+    view.setRecentMode(true);
+    assert.deepEqual(readFlags(), [true, false]);
+    view.setFavoritesMode(true);
+    assert.deepEqual(readFlags(), [false, true], "opening one closes the other");
+    view.setRecentMode(true);
+    assert.deepEqual(readFlags(), [true, false]);
+
+    assert.equal(view.leaveSpecialViews(), true);
+    assert.deepEqual(readFlags(), [false, false]);
+    assert.equal(view.leaveSpecialViews(), false, "nothing to leave the second time");
+  } finally { delete globalThis.document; }
+});
+
+test("libraryView: a starred YouTube song keeps its pointer even after leaving the queue", () => {
+  stubLibraryDom();
+  try {
+    const storage = fakeStorage();
+    const catalog = { ...fakeCatalog(CAT), addExternal() {}, search: () => [] };
+    let queueIds = [];
+    const view = createLibraryView({
+      catalog, settings: { get: () => false }, getLib: () => ({ renderList() {}, refresh() {} }),
+      setStatus: () => {}, youtubeSupported: () => false,
+      // LIVE reads: capturing these at construction is the silent-failure trap.
+      getQueueIds: () => queueIds, getRecentIds: () => [], getRecentSongs: () => [], storage,
+    });
+
+    const rec = { id: "youtube:abc", kind: "youtube", videoId: "abc", name: "Song" };
+    view.registerYoutube(rec);
+    queueIds = ["youtube:abc"];
+    view.persistYoutubeCache();
+    assert.ok(JSON.parse(storage.getItem(YOUTUBE_KEY))["youtube:abc"], "queued → kept");
+
+    // Star it, then take it out of the queue: the pointer must survive on the favorite alone.
+    view.toggleFavorite(rec);
+    queueIds = [];
+    view.persistYoutubeCache();
+    assert.ok(JSON.parse(storage.getItem(YOUTUBE_KEY))["youtube:abc"], "starred → still kept");
+    assert.deepEqual(JSON.parse(storage.getItem(FAVORITES_KEY)), ["youtube:abc"]);
+
+    // Un-star it with nothing else referencing it → the pointer is dropped.
+    view.toggleFavorite(rec);
+    view.persistYoutubeCache();
+    assert.deepEqual(JSON.parse(storage.getItem(YOUTUBE_KEY)), {}, "unreferenced → not persisted");
+  } finally { delete globalThis.document; }
+});
+
+test("libraryView: the blocklist persists and hides a dead video from the next result", () => {
+  stubLibraryDom();
+  try {
+    const storage = fakeStorage();
+    const deps = {
+      catalog: { ...fakeCatalog(CAT), addExternal() {}, search: () => [] },
+      settings: { get: () => false }, setStatus: () => {}, youtubeSupported: () => false,
+      getQueueIds: () => [], getRecentIds: () => [], getRecentSongs: () => [], storage,
+    };
+    const rows = [
+      { id: "youtube:a", kind: "youtube", videoId: "a" },
+      { id: "youtube:b", kind: "youtube", videoId: "b" },
+      { id: "midi:1", kind: "midi" },
+      { id: "youtube:c", kind: "youtube", videoId: "c" },
+    ];
+    const view = createLibraryView({ ...deps, getLib: () => ({ getList: () => rows, renderList() {}, refresh() {} }) });
+
+    view.blockYoutube("b");
+    assert.equal(view.isBlocked("b"), true);
+    // The skip must jump PAST the blocked one, and past the non-YouTube row.
+    assert.equal(view.nextYoutubeInList(rows[0]).id, "youtube:c");
+    assert.equal(view.nextYoutubeInList(rows[3]), null, "nothing after the last one");
+    assert.equal(view.nextYoutubeInList({ id: "not-in-list" }), null);
+
+    // It survives a reload — the point of the blocklist.
+    const reloaded = createLibraryView({ ...deps, getLib: () => ({ getList: () => rows, renderList() {}, refresh() {} }) });
+    reloaded.loadBlocked();
+    assert.equal(reloaded.isBlocked("b"), true);
+    assert.equal(reloaded.blockedCount, 1);
+  } finally { delete globalThis.document; }
+});
+
+// --- remote glue ------------------------------------------------------------
+function glueHarness(over = {}) {
+  const calls = [];
+  const record = (name) => (...args) => calls.push([name, ...args]);
+  const listBy = over.listBy || [];
+  const glue = createRemoteGlue({
+    settings: { get: (p) => (over.settings || {})[p] },
+    catalog: { getById: (id) => (over.songs || {})[id] },
+    queue: {
+      list: over.list || [],
+      listBy,
+      countBy: (who) => listBy.filter((b) => b === who).length,
+      matches: (i, id) => (over.list || [])[i] && (!id || over.list[i].id === id),
+    },
+    reactions: { handle: record("react") },
+    libraryView: { registerYoutube: (r) => ({ ...r, registered: true }) },
+    durations: { get: () => null },
+    getNowPlaying: () => over.now || null,
+    setStatus: record("status"),
+    positionFocusQr: () => {},
+    storage: over.storage || fakeStorage(),
+    actions: {
+      enqueue: record("enqueue"), removeFromQueue: record("remove"), reorderQueue: record("reorder"),
+      play: record("play"), pause: record("pause"), next: record("next"),
+      seek: record("seek"), setVolume: record("volume"), applySetting: record("setting"),
+    },
+  });
+  return { glue, calls };
+}
+
+test("remoteGlue: the room code is stable per browser and shaped for reading aloud", () => {
+  const storage = fakeStorage();
+  const a = glueHarness({ storage }).glue.getHostRoom();
+  assert.match(a, /^[A-CDEFGHJ-NP-Z2-9]{6}$/, "6 chars, no ambiguous 0/O or 1/I");
+  assert.equal(storage.getItem(HOST_ROOM_KEY), a);
+
+  // A second host object in the same browser adopts the SAME code — guests keep working.
+  assert.equal(glueHarness({ storage }).glue.getHostRoom(), a);
+  // A junk stored value is replaced rather than trusted.
+  storage.setItem(HOST_ROOM_KEY, "nope!");
+  const fixed = glueHarness({ storage }).glue.getHostRoom();
+  assert.match(fixed, /^[A-Z0-9]{6}$/);
+  assert.notEqual(fixed, "nope!");
+});
+
+test("remoteGlue: the snapshot carries the room, now-playing, queue and mirrored settings", () => {
+  const now = { id: "midi:1", name: "Tahan", paused: false, position: 3, duration: 200 };
+  const { glue } = glueHarness({
+    now,
+    list: [{ id: "midi:2", name: "Beer", artistName: "Itchyworms", kind: "midi", code: 2 }],
+    listBy: ["Rae"],
+    settings: { "audio.key": 2, "audio.tempo": 1, "audio.volume": 0.8, "lyrics.offsetMs": 0, "guide.vocal.mute": false },
+  });
+  const snap = glue.snapshot();
+  assert.match(snap.room, /^[A-Z0-9]{6}$/);
+  assert.deepEqual(snap.now, now);
+  // `code` passes through as the catalog stores it (a number); only a MISSING code becomes "".
+  assert.deepEqual(snap.queue, [{ id: "midi:2", name: "Beer", artist: "Itchyworms", kind: "midi", code: 2, by: "Rae", dur: null }]);
+  assert.equal(glueHarness({ list: [{ id: "x" }], listBy: [""], settings: {} }).glue.snapshot().queue[0].code, "");
+  // Exactly the allowlist is mirrored — no more, no less.
+  assert.deepEqual(Object.keys(snap.settings).sort(), [...REMOTE_SETTABLE].sort());
+});
+
+test("remoteGlue: every command type reaches its action, once", () => {
+  const { glue, calls } = glueHarness({
+    songs: { "midi:1": { id: "midi:1" } },
+    list: [{ id: "midi:1" }, { id: "midi:2" }],
+    settings: { "queue.maxPerGuest": 0 },
+  });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Rae" });
+  glue.applyCommand({ type: "remove", index: 0, id: "midi:1" });
+  glue.applyCommand({ type: "reorder", from: 0, to: 1, id: "midi:1" });
+  glue.applyCommand({ type: "react", emoji: "👏" });
+  glue.applyCommand({ type: "play" });
+  glue.applyCommand({ type: "pause" });
+  glue.applyCommand({ type: "next" });
+  glue.applyCommand({ type: "seek", position: 42 });
+  glue.applyCommand({ type: "volume", value: 1.5 });
+  assert.deepEqual(calls.map((c) => c[0]),
+    ["enqueue", "remove", "reorder", "react", "play", "pause", "next", "seek", "volume"]);
+  assert.equal(calls.find((c) => c[0] === "seek")[1], 42);
+  assert.equal(calls.find((c) => c[0] === "enqueue")[2], "Rae");
+});
+
+test("remoteGlue: a stale index, a junk seek and an unknown type all do nothing", () => {
+  const { glue, calls } = glueHarness({ list: [{ id: "midi:1" }], settings: {} });
+  glue.applyCommand({ type: "remove", index: 0, id: "midi:999" });   // the queue moved
+  glue.applyCommand({ type: "remove", index: 5 });
+  glue.applyCommand({ type: "reorder", from: 0, to: "x", id: "midi:1" });
+  glue.applyCommand({ type: "seek", position: "end" });
+  glue.applyCommand({ type: "volume", value: null });
+  glue.applyCommand({ type: "definitely-not-a-command" });
+  assert.deepEqual(calls, []);
+});
+
+test("remoteGlue: a guest setting is gated on BOTH the path and the value", () => {
+  const { glue, calls } = glueHarness({ settings: {} });
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1.5 });
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1e6 });   // clamped to 2
+  glue.applyCommand({ type: "setting", path: "mic.volume", value: 1 });       // NOT allowlisted
+  glue.applyCommand({ type: "setting", path: "__proto__", value: 1 });
+  glue.applyCommand({ type: "setting", path: 42, value: 1 });
+  glue.applyCommand({ type: "setting", path: "audio.key", value: "loud" });
+  assert.deepEqual(calls, [["setting", "audio.volume", 1.5], ["setting", "audio.volume", 2]]);
+});
+
+test("remoteGlue: the reservation cap refuses an over-quota guest with a visible reason", () => {
+  const { glue, calls } = glueHarness({
+    songs: { "midi:1": { id: "midi:1" } },
+    listBy: ["Rae", "Rae"],
+    settings: { "queue.maxPerGuest": 2 },
+  });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Rae" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "status", "the guest is told, rather than silently ignored");
+  assert.match(calls[0][1], /already has 2 songs reserved/);
+
+  // Someone else is unaffected, and the host ("") is never capped.
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Mia" });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "" });
+  assert.deepEqual(calls.slice(1).map((c) => c[0]), ["enqueue", "enqueue"]);
+});
+
+test("remoteGlue: a YouTube song a phone asks for is reconstructed and registered", () => {
+  const { glue, calls } = glueHarness({ songs: {}, settings: {} });
+  glue.applyCommand({ type: "enqueue", id: "youtube:abc", kind: "youtube", videoId: "abc", name: "T", artist: "C", by: "Rae" });
+  const rec = calls[0][1];
+  assert.equal(calls[0][0], "enqueue");
+  assert.equal(rec.registered, true, "registered so it resolves after a reload");
+  assert.equal(rec.kind, "youtube");
+
+  // A song that resolves to nothing at all is dropped rather than queued as undefined.
+  const b = glueHarness({ songs: {}, settings: {} });
+  b.glue.applyCommand({ type: "enqueue", id: "midi:404", by: "Rae" });
+  assert.deepEqual(b.calls, []);
+});
+
+test("remoteGlue: an over-long nickname is truncated before it reaches the queue", () => {
+  const { glue, calls } = glueHarness({ songs: { "midi:1": { id: "midi:1" } }, settings: {} });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "x".repeat(200) });
+  assert.equal(calls[0][2].length, 24);
 });

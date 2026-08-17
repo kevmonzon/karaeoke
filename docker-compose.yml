@@ -11,7 +11,7 @@ services:
     build: .
     image: karaeoke
     ports:
-      - "8080:8080"
+      - "52723:8080"
     volumes:
       - ./data:/data
     environment:

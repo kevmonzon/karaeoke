@@ -21,6 +21,8 @@ import { Catalog } from "./catalog.js";
 import { LyricsEngine, parseMidi, buildLines, makeTickToSeconds } from "./lyrics.js";
 import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
 import { syncClock, clockTime } from "./sync-clock.js";
+import { queueEta, formatEta } from "./queue-order.js";
+import { REACTIONS } from "./reactions.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
@@ -63,22 +65,30 @@ async function boot() {
   wireLyrics();
   wireSearch();
   wireSettings();
+  wireReactions();
   wireGate();
 
   $("s-origin").textContent = location.origin;
   try { await catalog.load(); } catch (_) { /* songbook optional for control-only use */ }
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && room) poll();
+    if (!document.hidden && room) { poll(); acquireWakeLock(); }  // the lock is dropped while hidden
     syncLyricLoop();   // a backgrounded phone must not burn a rAF loop on lyrics
   });
+
+  // Kiosk: a tablet on a stand as the singer's own lyric monitor. Same page, no chrome —
+  // the Lyrics tab already renders a frame-accurate wipe off the room clock (sync-clock.js),
+  // which is exactly what a second screen needs and costs nothing extra to expose.
+  if (new URLSearchParams(location.search).get("kiosk") === "1") document.body.classList.add("kiosk");
 
   // A room code from the scanned QR (?room=) wins; else the last room we used. Validate it
   // against a live host room before entering; otherwise show the gate.
   const urlRoom = normRoom(new URLSearchParams(location.search).get("room"));
   const candidate = urlRoom || normRoom(prefs.room);
-  if (candidate && await roomIsLive(candidate)) enterRoom(candidate);
-  else { $("gate-code").value = candidate; showGate(candidate ? "That code isn't active right now." : ""); }
+  if (candidate && await roomIsLive(candidate)) {
+    enterRoom(candidate);
+    if (document.body.classList.contains("kiosk")) showTab("lyrics");
+  } else { $("gate-code").value = candidate; showGate(candidate ? "That code isn't active right now." : ""); }
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +137,31 @@ function enterRoom(code) {
   document.body.classList.add("connected");
   lastRev = -1; state = null;
   poll();
+  acquireWakeLock();
   if (!pollTimer) {
     pollTimer = setInterval(poll, 1000);   // pull host state
     uiTimer = setInterval(uiTick, 250);    // smooth now-playing progress between polls
   }
+}
+
+// ---------------------------------------------------------------------------
+// Screen wake lock. A phone that auto-locks mid-song stops polling and freezes its lyric
+// clock, and the guest has no idea why — they just see a stale screen. The Wake Lock API is
+// released by the browser whenever the page is hidden, so it must be re-acquired on every
+// return to visibility, not just once. Feature-detected: iOS Safari has no Wake Lock, and
+// the honest answer there is a hint in the You tab rather than a video-playback hack.
+// ---------------------------------------------------------------------------
+let wakeLock = null;
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator) || wakeLock || !room || document.hidden) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (_) { wakeLock = null; }   // denied (low battery, no permission) → just let it sleep
+}
+function releaseWakeLock() {
+  try { if (wakeLock) wakeLock.release(); } catch (_) {}
+  wakeLock = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +304,27 @@ function reconcile() {
 // ---------------------------------------------------------------------------
 // Tabs
 // ---------------------------------------------------------------------------
+// Reactions — the crowd noise. The allowlist is imported from reactions.js so this phone and
+// the host that actually renders them can never drift apart: a stranger's phone must not be
+// able to put arbitrary text on someone's television.
+function wireReactions() {
+  const row = $("react-row");
+  if (!row) return;
+  for (const emoji of REACTIONS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "react-btn";
+    b.textContent = emoji;
+    b.setAttribute("aria-label", `Send ${emoji}`);
+    b.onclick = () => {
+      cmd({ type: "react", emoji });
+      b.classList.add("sent");                                  // local confirmation; the relay is ~1 s
+      setTimeout(() => b.classList.remove("sent"), 420);
+    };
+    row.appendChild(b);
+  }
+}
+
 function wireTabs() {
   for (const btn of document.querySelectorAll(".tabbar .tab")) {
     btn.onclick = () => showTab(btn.dataset.tab);
@@ -356,6 +408,9 @@ function renderNow() {
   $("now-kind").textContent = now ? (KIND_ICON[now.kind] || "🎵") : "🎤";
   $("now-title").textContent = now ? (now.name || "(untitled)") : "Nothing playing";
   $("now-artist").textContent = now ? (now.artist || "") : "";
+  // Live score (host mirrors it only while a song is actually being scored).
+  const sc = $("now-score");
+  if (sc) sc.textContent = now && now.score != null ? `★ ${now.score}` : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
   // reflect the effective key/tempo/volume (optimistic if the guest just changed it, else the host mirror)
   const vol = Math.round(setVal("audio.volume", 0.9) * 100);
@@ -623,10 +678,15 @@ function renderQueue() {
   ul.innerHTML = "";
   const q = effQueue();
   $("q-empty").style.display = q.length ? "none" : "";
-  q.forEach((s, i) => ul.appendChild(queueRow(s, i, q.length)));
+  // "How long until mine?" — the question a guest actually has. The host mirrors each queued
+  // song's LEARNED length (`dur`, null until it's been played once); queue-order.js falls back
+  // to an average for the rest, so the answer is approximate on purpose and immediate.
+  const remaining = now && now.duration > 0 ? Math.max(0, now.duration - effPos(now)) : 0;
+  const durations = q.map((s) => s.dur);
+  q.forEach((s, i) => ul.appendChild(queueRow(s, i, q.length, formatEta(queueEta(remaining, durations, i)))));
 }
 
-function queueRow(s, i, n) {
+function queueRow(s, i, n, eta) {
   const li = document.createElement("li");
   li.className = "qrow";
   const meta = document.createElement("div"); meta.className = "meta";
@@ -635,13 +695,18 @@ function queueRow(s, i, n) {
   const a = document.createElement("div"); a.className = "a";
   a.textContent = s.artist || "";
   if (s.by) { const b = document.createElement("span"); b.className = "by"; b.textContent = ` · ${s.by}`; a.appendChild(b); }
+  if (eta) { const e = document.createElement("span"); e.className = "eta"; e.textContent = ` · ${eta}`; a.appendChild(e); }
   meta.append(t, a);
   const ctr = document.createElement("div"); ctr.className = "qctl";
-  const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1 }); }, i === 0);
-  const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1 }); }, i === n - 1);
+  // Every queue mutation carries the song's stable id alongside the index: this phone's view
+  // can be up to ~2 s behind the host, so by the time the command lands the index may point at
+  // a different song (auto-advance, or another guest acting first). The host verifies the id
+  // and ignores the command rather than mutating the wrong row.
+  const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1, id: s.id }); }, i === 0);
+  const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1, id: s.id }); }, i === n - 1);
   const rm = mkBtn("✕", "Remove", () => {
     optSet("queue", effQueue().filter((_, idx) => idx !== i)); renderQueue();
-    cmd({ type: "remove", index: i });
+    cmd({ type: "remove", index: i, id: s.id });
   });
   rm.classList.add("rm");
   ctr.append(up, dn, rm);
@@ -680,7 +745,10 @@ function wireSettings() {
     cmd({ type: "setting", path: "lyrics.offsetMs", value: v });
   };
   $("s-reconnect").onclick = () => { lastRev = -1; poll(); };
-  $("s-leave").onclick = () => { prefs.room = ""; savePrefs(); $("gate-code").value = ""; showGate(""); };
+  $("s-leave").onclick = () => {
+    releaseWakeLock();   // no room, no reason to hold the screen awake
+    prefs.room = ""; savePrefs(); $("gate-code").value = ""; showGate("");
+  };
 }
 
 // Reflect the effective lyric offset (optimistic if just changed, else the host mirror; not while dragging).

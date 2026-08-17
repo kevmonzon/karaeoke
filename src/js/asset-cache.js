@@ -15,6 +15,74 @@
 const ASSET_CACHE = "karaeoke-assets-v1";
 const supported = typeof caches !== "undefined";
 
+/*
+ * BUDGET + LRU. Cache Storage keeps no access times and enforces no size of its own, so every
+ * song ever played used to accumulate for the life of the browser profile. When the origin
+ * quota was finally hit, `cache.put` rejected, the rejection was swallowed, and caching simply
+ * stopped working — silently. Nobody learns why the app "feels slower now".
+ *
+ * So we keep our own tiny manifest (url → {size, at}) in localStorage and evict the
+ * least-recently-USED entries when the budget is exceeded. The soundfont is pinned: it is the
+ * single most expensive thing to re-download and it is needed by every MIDI song.
+ */
+const MANIFEST_KEY = "karaeoke.assets.v1";
+const BUDGET_BYTES = 512 * 1024 * 1024;   // generous — a long night of songs plus the soundfont
+const PINNED = /soundfont\.sf2$/i;
+
+let manifest = null;      // { [url]: { size, at } }
+let quotaExceeded = false; // surfaced in ⚙ → Library; see getCacheStatus()
+
+function loadManifest() {
+  if (manifest) return manifest;
+  try {
+    const m = JSON.parse(localStorage.getItem(MANIFEST_KEY) || "{}");
+    manifest = m && typeof m === "object" ? m : {};
+  } catch (_) { manifest = {}; }
+  return manifest;
+}
+function saveManifest() {
+  try { localStorage.setItem(MANIFEST_KEY, JSON.stringify(manifest)); } catch (_) {}
+}
+function touch(url, size) {
+  const m = loadManifest();
+  m[url] = { size: size || (m[url] && m[url].size) || 0, at: Date.now() };
+  saveManifest();
+}
+
+/** Evict least-recently-used entries until the manifest fits the budget (soundfont pinned). */
+async function enforceBudget(cache) {
+  const m = loadManifest();
+  const entries = Object.entries(m);
+  let total = entries.reduce((n, [, v]) => n + (v.size || 0), 0);
+  if (total <= BUDGET_BYTES) return;
+  const evictable = entries
+    .filter(([url]) => !PINNED.test(url))
+    .sort((a, b) => (a[1].at || 0) - (b[1].at || 0));   // oldest touch first
+  for (const [url, v] of evictable) {
+    if (total <= BUDGET_BYTES) break;
+    try { await cache.delete(url); } catch (_) {}
+    delete m[url];
+    total -= v.size || 0;
+  }
+  saveManifest();
+}
+
+/**
+ * What the UI can tell the user about caching. `quotaExceeded` means the browser refused to
+ * store something — repeat plays will re-download until space is freed.
+ */
+export function getCacheStatus() {
+  const m = loadManifest();
+  const entries = Object.values(m);
+  return {
+    supported,
+    quotaExceeded,
+    files: entries.length,
+    bytes: entries.reduce((n, v) => n + (v.size || 0), 0),
+    budget: BUDGET_BYTES,
+  };
+}
+
 /**
  * Cache-first ArrayBuffer fetch.
  *   - hit  → returns the cached bytes instantly (no network).
@@ -30,11 +98,22 @@ export async function cachedArrayBuffer(url, onProgress = () => {}) {
       const hit = await cache.match(url);
       if (hit) {
         onProgress(1); // instant — complete any progress bar
-        return await hit.arrayBuffer();
+        const buf = await hit.arrayBuffer();
+        touch(url, buf.byteLength);   // a play is a USE — that's what LRU has to know
+        return buf;
       }
       const buf = await streamToBuffer(url, onProgress);
       // Store a fresh copy (slice() so we hand back our own buffer untouched).
-      try { await cache.put(url, new Response(buf.slice(0))); } catch (_) {}
+      try {
+        await cache.put(url, new Response(buf.slice(0)));
+        touch(url, buf.byteLength);
+        await enforceBudget(cache);
+      } catch (e) {
+        // Almost always QuotaExceededError. Recorded rather than swallowed: silent failure
+        // here is indistinguishable from "the app got slower for no reason".
+        quotaExceeded = true;
+        console.warn("Asset cache write failed (quota?):", e && e.name);
+      }
       return buf;
     } catch (_) {
       // Cache unavailable — fall through to a direct fetch.
@@ -66,6 +145,9 @@ export async function purgeStaleCaches() {
  * asset cache). The ~32 MB soundfont + cached songs re-download on next play.
  */
 export async function purgeAllCaches() {
+  manifest = {};
+  quotaExceeded = false;
+  try { localStorage.removeItem(MANIFEST_KEY); } catch (_) {}
   if (!supported) return;
   try {
     const names = await caches.keys();

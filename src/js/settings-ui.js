@@ -14,8 +14,11 @@
  * player's onSettingChanged (Settings calls it on every change).
  */
 
+import { getCacheStatus } from "./asset-cache.js";
+
 const $ = (id) => document.getElementById(id);
 const pct = (v) => `${Math.round(v * 100)}%`;
+const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0)} MB`;
 
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
@@ -52,6 +55,15 @@ const SETTINGS_SCHEMA = [
   { id: "set-guide-mic", path: "guide.showMic", type: "check" },
   { id: "set-guide-trail", path: "guide.trail", type: "check" },
   { id: "set-guide-score", path: "guide.scoring", type: "check" },
+  // score (videoke) — the engine itself; guide.scoring above is just the on-guide number
+  { id: "set-score", path: "score.enabled", type: "check" },
+  { id: "set-score-card", path: "score.card", type: "check" },
+  { id: "set-score-golden", path: "score.golden", type: "check" },
+  // queue fairness + reactions (party behaviour)
+  { id: "set-fairplay", path: "queue.fairPlay", type: "check" },
+  { id: "set-maxper", path: "queue.maxPerGuest", type: "range", fmt: (v) => (+v ? `${v}` : "off") },
+  { id: "set-reactions", path: "reactions.enabled", type: "check" },
+  { id: "set-reactions-sound", path: "reactions.sound", type: "check" },
   { id: "set-gv-vol", path: "guide.vocal.volume", type: "range", fmt: pct },
   { id: "set-gv-mute", path: "guide.vocal.mute", type: "check" },
   { id: "set-gv-solo", path: "guide.vocal.solo", type: "check" },
@@ -121,6 +133,11 @@ const SEARCH_KEYWORDS = {
   "set-remote-url": "phone qr url tunnel address host",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
+  "set-score": "points rating videoke sing grade",
+  "set-score-card": "points rating result end of song",
+  "set-score-golden": "hooks bonus double weight",
+  "export-data": "backup save download favorites queue settings json",
+  "import-data": "restore load upload backup json",
 };
 
 const CAT_STATE_KEY = "karaeoke.settingsUI.v1"; // transient UI: category open/closed
@@ -145,7 +162,7 @@ export function matchesQuery(text, query) {
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData, onShowRecap }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -179,7 +196,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog"; // matchable controls + action buttons
+  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog, #export-data, #import-data, #show-recap"; // matchable controls + action buttons
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -288,18 +305,72 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     btn.classList.toggle("on", mic.enabled);
   }
 
+  // The drawer is a modal dialog (role/aria-modal live on the element in index.html), so it
+  // owes keyboard users four things it never had: Escape to dismiss, focus moved INTO it on
+  // open, focus RETURNED to the ⚙ button on close, and a trap so Tab can't wander out into
+  // the page behind it — which `aria-modal` tells a screen reader is unreachable, so leaving
+  // Tab free to go there is worse than no dialog semantics at all.
+  let lastFocus = null;
+
+  // Only elements that are actually reachable: the panel's own search filter hides rows with
+  // `display:none`, and a hidden control must not become an invisible Tab stop.
+  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
+  function focusableInPanel() {
+    const panel = $("settings-panel");
+    if (!panel) return [];
+    return [...panel.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
+  }
+
+  function trapTab(e) {
+    if (e.key !== "Tab") return;
+    const items = focusableInPanel();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !items.includes(active))) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault(); first.focus();
+    }
+  }
+
+  function openSettings() {
+    syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
+    lastFocus = document.activeElement;
+    $("settings-panel").classList.remove("hidden");
+    document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
+    const s = $("set-search");
+    if (s) setTimeout(() => s.focus(), 60); // after the slide-in
+  }
+
+  function closeSettings() {
+    if ($("settings-panel").classList.contains("hidden")) return;
+    $("settings-panel").classList.add("hidden");
+    document.body.classList.remove("settings-open");
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+    lastFocus = null;
+  }
+
   function wireSettings() {
-    $("btn-settings").onclick = () => {
-      syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
-      $("settings-panel").classList.remove("hidden");
-      document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
-      const s = $("set-search");
-      if (s) setTimeout(() => s.focus(), 60); // after the slide-in
-    };
-    $("settings-close").onclick = () => {
-      $("settings-panel").classList.add("hidden");
-      document.body.classList.remove("settings-open");
-    };
+    $("btn-settings").onclick = openSettings;
+    $("settings-close").onclick = closeSettings;
+
+    // Escape closes the drawer. The panel's own search box handles Escape first (it clears the
+    // field and stopPropagation()s), so typing isn't interrupted — a second Escape closes.
+    $("settings-panel").addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.stopPropagation(); closeSettings(); }
+      else trapTab(e);
+    });
+    // …and when focus sits outside the drawer (opened, then clicked the stage behind it):
+    // Escape still closes, and Tab pulls focus back in rather than walking the hidden page.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { closeSettings(); return; }
+      if (e.key !== "Tab" || !document.body.classList.contains("settings-open")) return;
+      const panel = $("settings-panel");
+      if (!panel || panel.contains(document.activeElement)) return;
+      const items = focusableInPanel();
+      if (items.length) { e.preventDefault(); items[0].focus(); }
+    });
 
     autoBind();
     wireSearch();
@@ -337,6 +408,36 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       resetCatState();                  // clears karaeoke.settingsUI.v1 → default panel layout
     };
 
+    const recapBtn = $("show-recap");
+    if (recapBtn && onShowRecap) recapBtn.onclick = () => onShowRecap();
+
+    // Backup / restore. Favorites, the queue and every setting exist ONLY in this browser, so
+    // the panel must offer a way out that isn't the delete button. Import reloads: modules read
+    // their stores at boot, so restoring underneath a live page would show stale state.
+    const exp = $("export-data"), imp = $("import-data"), impFile = $("import-file"), st = $("data-status");
+    if (exp && onExportData) {
+      exp.onclick = () => {
+        try {
+          const n = onExportData();
+          if (st) st.textContent = `Exported ${n} item${n === 1 ? "" : "s"}.`;
+        } catch (e) { if (st) st.textContent = "Export failed: " + e.message; }
+      };
+    }
+    if (imp && impFile && onImportData) {
+      imp.onclick = () => impFile.click();   // the real <input type=file> stays visually hidden
+      impFile.onchange = async () => {
+        const file = impFile.files && impFile.files[0];
+        impFile.value = "";                  // allow re-picking the same file after a failure
+        if (!file) return;
+        if (st) st.textContent = "Restoring…";
+        try {
+          const n = await onImportData(file);
+          if (st) st.textContent = `Restored ${n} item${n === 1 ? "" : "s"} — reloading…`;
+          setTimeout(() => location.reload(), 600);
+        } catch (e) { if (st) st.textContent = "Import failed: " + e.message; }
+      };
+    }
+
     // "Erase all app data" — full factory reset (settings + library data + caches). Guarded
     // by a two-step confirm on the button itself (no native dialog, matches the app's style):
     // first click arms + warns, a second click within 4 s performs the irreversible wipe.
@@ -354,9 +455,27 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     }
   }
 
+  // How much the offline cache is holding, and — the part that matters — whether the browser
+  // has started REFUSING writes. That used to fail silently, so repeat plays quietly went back
+  // to re-downloading with nothing on screen to explain it.
+  function updateCacheStatus() {
+    const el = $("cache-status");
+    if (!el) return;
+    const s = getCacheStatus();
+    if (!s.supported) { el.textContent = "Offline cache unavailable in this browser."; return; }
+    const base = s.files
+      ? `Cached offline: ${s.files} file${s.files === 1 ? "" : "s"}, ${mb(s.bytes)} of ${mb(s.budget)}.`
+      : "Nothing cached offline yet.";
+    el.textContent = s.quotaExceeded
+      ? `${base} Storage is full — songs are re-downloading each play. Erase app data to reclaim it.`
+      : base;
+    el.classList.toggle("warn", s.quotaExceeded);
+  }
+
   function syncSettingsUI() {
     autoSync();
     updateMicBtn();
+    updateCacheStatus();
     // bottom transport controls (wired in app.js, but reflected here on reset).
     // Tempo & key are ± steppers (labels only); volume is still a slider.
     if ($("tempo-val")) {

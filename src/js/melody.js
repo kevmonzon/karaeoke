@@ -265,14 +265,20 @@ export class PitchGuide {
     return pad + (1 - (note - r.min) / span) * (this.h - 2 * pad);
   }
 
-  /** Nearest melody note number active at time t (or null). */
+  /** Melody note number active at time t (or null). Binary search: this runs twice per frame
+   *  (the rAF loop asks directly, and update() asks again via isClose), and a linear walk from
+   *  index 0 through a few hundred notes every time is the kind of cost that only shows up on
+   *  the slowest machine in the room. LyricsEngine and ChordEngine already search this way. */
   targetNoteAt(t) {
-    if (!this.melody || !this.melody.notes.length) return null;
-    for (const n of this.melody.notes) {
-      if (n.start <= t && t <= n.end) return n.note;
-      if (n.start > t) break;
+    const a = this.melody && this.melody.notes;
+    if (!a || !a.length) return null;
+    let lo = 0, hi = a.length - 1, best = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (a[mid].start <= t) { best = mid; lo = mid + 1; }
+      else hi = mid - 1;
     }
-    return null;
+    return best >= 0 && t <= a[best].end ? a[best].note : null;
   }
 
   /** Draw. micMidi = live detected note (float) or null. */

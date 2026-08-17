@@ -49,8 +49,24 @@ body {
 /* subtle lift on song-row hover so browsing feels alive (transform only → cheap) */
 .song:hover { transform: translateX(2px); }
 
+/* ---------------------------------------------------------------------------
+   Keyboard focus. This is a 10-foot app — someone will drive it from a couch
+   with a keyboard, and it had NO visible focus state anywhere (several rules
+   below explicitly cleared the browser default and replaced it with nothing but
+   a border tint). One rule covers every control; :focus-visible keeps it off
+   for pointer users. --focus is the token tokens.css defined for exactly this
+   purpose and nothing referenced. The outline follows each control's own
+   border-radius automatically, so no per-component tuning is needed.
+   --------------------------------------------------------------------------- */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* Topbar — a calm cluster: brand · status eyebrow · grouped view toggles · icon buttons. */
 .topbar {
+  position: relative;   /* anchors the .boot-bar sweep at its bottom edge */
   display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
   padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(10px);
@@ -100,7 +116,7 @@ body.queue-collapsed .queue { opacity: 0; pointer-events: none; padding: 0; }
 }
 body.controls-hidden .playback-dock {
   opacity: 0; pointer-events: none; transform: translateY(10px);
-  transition: opacity .5s var(--ease), transform .5s var(--ease);
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
 }
 /* MIDI mode drops a per-channel mixer band at the bottom of the flow — reserve room so the
    overlay doesn't cover its lowest rows (only mode with in-flow content behind the dock). */
@@ -116,13 +132,13 @@ body.focus-mode .library,
 body.focus-mode .queue { display: none; }
 body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; }
 body.focus-mode .stage { grid-column: 1; }
-body.focus-mode .topbar { opacity: .5; transition: opacity .25s var(--ease); }
+body.focus-mode .topbar { opacity: .5; transition: opacity var(--dur-base) var(--ease); }
 body.focus-mode .topbar:hover { opacity: 1; }
 /* Auto-hide: after a few idle seconds the playback dock fades (handled globally by
    body.controls-hidden .playback-dock above — active in focus mode AND when "Always show
    playback controls" is off). In focus mode ONLY, the topbar also recedes and the cursor
    is hidden for a clean 10-foot view; any pointer/key activity brings them back (app.js). */
-body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity .5s var(--ease); }
+body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease); }
 body.focus-mode.controls-hidden { cursor: none; }
 /* Focus mode: enlarge the "up next" pill (1.75×) so it's legible from across the room. */
 body.focus-mode { --upnext-mult: 1.75; }
@@ -239,7 +255,7 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 #search {
   flex: 1; padding: calc(11px * var(--ui-scale)) calc(32px * var(--ui-scale)) calc(11px * var(--ui-scale)) calc(14px * var(--ui-scale));
   border-radius: var(--r-md); border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale)); outline: none;
+  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale));
 }
 #search:focus { border-color: var(--brand); }
 .search-clear {
@@ -264,7 +280,7 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 /* text input in the ⚙ panel (e.g. YouTube append-keyword) */
 .set-text {
   width: 130px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: 13px; outline: none;
+  background: var(--panel); color: var(--ink); font-size: 13px;
 }
 .set-text:focus { border-color: var(--accent); }
 /* icon-only pills (★ favorites · ⟲ recent): square, centered glyph */
@@ -307,14 +323,20 @@ button.fav {
   background: none; border: none; cursor: pointer; padding: 0;
   width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
   border-radius: calc(8px * var(--ui-scale)); line-height: 1;
-  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color .12s, transform .08s;
+  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
-button.fav:hover { color: #ffd23f; }
+button.fav:hover { color: var(--gold); }
 button.fav:active { transform: scale(.85); }
-button.fav.on { color: #ffce3a; }
+button.fav.on { color: var(--gold); }
 
 /* Stage / now playing */
-.now-playing { position: relative; display: flex; align-items: center; gap: var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
+/* The badges (key · lyric state · queue count) are `flex: none`, so on a narrow stage — the
+   settings drawer open on a laptop is enough — they took the whole row and squeezed .np-meta
+   to ZERO width: the song title disappeared entirely and the bar overflowed. Let the row wrap
+   and give the title a floor to claim, so the badges drop to a second line instead of evicting
+   the one piece of information the bar exists to show. */
+.now-playing { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
+.now-playing .np-meta { flex: 1 1 min(220px, 100%); }
 
 /* Singer badge — sits in the now-playing header (was a separate banner row). */
 .now-singer {
@@ -375,7 +397,7 @@ button.fav.on { color: #ffce3a; }
 /* Pitch guide (scrolling piano-roll) */
 .pitch-guide {
   display: none; width: 100%; height: var(--guide-height, 150px);
-  border-radius: 12px; background: rgba(8, 10, 18, .55);
+  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent);
   border: 1px solid var(--line); margin-bottom: var(--s-2); flex: 0 1 auto; min-height: 0;
 }
 body.guide-on .pitch-guide { display: block; }
@@ -393,14 +415,14 @@ body.chords-on .chords { display: block; }
 .chord-strip {
   position: absolute; top: 0; left: 0; height: 100%;
   display: flex; align-items: center; gap: 0.6em;
-  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  transition: transform var(--dur-slow) var(--ease);
   will-change: transform;
 }
 .chord-chip {
   flex: 0 0 auto; font-weight: 800; letter-spacing: .3px;
   padding: 2px 12px; border-radius: 999px; border: 1px solid var(--line);
   color: var(--muted); background: var(--panel-2);
-  transition: color .3s ease, background .3s ease, transform .3s ease, opacity .3s ease;
+  transition: color var(--dur-base) var(--ease), background var(--dur-base) var(--ease), transform var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease);
 }
 .chord-chip.past     { opacity: .35; }
 .chord-chip.upcoming { opacity: .70; }
@@ -417,7 +439,7 @@ body.chords-on .chords { display: block; }
   display: none; flex: 0 0 auto; width: 100%;
   max-height: 190px; overflow-y: auto;
   padding: 8px 10px; margin-bottom: var(--s-2);
-  border-radius: 12px; background: rgba(8, 10, 18, .55); border: 1px solid var(--line);
+  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent); border: 1px solid var(--line);
   grid-template-columns: 1fr; gap: 4px;
 }
 body.midi-mode .midi-mixer { display: grid; }
@@ -491,13 +513,13 @@ body.midi-mode .midi-mixer { display: grid; }
 .lyric-scroll {
   position: absolute; left: 0; right: 0; top: 0;
   display: flex; flex-direction: column; align-items: center; gap: 0.3em;
-  transition: transform .45s cubic-bezier(.33, 0, .1, 1);
+  transition: transform var(--dur-slow) var(--ease);
   will-change: transform;
 }
 .line {
   max-width: var(--line-width);
   line-height: 1.32; font-weight: 700; text-align: center;
-  transition: opacity .35s ease, transform .35s ease;
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
 }
 .line.placeholder { color: var(--muted); }
 .line.past     { opacity: .30; }
@@ -587,8 +609,13 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
   overflow: hidden; z-index: 3; border-radius: 12px;
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; text-align: center; padding: 24px;
-  background: rgba(8, 10, 18, .82); backdrop-filter: blur(4px);
-  opacity: 0; pointer-events: none; transition: opacity .6s ease;
+  /* Brand-tinted rather than a fixed dark rgba: this is the moment the room looks up,
+     and it should look like THIS app in either theme, not like a generic scrim. */
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%),
+    color-mix(in srgb, var(--surface-0) 88%, transparent);
+  backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
 }
 .title-card.show { opacity: 1; }
 /* font-size here is only a pre-JS fallback; fitTitleCard() overrides it inline to fill the card. */
@@ -597,6 +624,73 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 .tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(18px, 2.6vw, 28px) * var(--ui-scale)); }
 .tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(18px * var(--ui-scale)); }
 .tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Score card — the videoke payoff, shown over the cleared stage when a song
+   ends. Same geometry as the title card so the two read as one family; the
+   number is the hero and everything else is support. Tinted with the brand
+   rather than a fixed dark rgba so it belongs in both themes.
+   --------------------------------------------------------------------------- */
+.score-card {
+  position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
+  overflow: hidden; z-index: 4; border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px; text-align: center; padding: 24px;
+  background: color-mix(in srgb, var(--brand) 12%, var(--surface-0)); backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
+}
+.score-card.show { opacity: 1; }
+.sc-song { font-size: calc(clamp(14px, 1.8vw, 22px) * var(--ui-scale)); color: var(--text-muted); }
+.sc-score {
+  font-size: calc(clamp(72px, 18vw, 220px) * var(--ui-scale)); font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--brand);
+}
+.sc-band { font-size: calc(clamp(20px, 3.4vw, 40px) * var(--ui-scale)); font-weight: 700; }
+.sc-band.excellent { color: var(--gold); }
+.sc-band.good { color: var(--brand-2); }
+.sc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(16px, 2.2vw, 26px) * var(--ui-scale)); }
+.sc-best { margin-top: 4px; color: var(--gold); font-weight: 700; font-size: calc(clamp(13px, 1.6vw, 18px) * var(--ui-scale)); }
+.sc-song:empty, .sc-singer:empty, .sc-best:empty { display: none; }
+/* The score pops in rather than fading — it should land like a verdict. */
+@media (prefers-reduced-motion: no-preference) {
+  .score-card.show .sc-score { animation: sc-pop 420ms var(--ease) both; }
+}
+@keyframes sc-pop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* Per-line bonus chip — brief feedback between the start and the final number. */
+.line-bonus {
+  position: absolute; z-index: 3; left: 50%; top: 12px; transform: translateX(-50%);
+  padding: 4px calc(12px * var(--ui-scale)); border-radius: var(--r-pill);
+  font-size: calc(14px * var(--ui-scale)); font-weight: 700; letter-spacing: .02em;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease);
+}
+.line-bonus.show { opacity: 1; }
+.line-bonus.perfect { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 55%, transparent); }
+.line-bonus.great { color: var(--brand-2); border-color: color-mix(in srgb, var(--brand-2) 55%, transparent); }
+.line-bonus.miss { color: var(--text-muted); }
+
+/* ---------------------------------------------------------------------------
+   Reactions — emoji sent from a guest's phone, floating up the stage. Purely
+   decorative and pointer-transparent so they can never swallow a click on the
+   lyrics or the transport underneath.
+   --------------------------------------------------------------------------- */
+.reaction {
+  position: absolute; bottom: 12%; z-index: 5; pointer-events: none;
+  font-size: calc(34px * var(--ui-scale)); line-height: 1;
+  animation: react-float 2600ms var(--ease) both;
+  will-change: transform, opacity;
+}
+@keyframes react-float {
+  0%   { transform: translate(0, 20px) scale(.6); opacity: 0; }
+  12%  { transform: translate(0, 0) scale(1.15); opacity: 1; }
+  100% { transform: translate(var(--drift, 0), -46vh) scale(1); opacity: 0; }
+}
+/* Reduced motion: show it, hold it, fade it — no travel. */
+@media (prefers-reduced-motion: reduce) {
+  .reaction { animation: react-fade 1600ms linear both; bottom: 22%; }
+  @keyframes react-fade { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
+}
 
 /* Mic toggle in the transport row */
 .transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
@@ -614,9 +708,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 /* Offset toast */
 .offset-toast {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%) translateY(-8px);
-  background: rgba(10,12,20,.9); border: 1px solid var(--accent-2); color: var(--ink);
+  background: color-mix(in srgb, var(--surface-0) 92%, transparent); border: 1px solid var(--accent-2); color: var(--ink);
   padding: 8px 16px; border-radius: 20px; font-size: 13px; font-variant-numeric: tabular-nums;
-  opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 5;
+  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); z-index: 5;
 }
 .offset-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
@@ -625,7 +719,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
   background: var(--surface-1); border-left: 1px solid var(--border); z-index: 60;
   display: flex; flex-direction: column; box-shadow: var(--elev-2);
-  transition: transform .22s var(--ease);
+  transition: transform var(--dur-base) var(--ease);
 }
 .settings-panel.hidden { transform: translateX(102%); }
 /* Make room, don't cover: on a wide desktop the stage + topbar reflow beside the open
@@ -664,7 +758,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 120px;
 }
-.settings-body select:focus { outline: none; border-color: var(--brand-2); }
+.settings-body select:focus { border-color: var(--brand-2); }
 .hint.sub { margin: -6px 0 var(--s-3); font-size: 11px; }
 #rebuild-status { margin: 8px 0 0; } /* sits below the rebuild button, not crammed against it */
 #rebuild-status:empty { margin: 0; }
@@ -691,7 +785,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
   border-radius: 10px; padding: 9px 12px; font-size: 13px; -webkit-appearance: none; appearance: none;
 }
 .set-search input::-webkit-search-cancel-button { display: none; }
-.set-search input:focus { outline: none; border-color: var(--accent-2); }
+.set-search input:focus { border-color: var(--accent-2); }
 .set-search-x {
   flex: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
   background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px;
@@ -709,7 +803,7 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 }
 .set-cat > summary::-webkit-details-marker { display: none; }
 .set-cat > summary::after {
-  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .18s ease;
+  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform var(--dur-base) var(--ease);
 }
 .set-cat[open] > summary::after { transform: rotate(90deg); }
 .set-cat > summary:hover { color: var(--accent-2); }
@@ -813,3 +907,139 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .midi-mixer { max-height: 26vh; }
   /* (the "neither panel open → full-screen stage" collapse is inherited from the ≤900 block) */
 }
+
+/* ---------------------------------------------------------------------------
+   Tonight's recap (⚙ → Library). A modal over the whole app, not a stage
+   overlay: it's read between songs, not during one.
+   --------------------------------------------------------------------------- */
+.recap {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: var(--scrim); backdrop-filter: blur(3px);
+}
+.recap.hidden { display: none; }
+.recap-card {
+  width: min(640px, 100%); max-height: 82vh; display: flex; flex-direction: column;
+  background: var(--surface-0); border: 1px solid var(--border);
+  border-radius: var(--r-lg); box-shadow: var(--elev-2); overflow: hidden;
+}
+.recap-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border-soft);
+}
+.recap-head h3 { margin: 0; font-size: calc(18px * var(--ui-scale)); }
+.recap-body { padding: 18px 20px 22px; overflow-y: auto; }
+
+.recap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+.recap-stat {
+  background: var(--surface-2); border: 1px solid var(--border-soft);
+  border-radius: var(--r-md); padding: 12px; text-align: center;
+}
+.recap-stat b {
+  display: block; font-size: calc(26px * var(--ui-scale)); font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--brand); line-height: 1.1;
+}
+.recap-stat span { font-size: calc(11px * var(--ui-scale)); color: var(--text-muted); }
+
+.recap-list { list-style: none; margin: 0; padding: 0; }
+.recap-list li {
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px;
+  padding: 10px 2px; border-bottom: 1px solid var(--border-soft);
+}
+.recap-list li:last-child { border-bottom: 0; }
+.rc-title { font-weight: 600; }
+.rc-meta { grid-column: 1; font-size: calc(12px * var(--ui-scale)); color: var(--text-muted); }
+.rc-score {
+  grid-row: 1 / span 2; align-self: center;
+  font-size: calc(22px * var(--ui-scale)); font-weight: 800;
+  font-variant-numeric: tabular-nums; color: var(--brand-2);
+}
+.rc-score:empty { display: none; }
+
+/* A hint that is telling you something is wrong (e.g. the offline cache is full). */
+.hint.warn { color: var(--warn); }
+
+/* ---------------------------------------------------------------------------
+   Title card entrance. The four lines cascade in rather than appearing as one
+   block — a song starting is an event, and this is the only screen the whole
+   room reliably looks at. transform/opacity only, so it composites cheaply and
+   (importantly) does NOT affect layout: fitTitleCard() measures scrollHeight
+   the moment .show is added, and a translateY would be invisible to it anyway.
+   --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .title-card.show .tc-title  { animation: tc-in 420ms var(--ease) both; }
+  .title-card.show .tc-artist { animation: tc-in 420ms var(--ease) 70ms both; }
+  .title-card.show .tc-singer { animation: tc-in 420ms var(--ease) 140ms both; }
+  .title-card.show .tc-key    { animation: tc-in 420ms var(--ease) 210ms both; }
+}
+@keyframes tc-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* ---------------------------------------------------------------------------
+   Empty states. An empty <ul> used to be bare whitespace — the same picture for
+   "you have no songs yet", "that search found nothing", and "the catalog failed
+   to load". Each now says which it is, and the first-run one says what to do.
+   --------------------------------------------------------------------------- */
+.empty-state {
+  list-style: none; padding: calc(36px * var(--ui-scale)) 20px;
+  text-align: center; color: var(--text-muted);
+}
+.es-title { font-size: calc(15px * var(--ui-scale)); font-weight: 600; color: var(--text); }
+.es-hint { margin-top: 6px; font-size: calc(12.5px * var(--ui-scale)); line-height: 1.5; }
+
+/* ---------------------------------------------------------------------------
+   Boot indicator. Catalog load + (on the first song) a 32 MB soundfont mean
+   several seconds where the only feedback was the word "Loading…". A hairline
+   sweep under the topbar costs nothing and makes the wait feel intentional.
+   --------------------------------------------------------------------------- */
+.boot-bar {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  overflow: hidden; opacity: 0; transition: opacity var(--dur-base) var(--ease);
+  pointer-events: none;
+}
+body.booting .boot-bar { opacity: 1; }
+.boot-bar::after {
+  content: ""; position: absolute; inset: 0; width: 38%;
+  background: linear-gradient(90deg, transparent, var(--brand), var(--brand-2), transparent);
+  animation: boot-sweep 1.15s var(--ease) infinite;
+}
+@keyframes boot-sweep { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-bar::after { animation: none; width: 100%; opacity: .5; }
+}
+
+/* ---------------------------------------------------------------------------
+   Icon primitive (the inline <symbol> sprite in index.html).
+   Sized in `em` so each icon follows its own control's font-size — and therefore
+   --ui-scale — with no per-icon tuning. Painted with currentColor, so every
+   existing state rule (.on, :disabled, :hover, the dimmed .toggles) applies to
+   the icon for free, which raw emoji never did.
+   --------------------------------------------------------------------------- */
+.icon {
+  width: 1.15em; height: 1.15em; display: block; flex: none;
+  fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+/* Any control holding an icon centres it (the .gear primitive already does). */
+.transport button, .stepper button, .search-clear, .set-search-x {
+  display: inline-flex; align-items: center; justify-content: center;
+}
+/* The play triangle is a filled shape; keep its own fill and drop the outline weight. */
+.icon [fill="currentColor"] { stroke-width: 1; }
+
+/* ---------------------------------------------------------------------------
+   Per-kind tint on the song rows. The library holds four kinds of song and the
+   only signal was an emoji glyph — useless from a sofa, and a COLOUR tint can't
+   help either, because the OS renders 🎤🎞️🌐🎵 as colour emoji regardless of
+   `color`. So the tint goes BEHIND the glyph as a chip, which reads at distance
+   and works whatever the emoji font does.
+   --------------------------------------------------------------------------- */
+.song .kind, .queue-list .kind {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+.song .kind.kar, .queue-list .kind.kar { background: color-mix(in srgb, var(--brand-2) 20%, transparent); }
+.song .kind.vid, .queue-list .kind.vid { background: color-mix(in srgb, var(--brand) 20%, transparent); }
+.song .kind.aud, .queue-list .kind.aud { background: color-mix(in srgb, var(--gold) 22%, transparent); }
+.song .kind.yt,  .queue-list .kind.yt  { background: color-mix(in srgb, var(--bad) 18%, transparent); }

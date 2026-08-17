@@ -22,13 +22,25 @@ import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
+import { Scorer } from "./scoring.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
-import { createRemoteHost, pickRemoteBaseUrl } from "./remote-host.js";
+import { createReactions } from "./reactions.js";
+import { createDurationHints } from "./duration-hints.js";
+import { createRecap } from "./recap.js";
+import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
+import { createQueue } from "./queue.js";
+import { createSession } from "./session.js";
+import { createLibraryView } from "./library-view.js";
+import { createRemoteGlue } from "./remote-glue.js";
+import { createRemoteHost } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
+import { collectAppData, restoreAppData, clearAppData } from "./store.js";
 
 const $ = (id) => document.getElementById(id);
+// What an empty song list should SAY. A bare white panel is indistinguishable from a broken
+// app, and the first-run case has a concrete next action worth naming.
 // Source-kind icon shown in the now-playing header (in place of the dial number).
 const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐", audio: "🎵" };
 const npIcon = (kind) => NP_ICON[kind] || "🎵";
@@ -36,36 +48,57 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 // --- singletons -------------------------------------------------------------
 const settings = new Settings();
 const catalog = new Catalog();
+const session = createSession({ catalog });
+// The list's current VIEW (search / Recent / Favorites / YouTube append). It needs library-ui,
+// which is built at boot, so it reaches it through a getter rather than a captured reference.
+const libraryView = createLibraryView({
+  catalog, settings,
+  getLib: () => lib,
+  setStatus: (m) => setStatus(m),
+  youtubeSupported: () => YouTubeEngine.supported,
+  getQueueIds: () => queue.list.map((s) => s.id),   // live: the keep-set spans three owners
+  getRecentIds: () => session.recent,
+  getRecentSongs: () => session.recentSongs(),
+  warmYoutube: () => { if (youtube) youtube.warm(); },
+});
 const audio = new AudioEngine();
+const reactions = createReactions({ settings, audio });
+const durations = createDurationHints();
+const recap = createRecap();
+const score = createScorePresentation({ settings });
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 
 let remoteHost;                  // host↔phone relay driver (created at boot)
 
 // --- mutable player state ---------------------------------------------------
-let queue = [];
-let queueBy = [];                // parallel to `queue`: who queued each song (phone nickname, or "")
+// The queue owns its own two parallel arrays (song + who reserved it); every mutation renders,
+// persists and pushes to the phones through this one callback.
+const queue = createQueue({
+  onChange() {
+    lib.renderQueue(queue.list, queue.listBy);
+    saveSession();
+    if (remoteHost) remoteHost.push();
+  },
+});
 let current = null;
 let currentBy = "";              // who queued the NOW-PLAYING song via the remote ("" if host-added)
 let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE, audioFile=AUDIO)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
-let recent = []; // recently-played song ids, most-recent first
 let userPaused = false;   // true only when the user paused (the auto-advance exception)
 let autoAdvancing = false; // guard so the idle auto-advance fires once
 let playDelayTimer = null; // delays music start until ~1s before the title card fades
-let recentMode = false;    // "Recent" view toggle
-let favoritesMode = false; // "Favorites" view toggle
-let favorites = new Set(); // starred song ids (persisted separately from the session)
 let lastParsed = null;
 let currentKey = null;
 let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
 let currentMelodyChannel = -1;
-let scoreHit = 0, scoreVoiced = 0;
+let scorer = null;               // scoring.js Scorer for the current MIDI song (null = nothing to score)
 
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 async function boot() {
+  document.body.classList.add("booting"); // hairline sweep under the topbar until the catalog lands
   purgeStaleCaches(); // drop the old service-worker cache; keep our asset cache
 
   lyrics = new LyricsEngine($("lyrics"), {
@@ -82,14 +115,22 @@ async function boot() {
   youtube.onState = () => { if (media === youtube) setPlayIcon(); }; // keep transport icon in sync with YT state
   youtube.onEnded = () => { if (media === youtube) endOfSong(); };   // unload on end → no suggested-videos screen
   youtube.onError = (code) => onYoutubeError(code);                  // embed-blocked/unavailable → skip + remember
+  video.onError = (why) => onMediaError("video", why);               // missing/corrupt file → skip, don't hang
+  audioFile.onError = (why) => onMediaError("audio", why);
 
   lib = createLibraryUI({
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
-    onToggleFavorite: toggleFavorite, isFavorite,
+    onToggleFavorite: (s) => libraryView.toggleFavorite(s), isFavorite: (s) => libraryView.isFavorite(s),
   });
-  settingsUI = createSettingsUI({ settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData });
+  settingsUI = createSettingsUI({
+    settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
+    onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => recap.show(),
+  });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
-  remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
+  remoteHost = createRemoteHost({
+    getSnapshot: () => remoteGlue.snapshot(),
+    applyCommand: (cmd) => remoteGlue.applyCommand(cmd),
+  });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
 
   applyVisualSettings();
@@ -107,15 +148,20 @@ async function boot() {
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
-    loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
-    loadBlockedYoutube(); // hide videos that previously failed to embed
-    if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
-    loadFavorites(); // restore starred songs (resolved by id) before the first render
-    lib.renderList(catalog.search(""));
+    durations.load(); // learned song lengths → queue ETA on the phones
+    recap.load();        // tonight's performance log (reset after a long enough gap)
+    libraryView.loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
+    libraryView.loadBlocked();      // hide videos that previously failed to embed
+    libraryView.seedServerBlocklist();
+    libraryView.loadFavorites();    // restore starred songs (resolved by id) before the first render
+    libraryView.renderAll();
     loadSession(); // restore queue + recently-played (no auto-play)
   } catch (e) {
     setStatus("Failed to load catalog.json — is the server running from the project root?");
     console.error(e);
+    libraryView.renderCatalogError();
+  } finally {
+    document.body.classList.remove("booting");
   }
   wireUI();
   settingsUI.wireSettings();
@@ -187,9 +233,9 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("chords.")) applyChordSettings();
   if (path === "*" || path === "bt.enabled") applyBluetoothMode(path === "bt.enabled");
   if (path === "*" || path === "youtube.enabled") {
-    updateYoutubeToggle();
+    libraryView.updateYoutubeToggle();
     // reflect the new state in the current search (append or drop YouTube rows)
-    if (path === "youtube.enabled" && !recentMode && !favoritesMode) runSearch($("search").value);
+    if (path === "youtube.enabled" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
   }
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
@@ -380,11 +426,15 @@ function loadMelody(parsed) {
     $("guide-info").textContent = mel.hasMelody
       ? `melody: channel ${mel.channel + 1} · ${mel.notes.length} notes`
       : "no guide melody found in this file";
+    // The guide melody IS the scorer's reference track — the piece UltraStar-family games
+    // have to hand-author per song and we derive from the KAR file (see scoring.js).
+    scorer = mel.hasMelody ? new Scorer(mel.notes, { golden: settings.get("score.golden") }) : null;
   } catch (e) {
     console.warn("melody extract failed:", e);
     pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
+    scorer = null;
   }
-  scoreHit = 0; scoreVoiced = 0;
+  score.resetLineBonus();
   pitchGuide.setScore(null);
 
   currentKey = settings.get("key.autoDetect") ? detectKey(parsed) : null;
@@ -414,39 +464,24 @@ function pcDist(a, b) {
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
-// `queueBy` runs parallel to `queue` — index i holds who queued queue[i] (a phone
-// nickname, or "" for a host-added song). Every queue mutation keeps them in lockstep.
+// The list itself lives in queue.js (song + who reserved it, kept in lockstep). What stays
+// here is only what needs the playback state: when to start playing, and what to do when the
+// queue runs dry.
 function enqueue(song, by = "") {
-  queue.push(song);
-  queueBy.push(by);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-  if (!current) advanceQueue();
+  queue.add(song, by, !!settings.get("queue.fairPlay"));
+  // Start playing if nothing is — but NOT while a song is still loading. `current` isn't set
+  // until a play* gets past its awaits, so during a cold start (or any slow load) every extra
+  // ＋ click read "nothing is playing" and shifted ANOTHER song off the queue to play. Queue
+  // three songs quickly and the middle one vanished: never played, no longer queued.
+  // This guard has to stay HERE — only app.js can see the playback state it reads.
+  if (!current && !loadingSong) advanceQueue();
 }
-function removeFromQueue(i) {
-  queue.splice(i, 1);
-  queueBy.splice(i, 1);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-}
+function removeFromQueue(i) { queue.removeAt(i); }
 // Move a queued song from one position to another (used by the phone remote's reorder).
-function reorderQueue(from, to) {
-  if (from < 0 || from >= queue.length || to < 0 || to >= queue.length || from === to) return;
-  const [s] = queue.splice(from, 1); queue.splice(to, 0, s);
-  const [b] = queueBy.splice(from, 1); queueBy.splice(to, 0, b);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-}
+function reorderQueue(from, to) { queue.move(from, to); }
 function advanceQueue() {
-  const next = queue.shift();
-  const by = queueBy.shift() || "";  // keep the attribution array in lockstep + carry it to the singer banner
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-  if (next) playNow(next, by);
+  const taken = queue.shift();
+  if (taken) playNow(taken.song, taken.by);
   else {
     media.stop();            // nothing more queued → halt the active engine
     current = null; autoAdvancing = false;
@@ -457,62 +492,52 @@ function advanceQueue() {
 
 // ---------------------------------------------------------------------------
 // Remote control (phones) — host side. The host stays the authoritative player;
-// remote-host.js POSTs remoteSnapshot() to serve.py and hands back guest COMMANDS
-// which applyRemoteCommand() applies through the SAME functions the local UI uses.
+// remote-host.js POSTs the snapshot to serve.py and hands back guest COMMANDS, which
+// remote-glue.js applies through the SAME functions the local UI uses.
 // See src/remote.html / src/js/remote.js (the phone) and §5.x in CLAUDE.md.
 // ---------------------------------------------------------------------------
-// The host-settings subset mirrored to phones AND the allowlist a guest may change.
-// A guest `setting` command with any other path is ignored — never settings.set() an
-// arbitrary path off the network.
-const REMOTE_SETTABLE = new Set([
-  "lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume",
-  "guide.vocal.mute",
-]);
-
-// Room code — OWNED BY THIS HOST BROWSER (generated once, kept in localStorage). Each host has
-// its own code; guests reach THIS host's room by it (baked into the QR). The server keys its
-// multi-room relay on the code. 6 chars, no ambiguous glyphs.
-const HOST_ROOM_KEY = "karaeoke.remote.host.v1";
-let hostRoom = null;
-function getHostRoom() {
-  if (hostRoom) return hostRoom;
-  try { hostRoom = localStorage.getItem(HOST_ROOM_KEY) || ""; } catch (_) { hostRoom = ""; }
-  if (!/^[A-Z0-9]{6}$/.test(hostRoom)) {
-    const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const buf = new Uint32Array(6);
-    (window.crypto || crypto).getRandomValues(buf);
-    hostRoom = Array.from(buf, (n) => A[n % A.length]).join("");
-    try { localStorage.setItem(HOST_ROOM_KEY, hostRoom); } catch (_) {}
-  }
-  return hostRoom;
-}
-
-// Render/refresh (or hide) the QR + URL + room code on the queue panel. The base URL is
-// auto-detected (settings override → the host page's own non-loopback origin → the server's
-// LAN IP); the host's room code is embedded so scanning auto-connects. Degrades quietly if the
-// QR lib 404'd (feature is opt-in anyway).
-let remoteLanUrl = null; // server-detected LAN base (fetched once, cached)
-async function refreshRemoteQr(on) {
-  const box = $("remote-qr");
-  if (!box) return;
-  if (!on) { box.classList.remove("show"); renderQr($("focus-qr"), ""); return; }
-  if (remoteLanUrl == null) {
-    try {
-      const d = await (await fetch("/api/remote/info")).json();
-      remoteLanUrl = (d && d.lanUrl) || "";
-    } catch (_) { remoteLanUrl = ""; }
-  }
-  const room = getHostRoom();
-  const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, remoteLanUrl);
-  const url = base ? `${base}/remote?room=${room}` : "";
-  const roomEl = $("remote-room"); if (roomEl) roomEl.textContent = room;
-  const link = $("remote-qr-url");
-  if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
-  renderQr($("remote-qr-code"), url);
-  renderQr($("focus-qr"), url); // same QR mirrored into the focus-mode overlay (CSS gates visibility)
-  positionFocusQr();
-  box.classList.add("show");
-}
+// The room code, the QR, the snapshot the phones mirror and the guest-command translation all
+// live in remote-glue.js. What stays here is only what writes the playback state — handed over
+// as `actions` — plus positionFocusQr, which measures this page's own layout.
+const remoteGlue = createRemoteGlue({
+  settings, catalog, queue, reactions, libraryView, durations,
+  // The one legitimate getter in the split: remote-host's interval calls snapshot() on its own
+  // schedule, so there is no caller here to pass the now-playing state in.
+  getNowPlaying: () => (current ? {
+    id: current.id,
+    name: current.name || "",
+    artist: current.artistName || "",
+    kind: current.kind,
+    code: current.code || "",
+    by: currentBy || "",
+    position: (media && media.currentTime) || 0,
+    duration: (media && media.duration) || 0,
+    paused: media ? media.paused : true,
+    // Live score, so the room can watch the number climb on their own phones. Null unless the
+    // song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
+    score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
+  } : null),
+  setStatus: (m) => setStatus(m),
+  positionFocusQr: () => positionFocusQr(),
+  actions: {
+    enqueue: (song, by) => enqueue(song, by),
+    removeFromQueue: (i) => removeFromQueue(i),
+    reorderQueue: (from, to) => reorderQueue(from, to),
+    play: () => remotePlay(),
+    pause: () => remotePause(),
+    next: () => skipCurrent(),
+    seek: (position) => {
+      // Clamped HERE: only app.js knows which engine is driving and how long the song is.
+      if (current && media.duration > 0) media.seek(Math.max(0, Math.min(media.duration, position)));
+    },
+    setVolume: (v) => setRemoteVolume(v),
+    applySetting: (path, v) => {
+      settings.set(path, v);           // → onSettingChanged fans it out
+      settingsUI.syncSettingsUI();     // refresh the ⚙ panel controls
+      syncTransportLabels();           // …and the bottom key/tempo/volume labels
+    },
+  },
+});
 
 // Focus-mode QR placement: overlay it on the RIGHT side of the melody guide, sized square to
 // the guide's height. The guide's top is dynamic (below the now-playing header), so we measure
@@ -535,98 +560,12 @@ function positionFocusQr() {
   qr.style.right = (s.right - g.right) + "px";           // right edge aligned to the guide's
 }
 
-// Draw a QR into `el` using the vendored qrcode-generator (window.qrcode). No-op if the
-// lib is missing or the URL is empty.
-function renderQr(el, text) {
-  if (!el) return;
-  el.innerHTML = "";
-  const qrcode = window.qrcode;
-  if (!text || typeof qrcode !== "function") return;
-  try {
-    const qr = qrcode(0, "M");        // type 0 = auto-fit the data, error-correction level M
-    qr.addData(text);
-    qr.make();
-    el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-  } catch (e) { console.error("QR render failed:", e); }
-}
-
 function applyRemoteMode() {
   const on = !!settings.get("remote.enabled");
   document.body.classList.toggle("remote-on", on);
   if (!remoteHost) return;
   if (on) remoteHost.start(); else remoteHost.stop();
-  refreshRemoteQr(on); // render/refresh (or hide) the QR on the queue panel — see Stage 3
-}
-
-// Snapshot the host state for the phones: now-playing, the queue (with attribution),
-// and the mirrored settings subset. remote-host.js adds the ackSeq before POSTing.
-function remoteSnapshot() {
-  const now = current ? {
-    id: current.id,
-    name: current.name || "",
-    artist: current.artistName || "",
-    kind: current.kind,
-    code: current.code || "",
-    by: currentBy || "",
-    position: (media && media.currentTime) || 0,
-    duration: (media && media.duration) || 0,
-    paused: media ? media.paused : true,
-  } : null;
-  const q = queue.map((s, i) => ({
-    id: s.id, name: s.name || "", artist: s.artistName || "",
-    kind: s.kind, code: s.code || "", by: queueBy[i] || "",
-  }));
-  const settingsSub = {};
-  for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
-  return { room: getHostRoom(), now, queue: q, settings: settingsSub };
-}
-
-// Resolve a song a phone asked to enqueue. Library songs resolve by id; a YouTube
-// result (not in the local catalog) is reconstructed from the command metadata and
-// registered so it resolves everywhere else (favorites/recent/queue) like a local one.
-function remoteResolveSong(c) {
-  const hit = catalog.getById(c.id);
-  if (hit) return hit;
-  if (c.kind === "youtube" && c.videoId) {
-    return registerYoutube(Catalog.makeYoutubeRecord({
-      videoId: c.videoId, title: c.name, channelTitle: c.artist,
-    }));
-  }
-  return null;
-}
-
-// Apply one guest command (already validated server-side to a known type).
-function applyRemoteCommand(cmd) {
-  switch (cmd.type) {
-    case "enqueue": {
-      const song = remoteResolveSong(cmd);
-      if (song) enqueue(song, String(cmd.by || "").slice(0, 24));
-      break;
-    }
-    case "remove":
-      if (Number.isInteger(cmd.index)) removeFromQueue(cmd.index);
-      break;
-    case "reorder":
-      if (Number.isInteger(cmd.from) && Number.isInteger(cmd.to)) reorderQueue(cmd.from, cmd.to);
-      break;
-    case "play":  remotePlay();  break;
-    case "pause": remotePause(); break;
-    case "next":  advanceQueue(); break;
-    case "seek":
-      if (current && media.duration > 0 && typeof cmd.position === "number")
-        media.seek(Math.max(0, Math.min(media.duration, cmd.position)));
-      break;
-    case "volume":
-      if (typeof cmd.value === "number") setRemoteVolume(cmd.value);
-      break;
-    case "setting":
-      if (typeof cmd.path === "string" && REMOTE_SETTABLE.has(cmd.path)) {
-        settings.set(cmd.path, cmd.value);   // → onSettingChanged fans it out
-        settingsUI.syncSettingsUI();          // refresh the ⚙ panel controls
-        syncTransportLabels();                // …and the bottom key/tempo/volume labels
-      }
-      break;
-  }
+  remoteGlue.refreshQr(on); // render/refresh (or hide) the QR on the queue panel
 }
 
 async function remotePlay() {
@@ -653,273 +592,74 @@ function syncTransportLabels() {
 }
 
 // ---------------------------------------------------------------------------
-// Session persistence — queue + recently played survive reloads (localStorage).
-// The queue is restored but NOT auto-played (no user gesture on load).
+// App data — factory reset, backup/export, and the thin wrappers over session.js
+// (which owns the queue + recently-played persistence).
 // ---------------------------------------------------------------------------
-const SESSION_KEY = "karaeoke.session.v1";
-
 // Full factory reset ("Erase all app data"): remove EVERY karaeoke.* localStorage key
 // (settings, session/queue+recents, favorites, ⚙ panel state, remote room code, the
 // YouTube pointer cache + blocklist) AND every Cache Storage cache (the ~32 MB soundfont
 // + cached songs), then reload into a pristine first-run state. Irreversible — the caller
 // (settings-ui.js) gates it behind a two-step confirm.
 async function eraseAllData() {
-  try {
-    const keys = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (k && k.startsWith("karaeoke.")) keys.push(k);
-    }
-    keys.forEach((k) => localStorage.removeItem(k));
-  } catch (_) {}
+  clearAppData();
   await purgeAllCaches();
   location.reload();
 }
 
-// Resolve a stored reference to a song. New format = stable id ("midi:5"/"video:5");
-// old sessions stored a bare numeric code → treat as a MIDI code (back-compat).
-function resolveSong(ref) {
-  return (typeof ref === "string" && ref.includes(":")) ? catalog.getById(ref) : catalog.get(ref);
+// Backup / restore. Every karaeoke.* key (settings, queue + recents, favorites, ⚙ panel
+// layout, the remote room code, saved-YouTube pointers) lives ONLY in this browser's
+// localStorage — a reinstall or a stray "clear site data" takes all of it, and the only
+// control the panel offered for that state was the erase button. Export writes one JSON
+// file; import writes karaeoke.* keys back and reloads so every module re-reads its store.
+function exportAppData() {
+  const payload = { ...collectAppData(), exportedAt: new Date().toISOString() };
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `karaeoke-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return Object.keys(payload.data).length;
+}
+
+/** Restore an exported file. Only karaeoke.* string keys are written, so a foreign or
+ *  hand-edited file can't reach any other state this origin keeps. Caller reloads. */
+async function importAppData(file) {
+  return restoreAppData(JSON.parse(await file.text()));
 }
 
 function saveSession() {
-  try {
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ queue: queue.map((s) => s.id), recent }));
-  } catch (_) {}
-  saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
+  session.save(queue.list.map((s) => s.id));
+  libraryView.persistYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(SESSION_KEY) || "null"); } catch (_) {}
-  if (!data) return;
-  recent = (Array.isArray(data.recent) ? data.recent : [])
-    .map(resolveSong).filter(Boolean).map((s) => s.id);
-  const q = (data.queue || []).map(resolveSong).filter(Boolean);
-  if (q.length) { queue = q; queueBy = q.map(() => ""); lib.renderQueue(queue, queueBy); }
+  const { queue: songs } = session.restore();
+  // Only touch the queue when there IS one: an empty restore must not clobber whatever the
+  // boot sequence has already put there, or re-render the panel for nothing.
+  if (songs.length) { queue.restore(songs); lib.renderQueue(queue.list, queue.listBy); }
 }
 function pushRecent(song) {
-  recent = [song.id, ...recent.filter((id) => id !== song.id)].slice(0, 40);
+  session.push(song);
   saveSession();
 }
-function setRecentMode(on) {
-  recentMode = on;
-  $("btn-recent").classList.toggle("active", on);
-  if (on && favoritesMode) setFavoritesMode(false); // the two library views are mutually exclusive
-}
-function showRecent() {
-  const songs = recent.map((id) => catalog.getById(id)).filter(Boolean);
-  lib.renderList(songs);
-  setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
-}
-
-// ---------------------------------------------------------------------------
-// Favorites — starred songs, persisted separately from the session (localStorage).
-// Stored as an array of stable ids so KAR/VID are unambiguous (§5.10); old bare
-// codes resolve as MIDI via resolveSong (same back-compat as the queue/recent).
-// ---------------------------------------------------------------------------
-const FAVORITES_KEY = "karaeoke.favorites.v1";
-
-function loadFavorites() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "null"); } catch (_) {}
-  const ids = (Array.isArray(data) ? data : []).map(resolveSong).filter(Boolean).map((s) => s.id);
-  favorites = new Set(ids);
-}
-function saveFavorites() {
-  try { localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favorites])); } catch (_) {}
-  saveYoutubeCache(); // a starred YouTube song must keep its pointer so it resolves on reload
-}
-function isFavorite(song) { return !!song && favorites.has(song.id); }
-function toggleFavorite(song) {
-  if (!song) return;
-  if (favorites.has(song.id)) favorites.delete(song.id);
-  else favorites.add(song.id);
-  saveFavorites();
-  if (favoritesMode) showFavorites();  // in the Favorites view, un-starring drops the row
-  else lib.refresh();                  // otherwise just repaint the star in place
-}
-function setFavoritesMode(on) {
-  favoritesMode = on;
-  $("btn-favorites").classList.toggle("active", on);
-  if (on && recentMode) setRecentMode(false); // the two library views are mutually exclusive
-}
-function showFavorites() {
-  const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
-  lib.renderList(songs);
-  setStatus(songs.length ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}` : "no favorites yet — tap ☆ on a song");
-}
-
-// ---------------------------------------------------------------------------
-// YouTube search (BYOC): live results append to the song list while you search; a 🌐 pill
-// toggles it. YouTube records are transient (not part of the browse catalog), so we keep a
-// small POINTER cache (metadata only — videoId/title/channel, never content) so favorited /
-// queued / recently-played YouTube songs still resolve by id after a reload. Persisted in a
-// third localStorage key, independent of settings + session. Chromium-only (needs the
-// credentialless iframe — see src/js/youtube.js); self-disables where unsupported.
-// ---------------------------------------------------------------------------
-const YOUTUBE_KEY = "karaeoke.youtube.v1";
-const youtubeCache = new Map(); // id → YouTube record (favorites/recent/queue resolution)
-let ytSearchTimer = null;       // the (long) debounce before actually querying YouTube
-
-/** True only when the user opted in AND the browser supports credentialless iframes. */
-function youtubeOn() { return settings.get("youtube.enabled") && YouTubeEngine.supported; }
-
-/** Register a YouTube record so catalog.getById() resolves it — WITHOUT adding it to the
- *  browse list. Used for live results and before persisting favorites/queue/recent. */
-function registerYoutube(rec) {
-  if (!rec || rec.kind !== "youtube") return rec;
-  youtubeCache.set(rec.id, rec);
-  catalog.addExternal(rec);
-  return rec;
-}
-function loadYoutubeCache() {
-  let data;
-  try { data = JSON.parse(localStorage.getItem(YOUTUBE_KEY) || "null"); } catch (_) {}
-  if (data && typeof data === "object") {
-    for (const rec of Object.values(data)) {
-      if (rec && rec.id && rec.kind === "youtube") registerYoutube(rec);
-    }
-  }
-}
-/** Persist only the YouTube records still referenced by a favorite / the queue / recent. */
-function saveYoutubeCache() {
-  const keep = new Set([...favorites, ...queue.map((s) => s.id), ...recent]);
-  const obj = {};
-  for (const id of keep) {
-    const rec = youtubeCache.get(id);
-    if (rec && rec.kind === "youtube") obj[id] = rec;
-  }
-  try { localStorage.setItem(YOUTUBE_KEY, JSON.stringify(obj)); } catch (_) {}
-}
-
-// A persistent blocklist of YouTube videoIds that failed to embed (owner-disabled / removed /
-// private). We hide them from future search results and skip past them, so a dead video never
-// shows up again. Stored as a plain id array, independent of the pointer cache above.
-const YOUTUBE_BLOCKED_KEY = "karaeoke.youtube.blocked.v1";
-const blockedYoutube = new Set();
-
-function loadBlockedYoutube() {
-  try {
-    const a = JSON.parse(localStorage.getItem(YOUTUBE_BLOCKED_KEY) || "[]");
-    if (Array.isArray(a)) a.forEach((id) => id && blockedYoutube.add(id));
-  } catch (_) {}
-}
-function blockYoutube(videoId) {
-  if (!videoId || blockedYoutube.has(videoId)) return;
-  blockedYoutube.add(videoId);
-  try { localStorage.setItem(YOUTUBE_BLOCKED_KEY, JSON.stringify([...blockedYoutube])); } catch (_) {}
-  reportBlockedToServer([videoId]); // share it so every user's results omit it too
-}
-
-/** Push un-embeddable videoIds to the server's shared blocklist (fire-and-forget). The server
- *  filters them from /api/youtube-search for everyone, so nobody hits the dead video again. */
-function reportBlockedToServer(ids) {
-  if (!ids || !ids.length) return;
-  const url = settings.get("youtube.blockUrl") || "/api/youtube-block";
-  try {
-    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                 body: JSON.stringify({ videoIds: ids }) }).catch(() => {});
-  } catch (_) {}
-}
-
-/** POST the query to serve.py's keyless-scrape proxy → transient YouTube records.
- *  The configured keyword (default "karaoke") is appended so YouTube filters to karaoke
- *  versions server-side — e.g. "tetoris" → "tetoris karaoke". */
-async function youtubeSearch(query) {
-  const url = settings.get("youtube.searchUrl") || "/api/youtube-search";
-  const keyword = (settings.get("youtube.keyword") || "").trim();
-  const q = keyword ? `${query} ${keyword}` : query;
-  const maxResults = settings.get("youtube.maxResults");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q, maxResults }),
-  });
-  const data = await res.json();
-  return ((data && data.items) || [])
-    .map((it) => Catalog.makeYoutubeRecord(it))
-    .filter((r) => r && !blockedYoutube.has(r.videoId)); // hide videos that already failed to embed
-}
-
 // A YouTube video failed to play. Codes: 2 = bad id, 5 = HTML5 error (may be transient),
 // 100 = removed/private, 101/150 = embedding disabled by the owner. The permanent ones get
-// remembered (blocklist → hidden from future results); then we skip to the next result.
+// remembered (library-view's blocklist → hidden from future results); then we skip to the next
+// result. Stays here rather than in library-view.js: it writes `current`/`media`.
 function onYoutubeError(code) {
   if (media !== youtube || !current) return;
   const permanent = code === 101 || code === 150 || code === 100 || code === 2;
-  if (permanent) blockYoutube(current.videoId);
+  if (permanent) libraryView.blockYoutube(current.videoId);
   const why = (code === 101 || code === 150) ? "embedding disabled by owner" : `unavailable (${code})`;
   setStatus(`"${current.name}" ${why} — skipping…`);
-  const next = nextYoutubeInList(current);
-  if (next) return playNow(next);      // walk to the next result the user was browsing
-  if (queue.length) return advanceQueue();
-  youtube.unload();                    // nothing to fall back to → clear the stage
+  const next = libraryView.nextYoutubeInList(current);
+  if (next) return playNow(next);          // walk to the next result the user was browsing
+  if (queue.length) return skipCurrent();  // same single "move on now" path as ⏭ / a failure
+  youtube.unload();                        // nothing to fall back to → clear the stage
   document.body.classList.remove("youtube-mode");
   clearStage();
   current = null;
   setPlayIcon();
-}
-
-/** The next kind:"youtube" record after `song` in the currently-rendered list, skipping any
- *  already blocked. null if there isn't one. */
-function nextYoutubeInList(song) {
-  const list = (lib.getList && lib.getList()) || [];
-  const i = list.findIndex((s) => s.id === song.id);
-  if (i < 0) return null;
-  for (let j = i + 1; j < list.length; j++) {
-    const s = list[j];
-    if (s.kind === "youtube" && !blockedYoutube.has(s.videoId)) return s;
-  }
-  return null;
-}
-
-/** Render local matches for `query`, optionally appending the given YouTube records. */
-function renderSearchResults(query, ytRecords) {
-  const local = catalog.search(query);
-  lib.renderList(ytRecords && ytRecords.length ? [...local, ...ytRecords] : local);
-}
-
-/** After a long idle, query YouTube — but only when enabled and the local list came up
- *  short (< autoThreshold hits). Appends the results if the query is still the active one. */
-function scheduleYoutubeSearch(query) {
-  clearTimeout(ytSearchTimer);
-  if (!youtubeOn() || !query.trim()) return;
-  ytSearchTimer = setTimeout(async () => {
-    const threshold = settings.get("youtube.autoThreshold") || 2;
-    // 11 = the ⚙ slider's max = "always" → skip the local-count gate and always query YouTube.
-    if (threshold < 11 && catalog.search(query, threshold).length >= threshold) return; // local already covers it
-    let recs = [];
-    try { recs = await youtubeSearch(query); } catch (_) { recs = []; }
-    recs.forEach(registerYoutube);
-    if ($("search").value !== query || recentMode || favoritesMode) return; // query moved on
-    renderSearchResults(query, recs);
-  }, settings.get("youtube.debounceMs") || 3000);
-}
-
-/** Re-render the plain search view: instant local results + a scheduled YouTube append. */
-function runSearch(query) {
-  renderSearchResults(query, null);
-  scheduleYoutubeSearch(query);
-}
-
-/** Reflect the 🌐 pill's on/off/unsupported state. */
-function updateYoutubeToggle() {
-  const b = $("btn-youtube");
-  if (b) {
-    const supported = YouTubeEngine.supported;
-    b.classList.toggle("active", youtubeOn());
-    b.disabled = !supported;
-    b.title = !supported
-      ? "YouTube search needs a Chromium-based browser (credentialless iframes)"
-      : (settings.get("youtube.enabled")
-          ? "YouTube search ON — searches also query YouTube"
-          : "Search YouTube for karaoke videos");
-  }
-  // keep the ⚙ checkbox in step when the pill is what changed the value
-  const chk = $("set-youtube");
-  if (chk) chk.checked = settings.get("youtube.enabled");
-  // preload the YT IFrame API while enabled so the first play can autoplay (no activation loss)
-  if (youtubeOn() && youtube) youtube.warm();
 }
 
 // ---------------------------------------------------------------------------
@@ -944,18 +684,44 @@ async function ensureEngine() {
   }
 }
 
+// Every play* function awaits a fetch (and, on the first song, the ~32 MB soundfont) BEFORE
+// it writes the shared player state. Without a generation token the chain that resolves LAST
+// wins even if it was requested first — so a double-click, or picking a second song during a
+// cold start, can leave the title, lyrics and audio describing different songs. Each call
+// takes a ticket; anything stale bails out at its next checkpoint instead of writing.
+let playGen = 0;
+const stalePlay = (gen) => gen !== playGen;
+// True while a play* is between its first await and actually owning the stage. `armed` flips
+// the instant a user picks a song, but on a COLD START `current` stays null for the seconds the
+// ~32 MB soundfont takes — and the rAF idle branch reads exactly that gap as "nothing playing,
+// something queued" and auto-advances. The user's double-clicked song then loses to whatever was
+// in the queue. Found in a browser, not by a test: it needs a real soundfont load to reproduce.
+let loadingSong = false;
+
 // Dispatch on the song's kind: VIDEO songs take the (synth-free) video path; MIDI
 // songs take the existing SpessaSynth path.
 async function playNow(song, by = "") {
+  const gen = ++playGen;
+  loadingSong = true;   // suppress the idle auto-advance until this song owns the stage
+  durations.arm();      // re-arm the song-length learner for the incoming song
+  score.hideCard();     // a new song takes the stage back from the previous song's verdict
   armed = true; // the user has started playback → the idle queue auto-advance is allowed
   currentBy = by || ""; // who queued this song from the remote ("" for host-picked songs)
   pendingUnsyncedLines = null; // drop any pending audio-lyric distribution from a prior song
   try {
-    if (song.kind === "youtube") return await playYoutube(song);
-    if (song.kind === "video") return await playVideo(song);
-    if (song.kind === "audio") return await playAudio(song);
-    return await playMidi(song);
+    if (song.kind === "youtube") return await playYoutube(song, gen);
+    if (song.kind === "video") return await playVideo(song, gen);
+    if (song.kind === "audio") return await playAudio(song, gen);
+    return await playMidi(song, gen);
+  } catch (e) {
+    // A play* that throws (corrupt file, engine refusal) must not strand the stage.
+    console.error("Playback failed:", e);
+    if (!stalePlay(gen)) {
+      setStatus(`Could not play "${song.name || song.code || "that song"}" — skipping.`);
+      onSongFailed();
+    }
   } finally {
+    if (gen === playGen) loadingSong = false;   // a newer play owns the flag now
     // A song change is the one transition phones can't extrapolate through (their local
     // lyric clock has to re-base and their Lyrics tab refetches), so push the moment the
     // new song is loaded instead of waiting for the next ~1 s host tick.
@@ -977,11 +743,13 @@ function hideMidiSurfaces() {
   currentMelodyChannel = -1;
   lastParsed = null;
   currentKey = null;
+  scorer = null;          // no MIDI note data → nothing to score against
+  score.resetLineBonus();
 }
 
 // VIDEO song: no synth/soundfont, no lyric parsing. The picture fills the stage; the
 // offset feature moves the audio (handled inside VideoEngine).
-async function playVideo(song) {
+async function playVideo(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   youtube.unload();         // stop any YouTube video that was playing
   audioFile.unload();       // …and any audio song
@@ -1008,6 +776,7 @@ async function playVideo(song) {
   video.load(url);
   setStatus(`Now playing: ${song.code} — ${song.name}`);
   await video.play();
+  if (stalePlay(gen)) return;  // a newer song took over while the picture was loading
   setPlayIcon();
 }
 
@@ -1023,6 +792,8 @@ function hideNoteSurfaces() {
   currentMelodyChannel = -1;
   lastParsed = null;
   currentKey = null;
+  scorer = null;          // no MIDI note data → nothing to score against
+  score.resetLineBonus();
 }
 
 // AUDIO song: a recorded audio file + a separate lyric sidecar. Routed through WebAudio
@@ -1030,7 +801,7 @@ function hideNoteSurfaces() {
 // exceed 100%. KEEPS the scrolling lyric surface (loaded from the sidecar); hides the
 // note-derived surfaces (guide/chords/mixer) which need MIDI data. Offset moves the
 // LYRIC time (handled in the rAF loop), not the audio.
-async function playAudio(song) {
+async function playAudio(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   video.unload();           // …and any video
   youtube.unload();         // …and any YouTube video
@@ -1054,10 +825,13 @@ async function playAudio(song) {
   audioFile.setTempo(settings.get("audio.tempo"));
   audioFile.setKey(settings.get("audio.key"));
   await audioFile.load(url);   // fetch the audio into an in-memory blob (reliable load/seek)
+  if (stalePlay(gen)) return;  // a newer song was picked while this one was downloading
   await loadAudioLyrics(song); // fetch + parse the sidecar into the lyric surface
+  if (stalePlay(gen)) return;
   showTitleCard(song);
   setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
   await audioFile.play();
+  if (stalePlay(gen)) return;
   setPlayIcon();
 }
 
@@ -1097,7 +871,7 @@ async function loadAudioLyrics(song) {
 // YOUTUBE song (BYOC): no synth/soundfont, no lyric parsing — the official YouTube IFrame
 // player fills the stage. Mirrors playVideo. Offset/key/guide/auto-tune don't apply (the
 // lyrics are baked into the video), so the MIDI-only surfaces stay hidden.
-async function playYoutube(song) {
+async function playYoutube(song, gen = playGen) {
   audio.pause();            // silence the synth if a MIDI song was playing
   video.unload();           // …and any video
   audioFile.unload();       // …and any audio song
@@ -1109,7 +883,7 @@ async function playYoutube(song) {
   autoAdvancing = false;
   document.body.classList.add("youtube-mode");
   hideMidiSurfaces();
-  registerYoutube(song);   // keep it resolvable for favorites/recent/queue across reloads
+  libraryView.registerYoutube(song);   // keep it resolvable for favorites/recent/queue across reloads
   lib.setNowPlaying(song);
   pushRecent(song);
   $("np-title").textContent = song.name || "(untitled)";
@@ -1122,12 +896,14 @@ async function playYoutube(song) {
   youtube.load(song.videoId);
   setStatus(`Now playing: ${song.name}`);
   await youtube.play();
+  if (stalePlay(gen)) return;
   setPlayIcon();
 }
 
 // MIDI song: the original SpessaSynth path.
-async function playMidi(song) {
+async function playMidi(song, gen = playGen) {
   if (!(await ensureEngine())) return;
+  if (stalePlay(gen)) return;  // engine start is slow (32 MB soundfont) — a newer pick wins
   video.unload();          // stop any video that was playing
   youtube.unload();        // …and any YouTube video
   audioFile.unload();      // …and any audio song
@@ -1139,7 +915,6 @@ async function playMidi(song) {
   userPaused = false;
   autoAdvancing = false;
   lib.setNowPlaying(song);
-  pushRecent(song);
   setStatus(`Loading: ${song.code} — ${song.name}`);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
@@ -1149,31 +924,60 @@ async function playMidi(song) {
   let buf;
   try {
     const raw = await cachedArrayBuffer(url); // cache-first via Cache Storage
+    if (stalePlay(gen)) return;
     buf = toMidiBytes(raw); // song files may be raw-deflate compressed
   } catch (e) {
-    setStatus(`Could not read file for #${song.code}: ${e.message}`);
+    if (stalePlay(gen)) return;
     console.error(e);
+    setStatus(`Could not read file for #${song.code}: ${e.message}`);
+    onSongFailed();  // don't leave `current` pointing at a song that never loaded
     return;
   }
 
+  let parsed = null;
   try {
-    const parsed = parseMidi(buf.slice(0));
+    parsed = parseMidi(buf.slice(0));
     lastParsed = parsed;
     const hasLyrics = lyrics.load(parsed);
     $("lyric-badge").textContent = hasLyrics ? "" : "instrumental";
-    loadMelody(parsed);
-    chordEngine.load(parsed);                            // detect chords (once, on load)
-    chordEngine.setTranspose(settings.get("audio.key")); // reflect the current Key transpose
-    midiMixer.load(parsed); // reset the channel mixer for the new song
   } catch (e) {
     console.warn("Parse failed:", e);
-    lyrics.lines = []; lyrics.hasLyrics = false; lyrics.reset();
-    chordEngine.clear();
+    lyrics.clear();  // clear() empties the rendered lines; reset() only scrolls them
+    $("lyric-badge").textContent = "no lyrics";
     lastParsed = null;
+  }
+
+  // Derived surfaces in their OWN try: a melody/chord/mixer failure must not roll back the
+  // lyrics that already loaded successfully (they used to share one catch, so a late throw
+  // discarded a good parse and left the previous song's lines on screen).
+  if (parsed) {
+    try {
+      loadMelody(parsed);
+      chordEngine.load(parsed);                            // detect chords (once, on load)
+      chordEngine.setTranspose(settings.get("audio.key")); // reflect the current Key transpose
+      midiMixer.load(parsed); // reset the channel mixer for the new song
+    } catch (e) {
+      console.warn("Chord/melody/mixer setup failed:", e);
+      chordEngine.clear();
+      midiMixer.clear();
+    }
+  } else {
+    chordEngine.clear();
     midiMixer.clear();
   }
 
-  audio.loadSong(buf);
+  // A file can pass the MThd check and still be rejected by the sequencer; without this the
+  // throw escaped playNow entirely, leaving "Now playing" on screen over silence.
+  try {
+    audio.loadSong(buf);
+  } catch (e) {
+    console.error("Sequencer rejected the file:", e);
+    setStatus(`#${song.code} looks corrupt — skipping.`);
+    onSongFailed();
+    return;
+  }
+
+  pushRecent(song);    // only once the song has actually loaded — a failed load isn't "played"
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
   setStatus(`Now playing: ${song.code} — ${song.name}`);
 
@@ -1182,6 +986,7 @@ async function playMidi(song) {
   const tcSecs = settings.get("titleCard.seconds") || 0;
   const delayMs = tcSecs > 1 ? (tcSecs - 1) * 1000 : 0;
   const startPlayback = async () => {
+    if (stalePlay(gen)) return;   // title-card hold outlived by a newer song pick
     await audio.play();
     setPlayIcon();
     setTimeout(applyGuideVocal, 350); // re-apply once the new song's channels are live
@@ -1199,15 +1004,71 @@ async function playMidi(song) {
 // ---------------------------------------------------------------------------
 // rAF loop — lyric sync, pitch guide + scoring, auto-tune, seek bar, end-of-song
 // ---------------------------------------------------------------------------
-let endGuard = false;
+let endGuard = false, endTimer = null;
 // End the current song: clear the stage (which also unloads the video / YouTube player, so
 // YouTube never gets to paint its suggested-videos end screen) then advance the queue. Guarded
 // so the rAF end-detection and YouTube's ENDED event can't both fire it.
 function endOfSong() {
   if (endGuard) return;
   endGuard = true;
+  // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
+  const res = score.finish(scorer, current, currentBy);
+  recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
+  score.resetLineBonus();
   clearStage();
-  setTimeout(() => { endGuard = false; advanceQueue(); }, 700);
+  if (res) score.showCard(res);
+  // Hold the stage while the score is up — the verdict is half the point of a videoke night,
+  // and the next song's title card would otherwise land on top of it.
+  const hold = res && settings.get("score.card") ? SCORE_CARD_MS : 700;
+  endTimer = setTimeout(() => { endGuard = false; endTimer = null; advanceQueue(); }, hold);
+}
+
+// The ONE path for "move on to the next song now" — the ⏭ button, the phone's Next, and any
+// failure. endGuard only ever protected endOfSong from itself, so a Next click inside the
+// 700 ms hand-off window used to land a SECOND advanceQueue() and skip an extra song.
+function skipCurrent() {
+  clearTimeout(endTimer);
+  endTimer = null;
+  endGuard = false;
+  score.hideCard();
+  advanceQueue();
+}
+
+// A song that cannot play must not strand the stage: drop it and move on if anything is queued.
+function onSongFailed() {
+  current = null;
+  clearStage();
+  setPlayIcon();
+  if (queue.length) skipCurrent();
+}
+
+// A missing or unreadable local file used to hang the night: the media element reports an
+// error, duration stays 0, and the end-of-song check is gated on duration > 0 — so the stage
+// sat blank and silent forever and the queue never advanced.
+function onMediaError(kind, why) {
+  if (!current) return;
+  console.warn(`${kind} playback failed:`, why);
+  setStatus(`Could not play "${current.name || current.code || "that song"}" — file missing or unreadable. Skipping.`);
+  onSongFailed();
+}
+
+// True when the active engine has reached the end of the current song. MIDI is special: the
+// sequencer stalls with `paused` false and the clock plateaued just short of duration, so it
+// reports via `ended`; video/audio reach duration cleanly; YouTube fires its own onEnded.
+function songHasEnded() {
+  if (!current || !media) return false;
+  const t = media.currentTime, d = media.duration;
+  // MIDI. MEASURED IN A BROWSER, and it contradicts what §5.14 used to claim: at the natural
+  // end the Sequencer BOTH pauses itself AND raises `isFinished`, with the clock landing
+  // exactly on duration (paused:true, ended:true, t === d). So a `!paused` guard vetoes the
+  // precise event it was meant to catch, and the queue never advances — the song just sits
+  // there finished. Anchor on the CLOCK instead: a STALE `isFinished` left over from the
+  // previous song (the thing that guard was protecting against) cannot fool us, because the
+  // title-card hold parks the clock at 0 before the new song starts.
+  if (media === audio) return !!audio.ended && t > 0.5;
+  // Video/audio elements: `paused` here means the USER paused, so it still guards correctly.
+  if (media.paused) return false;
+  return d > 0 && t >= d - 0.15;
 }
 function tick() {
   setPlayIcon(); // keep the transport button mirroring the real play/pause state every frame
@@ -1244,19 +1105,21 @@ function tick() {
       // reads the cached value, so we can query it every frame.
       const guideOn = settings.get("guide.enabled");
       const autotuneOn = mic.enabled && settings.get("mic.autotune.enabled");
-      const wantDetect = mic.enabled && (autotuneOn ||
+      const scoringOn = mic.enabled && settings.get("score.enabled") && !!scorer;
+      const wantDetect = mic.enabled && (autotuneOn || scoringOn ||
         (guideOn && (settings.get("guide.showMic") || settings.get("guide.scoring"))));
       const micMidi = wantDetect ? mic.getPitchMidi() : null;
 
+      // Feed the scorer every frame — including UNVOICED ones, which advance its clock but
+      // score nothing (you have to be allowed to breathe). See scoring.js.
+      if (scoringOn) {
+        scorer.addFrame(gt, micMidi);
+        score.lineBonus(scorer, lyrics);
+      }
+
       if (guideOn) {
-        if (settings.get("guide.scoring") && micMidi != null) {
-          scoreVoiced++;
-          const tgt = pitchGuide.targetNoteAt(gt);
-          if (tgt != null && pcDist(micMidi, tgt) < 1.5) scoreHit++;
-          pitchGuide.setScore(scoreVoiced ? (scoreHit / scoreVoiced) * 100 : 0);
-        } else if (!settings.get("guide.scoring")) {
-          pitchGuide.setScore(null);
-        }
+        if (settings.get("guide.scoring")) pitchGuide.setScore(scoringOn ? scorer.liveScore() : null);
+        else pitchGuide.setScore(null);
         pitchGuide.update(gt, settings.get("guide.showMic") ? micMidi : null);
       }
 
@@ -1288,19 +1151,18 @@ function tick() {
       $("seekbar").style.width = `${Math.min(100, (t / d) * 100)}%`;
       $("time-cur").textContent = fmt(t);
       $("time-dur").textContent = fmt(d);
-      // MIDI: the sequencer stalls at the end (paused stays false, clock plateaus
-      // short of duration) so rely on its `ended` flag; video reaches duration
-      // cleanly; YouTube ends via its own onEnded callback. The `!media.paused`
-      // guard is essential: seq.play() clears `isFinished`, so an unpaused song can
-      // never show a stale end flag left over from the previous song's title-card hold.
-      if (!media.paused && ((isMidi && audio.ended) || t >= d - 0.15)) endOfSong();
+      durations.note(current, d);   // learn this song's length for the phones' queue ETA
     }
+    // End-of-song detection lives in songHasEnded() so the hidden-tab watchdog below can
+    // run the SAME predicate. Deliberately outside the `d > 0` block: a MIDI song reports
+    // through `ended`, and gating on duration hid that case when duration never arrived.
+    if (songHasEnded()) endOfSong();
   } else {
     if (mic.autotuneActive) mic.clearAutotune(); // release correction when nothing is playing
     // Nothing is playing and it wasn't a deliberate pause → play the next queued song.
     // (`armed` gates this to after the user has started playback, so a restored queue
     //  on a fresh load is NOT auto-played — there's no user gesture yet.)
-    if (armed && !current && !autoAdvancing && !userPaused && queue.length) {
+    if (armed && !current && !loadingSong && !autoAdvancing && !userPaused && queue.length) {
       autoAdvancing = true;
       advanceQueue();
     }
@@ -1317,32 +1179,30 @@ function wireUI() {
   const toggleClear = () => clearBtn.classList.toggle("show", !!search.value);
   let deb;
   search.oninput = () => {
-    if (recentMode) setRecentMode(false);       // typing leaves the Recent view
-    if (favoritesMode) setFavoritesMode(false); // …and the Favorites view
+    libraryView.leaveSpecialViews();   // typing leaves the Recent / Favorites views
     toggleClear();
     const q = search.value;
     clearTimeout(deb);
-    deb = setTimeout(() => renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
-    scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
+    deb = setTimeout(() => libraryView.renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
+    libraryView.scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
   clearBtn.onclick = () => {
     search.value = "";
     toggleClear();
-    clearTimeout(ytSearchTimer);
-    if (recentMode) setRecentMode(false);
-    if (favoritesMode) setFavoritesMode(false);
-    lib.renderList(catalog.search(""));
+    libraryView.cancelYoutubeSearch();
+    libraryView.leaveSpecialViews();
+    libraryView.renderAll();
     search.focus();
   };
   $("btn-recent").onclick = () => {
-    setRecentMode(!recentMode);
-    if (recentMode) showRecent();
-    else runSearch(search.value); // back to the (search) list
+    libraryView.setRecentMode(!libraryView.recentMode);
+    if (libraryView.recentMode) libraryView.showRecent();
+    else libraryView.runSearch(search.value); // back to the (search) list
   };
   $("btn-favorites").onclick = () => {
-    setFavoritesMode(!favoritesMode);
-    if (favoritesMode) showFavorites();
-    else runSearch(search.value); // back to the (search) list
+    libraryView.setFavoritesMode(!libraryView.favoritesMode);
+    if (libraryView.favoritesMode) libraryView.showFavorites();
+    else libraryView.runSearch(search.value); // back to the (search) list
   };
   $("btn-youtube").onclick = () => {
     if (!YouTubeEngine.supported) {
@@ -1382,8 +1242,15 @@ function wireUI() {
     document.addEventListener(ev, () => { if (autoHideActive()) showControls(); }, { passive: true }));
   document.addEventListener("keydown", (e) => {
     // Esc leaves focus mode (unless a text field is focused — there Esc clears the field).
+    // The settings drawer is modal and owns Escape while it's open (settings-ui.js closes it),
+    // so one press must not also drop you out of focus mode.
+    if (e.key !== "Escape") return;
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
-    if (e.key === "Escape" && !typing && document.body.classList.contains("focus-mode")) setFocus(false);
+    // Modals own Escape while they're up: one press must close the thing in front of you,
+    // not drop you out of focus mode behind it.
+    if (recap.isOpen()) { recap.hide(); return; }
+    const modalOpen = document.body.classList.contains("settings-open");
+    if (!typing && !modalOpen && document.body.classList.contains("focus-mode")) setFocus(false);
   });
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
@@ -1409,7 +1276,18 @@ function wireUI() {
     userPaused = media.paused; // pausing here is a deliberate hold (no auto-advance)
     setPlayIcon();
   };
-  $("btn-next").onclick = () => advanceQueue();
+  $("btn-next").onclick = () => skipCurrent();
+  recap.wire();   // close button + click-the-scrim-to-dismiss
+
+  // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
+  // background tab while the AudioContext keeps playing — so a song that ended while the host
+  // was alt-tabbed never advanced the queue, which is the whole point of having one. A plain
+  // interval keeps firing (a page playing audio is exempt from Chrome's intensive throttling),
+  // and visibilitychange catches up the instant the tab comes back.
+  setInterval(() => { if (songHasEnded()) endOfSong(); }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && songHasEnded()) endOfSong();
+  });
   // 🎵 melody toggle — flips the guide-vocal mute (melody channel audible on/off). Same setting
   // the ⚙ "Mute melody" checkbox and the phone remote drive, so all three stay in sync.
   $("btn-melody").onclick = () => settings.set("guide.vocal.mute", !settings.get("guide.vocal.mute"));
@@ -1430,6 +1308,10 @@ function wireUI() {
 
   document.onkeydown = (e) => {
     if (e.target.tagName === "INPUT") return;
+    // A focused song row owns its own keys (Space selects, Enter plays, ＋ queues — see the
+    // roving tabindex in library-ui.js). Without this, Space would BOTH select the row and
+    // toggle the transport.
+    if (e.target.closest && e.target.closest(".song")) return;
     if (e.code === "Space") { e.preventDefault(); $("btn-play").click(); }
     else if (e.key === "[") nudgeOffset(-50);
     else if (e.key === "]") nudgeOffset(50);
@@ -1440,7 +1322,7 @@ function wireUI() {
   $("tempo-val").textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
   $("volume").value = settings.get("audio.volume");
   $("key-val").textContent = fmtKey(settings.get("audio.key"));
-  updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
+  libraryView.updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
 }
 
 // Single mic enable/disable path shared by BOTH the transport 🎙 button and the ⚙ panel
@@ -1541,8 +1423,8 @@ function updateStageBanner() {
   if (current && media && media.duration > 0 && queue.length) {
     const remaining = media.duration - media.currentTime;
     if (remaining > 0 && remaining <= 20) {
-      upName = queue[0].name || "(untitled)";
-      upWho = queueBy[0] || "";
+      upName = queue.list[0].name || "(untitled)";
+      upWho = queue.listBy[0] || "";
     }
   }
   const upKey = upName ? `${upName}|${upWho}` : "";
@@ -1612,7 +1494,7 @@ async function onRebuild() {
   const res = await (await fetch("/api/rebuild-catalog", { method: "POST" })).json();
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
-  lib.renderList(catalog.search($("search").value));
+  libraryView.renderSearchResults($("search").value, null);
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };
 }
@@ -1634,9 +1516,9 @@ function setStatus(msg) { $("status").textContent = msg; }
 // as stopped too. Only writes on change so it's cheap to call every rAF frame.
 function setPlayIcon() {
   const playing = !media.paused && !(media === audio && audio.ended);
-  const icon = playing ? "❚❚" : "▶";
-  const el = $("btn-play");
-  if (el.textContent !== icon) el.textContent = icon;
+  const href = playing ? "#i-pause" : "#i-play";
+  const el = $("play-icon");   // the <use> inside the play button's sprite icon
+  if (el && el.getAttribute("href") !== href) el.setAttribute("href", href);
 }
 function fmtKey(s) { return (s > 0 ? "+" : "") + s; }
 function fmt(s) { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, "0")}`; }

@@ -4,7 +4,9 @@
 /data/videos
 /data/audio_lyrics
 /data/bgv
-/data/soundfont.sf2
+# Any SoundFont, not just the one first-run setup downloads: a differently-named copy
+# (data/sf.sf2) once slipped past a by-exact-name rule and put 31.7 MB into the history.
+/data/*.sf2
 /data/manifest.json
 # The catalogs are compilations of your own (possibly third-party/ripped) library —
 # do NOT publish them. They rebuild locally from data/kar_raw/, data/videos/, data/audio_lyrics/.
@@ -24,3 +26,6 @@
 /docs
 __pycache__/
 *.bak
+
+# macOS Finder metadata — noise in every directory it touches.
+.DS_Store
