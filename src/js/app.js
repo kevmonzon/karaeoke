@@ -11,7 +11,7 @@
  * its own module; this file wires them together.
  */
 
-import { Catalog, resolveSongRef } from "./catalog.js";
+import { Catalog } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
@@ -32,17 +32,14 @@ import { createRecap } from "./recap.js";
 import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
 import { createQueue } from "./queue.js";
 import { createSession } from "./session.js";
+import { createLibraryView } from "./library-view.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
-import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
+import { collectAppData, restoreAppData, clearAppData } from "./store.js";
 
 const $ = (id) => document.getElementById(id);
 // What an empty song list should SAY. A bare white panel is indistinguishable from a broken
 // app, and the first-run case has a concrete next action worth naming.
-const EMPTY_LIBRARY = {
-  title: "No songs in the library yet",
-  hint: "Drop .kar/.mid files into data/kar_raw/ (or videos into data/videos/), then ⚙ → Rebuild Catalog.",
-};
 // Source-kind icon shown in the now-playing header (in place of the dial number).
 const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐", audio: "🎵" };
 const npIcon = (kind) => NP_ICON[kind] || "🎵";
@@ -51,6 +48,18 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 const settings = new Settings();
 const catalog = new Catalog();
 const session = createSession({ catalog });
+// The list's current VIEW (search / Recent / Favorites / YouTube append). It needs library-ui,
+// which is built at boot, so it reaches it through a getter rather than a captured reference.
+const libraryView = createLibraryView({
+  catalog, settings,
+  getLib: () => lib,
+  setStatus: (m) => setStatus(m),
+  youtubeSupported: () => YouTubeEngine.supported,
+  getQueueIds: () => queue.list.map((s) => s.id),   // live: the keep-set spans three owners
+  getRecentIds: () => session.recent,
+  getRecentSongs: () => session.recentSongs(),
+  warmYoutube: () => { if (youtube) youtube.warm(); },
+});
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
@@ -78,9 +87,6 @@ let armed = false;    // true once the user has started playback (gates queue au
 let userPaused = false;   // true only when the user paused (the auto-advance exception)
 let autoAdvancing = false; // guard so the idle auto-advance fires once
 let playDelayTimer = null; // delays music start until ~1s before the title card fades
-let recentMode = false;    // "Recent" view toggle
-let favoritesMode = false; // "Favorites" view toggle
-let favorites = new Set(); // starred song ids (persisted separately from the session)
 let lastParsed = null;
 let currentKey = null;
 let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
@@ -113,7 +119,7 @@ async function boot() {
 
   lib = createLibraryUI({
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
-    onToggleFavorite: toggleFavorite, isFavorite,
+    onToggleFavorite: (s) => libraryView.toggleFavorite(s), isFavorite: (s) => libraryView.isFavorite(s),
   });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
@@ -140,19 +146,16 @@ async function boot() {
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
     durations.load(); // learned song lengths → queue ETA on the phones
     recap.load();        // tonight's performance log (reset after a long enough gap)
-    loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
-    loadBlockedYoutube(); // hide videos that previously failed to embed
-    if (settings.get("youtube.enabled") && blockedYoutube.size) reportBlockedToServer([...blockedYoutube]); // seed the shared list
-    loadFavorites(); // restore starred songs (resolved by id) before the first render
-    lib.renderList(catalog.search(""), EMPTY_LIBRARY);
+    libraryView.loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
+    libraryView.loadBlocked();      // hide videos that previously failed to embed
+    libraryView.seedServerBlocklist();
+    libraryView.loadFavorites();    // restore starred songs (resolved by id) before the first render
+    libraryView.renderAll();
     loadSession(); // restore queue + recently-played (no auto-play)
   } catch (e) {
     setStatus("Failed to load catalog.json — is the server running from the project root?");
     console.error(e);
-    lib.renderList([], {
-      title: "Couldn't load the song catalog",
-      hint: "Is the server running? Start it with: python tools/serve.py",
-    });
+    libraryView.renderCatalogError();
   } finally {
     document.body.classList.remove("booting");
   }
@@ -226,9 +229,9 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("chords.")) applyChordSettings();
   if (path === "*" || path === "bt.enabled") applyBluetoothMode(path === "bt.enabled");
   if (path === "*" || path === "youtube.enabled") {
-    updateYoutubeToggle();
+    libraryView.updateYoutubeToggle();
     // reflect the new state in the current search (append or drop YouTube rows)
-    if (path === "youtube.enabled" && !recentMode && !favoritesMode) runSearch($("search").value);
+    if (path === "youtube.enabled" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
   }
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
@@ -619,7 +622,7 @@ function remoteResolveSong(c) {
   const hit = catalog.getById(c.id);
   if (hit) return hit;
   if (c.kind === "youtube" && c.videoId) {
-    return registerYoutube(Catalog.makeYoutubeRecord({
+    return libraryView.registerYoutube(Catalog.makeYoutubeRecord({
       videoId: c.videoId, title: c.name, channelTitle: c.artist,
     }));
   }
@@ -742,7 +745,7 @@ async function importAppData(file) {
 
 function saveSession() {
   session.save(queue.list.map((s) => s.id));
-  saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
+  libraryView.persistYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
   const { queue: songs } = session.restore();
@@ -754,224 +757,24 @@ function pushRecent(song) {
   session.push(song);
   saveSession();
 }
-function setRecentMode(on) {
-  recentMode = on;
-  $("btn-recent").classList.toggle("active", on);
-  if (on && favoritesMode) setFavoritesMode(false); // the two library views are mutually exclusive
-}
-function showRecent() {
-  const songs = session.recentSongs();
-  lib.renderList(songs, { title: "Nothing played yet tonight", hint: "Songs you play show up here." });
-  setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
-}
-
-// ---------------------------------------------------------------------------
-// Favorites — starred songs, persisted separately from the session (localStorage).
-// Stored as an array of stable ids so KAR/VID are unambiguous (§5.10); old bare
-// codes resolve as MIDI via resolveSongRef (same back-compat as the queue/recent).
-// ---------------------------------------------------------------------------
-const favoritesStore = jsonStore("karaeoke.favorites.v1", []);
-
-function loadFavorites() {
-  const data = favoritesStore.read();
-  const ids = (Array.isArray(data) ? data : []).map((r) => resolveSongRef(catalog, r)).filter(Boolean).map((s) => s.id);
-  favorites = new Set(ids);
-}
-function saveFavorites() {
-  favoritesStore.write([...favorites]);
-  saveYoutubeCache(); // a starred YouTube song must keep its pointer so it resolves on reload
-}
-function isFavorite(song) { return !!song && favorites.has(song.id); }
-function toggleFavorite(song) {
-  if (!song) return;
-  if (favorites.has(song.id)) favorites.delete(song.id);
-  else favorites.add(song.id);
-  saveFavorites();
-  if (favoritesMode) showFavorites();  // in the Favorites view, un-starring drops the row
-  else lib.refresh();                  // otherwise just repaint the star in place
-}
-function setFavoritesMode(on) {
-  favoritesMode = on;
-  $("btn-favorites").classList.toggle("active", on);
-  if (on && recentMode) setRecentMode(false); // the two library views are mutually exclusive
-}
-function showFavorites() {
-  const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
-  lib.renderList(songs, { title: "No favorites yet", hint: "Tap the ☆ on any song to keep it here." });
-  setStatus(songs.length ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}` : "no favorites yet — tap ☆ on a song");
-}
-
-// ---------------------------------------------------------------------------
-// YouTube search (BYOC): live results append to the song list while you search; a 🌐 pill
-// toggles it. YouTube records are transient (not part of the browse catalog), so we keep a
-// small POINTER cache (metadata only — videoId/title/channel, never content) so favorited /
-// queued / recently-played YouTube songs still resolve by id after a reload. Persisted in a
-// third localStorage key, independent of settings + session. Chromium-only (needs the
-// credentialless iframe — see src/js/youtube.js); self-disables where unsupported.
-// ---------------------------------------------------------------------------
-const youtubeStore = jsonStore("karaeoke.youtube.v1", {});
-const youtubeCache = new Map(); // id → YouTube record (favorites/recent/queue resolution)
-let ytSearchTimer = null;       // the (long) debounce before actually querying YouTube
-
-/** True only when the user opted in AND the browser supports credentialless iframes. */
-function youtubeOn() { return settings.get("youtube.enabled") && YouTubeEngine.supported; }
-
-/** Register a YouTube record so catalog.getById() resolves it — WITHOUT adding it to the
- *  browse list. Used for live results and before persisting favorites/queue/recent. */
-function registerYoutube(rec) {
-  if (!rec || rec.kind !== "youtube") return rec;
-  youtubeCache.set(rec.id, rec);
-  catalog.addExternal(rec);
-  return rec;
-}
-function loadYoutubeCache() {
-  const data = youtubeStore.read();
-  if (data && typeof data === "object") {
-    for (const rec of Object.values(data)) {
-      if (rec && rec.id && rec.kind === "youtube") registerYoutube(rec);
-    }
-  }
-}
-/** Persist only the YouTube records still referenced by a favorite / the queue / recent. */
-function saveYoutubeCache() {
-  const keep = new Set([...favorites, ...queue.list.map((s) => s.id), ...session.recent]);
-  const obj = {};
-  for (const id of keep) {
-    const rec = youtubeCache.get(id);
-    if (rec && rec.kind === "youtube") obj[id] = rec;
-  }
-  youtubeStore.write(obj);
-}
-
-// A persistent blocklist of YouTube videoIds that failed to embed (owner-disabled / removed /
-// private). We hide them from future search results and skip past them, so a dead video never
-// shows up again. Stored as a plain id array, independent of the pointer cache above.
-const blockedStore = jsonStore("karaeoke.youtube.blocked.v1", []);
-const blockedYoutube = new Set();
-
-function loadBlockedYoutube() {
-  const a = blockedStore.read();
-  if (Array.isArray(a)) a.forEach((id) => id && blockedYoutube.add(id));
-}
-function blockYoutube(videoId) {
-  if (!videoId || blockedYoutube.has(videoId)) return;
-  blockedYoutube.add(videoId);
-  blockedStore.write([...blockedYoutube]);
-  reportBlockedToServer([videoId]); // share it so every user's results omit it too
-}
-
-/** Push un-embeddable videoIds to the server's shared blocklist (fire-and-forget). The server
- *  filters them from /api/youtube-search for everyone, so nobody hits the dead video again. */
-function reportBlockedToServer(ids) {
-  if (!ids || !ids.length) return;
-  const url = settings.get("youtube.blockUrl") || "/api/youtube-block";
-  try {
-    fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-                 body: JSON.stringify({ videoIds: ids }) }).catch(() => {});
-  } catch (_) {}
-}
-
-/** POST the query to serve.py's keyless-scrape proxy → transient YouTube records.
- *  The configured keyword (default "karaoke") is appended so YouTube filters to karaoke
- *  versions server-side — e.g. "tetoris" → "tetoris karaoke". */
-async function youtubeSearch(query) {
-  const url = settings.get("youtube.searchUrl") || "/api/youtube-search";
-  const keyword = (settings.get("youtube.keyword") || "").trim();
-  const q = keyword ? `${query} ${keyword}` : query;
-  const maxResults = settings.get("youtube.maxResults");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ q, maxResults }),
-  });
-  const data = await res.json();
-  return ((data && data.items) || [])
-    .map((it) => Catalog.makeYoutubeRecord(it))
-    .filter((r) => r && !blockedYoutube.has(r.videoId)); // hide videos that already failed to embed
-}
-
 // A YouTube video failed to play. Codes: 2 = bad id, 5 = HTML5 error (may be transient),
 // 100 = removed/private, 101/150 = embedding disabled by the owner. The permanent ones get
-// remembered (blocklist → hidden from future results); then we skip to the next result.
+// remembered (library-view's blocklist → hidden from future results); then we skip to the next
+// result. Stays here rather than in library-view.js: it writes `current`/`media`.
 function onYoutubeError(code) {
   if (media !== youtube || !current) return;
   const permanent = code === 101 || code === 150 || code === 100 || code === 2;
-  if (permanent) blockYoutube(current.videoId);
+  if (permanent) libraryView.blockYoutube(current.videoId);
   const why = (code === 101 || code === 150) ? "embedding disabled by owner" : `unavailable (${code})`;
   setStatus(`"${current.name}" ${why} — skipping…`);
-  const next = nextYoutubeInList(current);
-  if (next) return playNow(next);      // walk to the next result the user was browsing
+  const next = libraryView.nextYoutubeInList(current);
+  if (next) return playNow(next);          // walk to the next result the user was browsing
   if (queue.length) return skipCurrent();  // same single "move on now" path as ⏭ / a failure
-  youtube.unload();                    // nothing to fall back to → clear the stage
+  youtube.unload();                        // nothing to fall back to → clear the stage
   document.body.classList.remove("youtube-mode");
   clearStage();
   current = null;
   setPlayIcon();
-}
-
-/** The next kind:"youtube" record after `song` in the currently-rendered list, skipping any
- *  already blocked. null if there isn't one. */
-function nextYoutubeInList(song) {
-  const list = (lib.getList && lib.getList()) || [];
-  const i = list.findIndex((s) => s.id === song.id);
-  if (i < 0) return null;
-  for (let j = i + 1; j < list.length; j++) {
-    const s = list[j];
-    if (s.kind === "youtube" && !blockedYoutube.has(s.videoId)) return s;
-  }
-  return null;
-}
-
-/** Render local matches for `query`, optionally appending the given YouTube records. */
-function renderSearchResults(query, ytRecords) {
-  const local = catalog.search(query);
-  const rows = ytRecords && ytRecords.length ? [...local, ...ytRecords] : local;
-  lib.renderList(rows, query.trim()
-    ? { title: `No matches for "${query.trim()}"`, hint: "Try fewer words, or a dial number." }
-    : EMPTY_LIBRARY);
-}
-
-/** After a long idle, query YouTube — but only when enabled and the local list came up
- *  short (< autoThreshold hits). Appends the results if the query is still the active one. */
-function scheduleYoutubeSearch(query) {
-  clearTimeout(ytSearchTimer);
-  if (!youtubeOn() || !query.trim()) return;
-  ytSearchTimer = setTimeout(async () => {
-    const threshold = settings.get("youtube.autoThreshold") || 2;
-    // 11 = the ⚙ slider's max = "always" → skip the local-count gate and always query YouTube.
-    if (threshold < 11 && catalog.search(query, threshold).length >= threshold) return; // local already covers it
-    let recs = [];
-    try { recs = await youtubeSearch(query); } catch (_) { recs = []; }
-    recs.forEach(registerYoutube);
-    if ($("search").value !== query || recentMode || favoritesMode) return; // query moved on
-    renderSearchResults(query, recs);
-  }, settings.get("youtube.debounceMs") || 3000);
-}
-
-/** Re-render the plain search view: instant local results + a scheduled YouTube append. */
-function runSearch(query) {
-  renderSearchResults(query, null);
-  scheduleYoutubeSearch(query);
-}
-
-/** Reflect the 🌐 pill's on/off/unsupported state. */
-function updateYoutubeToggle() {
-  const b = $("btn-youtube");
-  if (b) {
-    const supported = YouTubeEngine.supported;
-    b.classList.toggle("active", youtubeOn());
-    b.disabled = !supported;
-    b.title = !supported
-      ? "YouTube search needs a Chromium-based browser (credentialless iframes)"
-      : (settings.get("youtube.enabled")
-          ? "YouTube search ON — searches also query YouTube"
-          : "Search YouTube for karaoke videos");
-  }
-  // keep the ⚙ checkbox in step when the pill is what changed the value
-  const chk = $("set-youtube");
-  if (chk) chk.checked = settings.get("youtube.enabled");
-  // preload the YT IFrame API while enabled so the first play can autoplay (no activation loss)
-  if (youtubeOn() && youtube) youtube.warm();
 }
 
 // ---------------------------------------------------------------------------
@@ -1195,7 +998,7 @@ async function playYoutube(song, gen = playGen) {
   autoAdvancing = false;
   document.body.classList.add("youtube-mode");
   hideMidiSurfaces();
-  registerYoutube(song);   // keep it resolvable for favorites/recent/queue across reloads
+  libraryView.registerYoutube(song);   // keep it resolvable for favorites/recent/queue across reloads
   lib.setNowPlaying(song);
   pushRecent(song);
   $("np-title").textContent = song.name || "(untitled)";
@@ -1491,32 +1294,30 @@ function wireUI() {
   const toggleClear = () => clearBtn.classList.toggle("show", !!search.value);
   let deb;
   search.oninput = () => {
-    if (recentMode) setRecentMode(false);       // typing leaves the Recent view
-    if (favoritesMode) setFavoritesMode(false); // …and the Favorites view
+    libraryView.leaveSpecialViews();   // typing leaves the Recent / Favorites views
     toggleClear();
     const q = search.value;
     clearTimeout(deb);
-    deb = setTimeout(() => renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
-    scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
+    deb = setTimeout(() => libraryView.renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
+    libraryView.scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
   clearBtn.onclick = () => {
     search.value = "";
     toggleClear();
-    clearTimeout(ytSearchTimer);
-    if (recentMode) setRecentMode(false);
-    if (favoritesMode) setFavoritesMode(false);
-    lib.renderList(catalog.search(""), EMPTY_LIBRARY);
+    libraryView.cancelYoutubeSearch();
+    libraryView.leaveSpecialViews();
+    libraryView.renderAll();
     search.focus();
   };
   $("btn-recent").onclick = () => {
-    setRecentMode(!recentMode);
-    if (recentMode) showRecent();
-    else runSearch(search.value); // back to the (search) list
+    libraryView.setRecentMode(!libraryView.recentMode);
+    if (libraryView.recentMode) libraryView.showRecent();
+    else libraryView.runSearch(search.value); // back to the (search) list
   };
   $("btn-favorites").onclick = () => {
-    setFavoritesMode(!favoritesMode);
-    if (favoritesMode) showFavorites();
-    else runSearch(search.value); // back to the (search) list
+    libraryView.setFavoritesMode(!libraryView.favoritesMode);
+    if (libraryView.favoritesMode) libraryView.showFavorites();
+    else libraryView.runSearch(search.value); // back to the (search) list
   };
   $("btn-youtube").onclick = () => {
     if (!YouTubeEngine.supported) {
@@ -1636,7 +1437,7 @@ function wireUI() {
   $("tempo-val").textContent = `${(+settings.get("audio.tempo")).toFixed(2)}×`;
   $("volume").value = settings.get("audio.volume");
   $("key-val").textContent = fmtKey(settings.get("audio.key"));
-  updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
+  libraryView.updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
 }
 
 // Single mic enable/disable path shared by BOTH the transport 🎙 button and the ⚙ panel
@@ -1808,7 +1609,7 @@ async function onRebuild() {
   const res = await (await fetch("/api/rebuild-catalog", { method: "POST" })).json();
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
-  lib.renderList(catalog.search($("search").value), EMPTY_LIBRARY);
+  libraryView.renderSearchResults($("search").value, null);
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };
 }

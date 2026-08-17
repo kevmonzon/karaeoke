@@ -32,6 +32,7 @@ import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY }
 import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-presentation.js";
 import { createQueue, queueItemMatches } from "../src/js/queue.js";
 import { createSession, SESSION_KEY } from "../src/js/session.js";
+import { createLibraryView, mergeSearchRows, emptyHint, EMPTY_LIBRARY, FAVORITES_KEY, YOUTUBE_KEY } from "../src/js/library-view.js";
 import { resolveSongRef } from "../src/js/catalog.js";
 import { readFileSync } from "node:fs";
 
@@ -1490,4 +1491,121 @@ test("session: recents de-duplicate, cap at 40, and ignore a song with no id", (
   const before = s.recent.length;
   s.push(null); s.push({}); s.push({ id: "" });
   assert.equal(s.recent.length, before);
+});
+
+// --- library view -----------------------------------------------------------
+test("mergeSearchRows: YouTube results append AFTER the local hits, never interleaved", () => {
+  const local = [{ id: "midi:1" }, { id: "midi:2" }];
+  const yt = [{ id: "youtube:a" }];
+  assert.deepEqual(mergeSearchRows(local, yt).map((s) => s.id), ["midi:1", "midi:2", "youtube:a"]);
+  assert.equal(mergeSearchRows(local, []), local, "no YouTube rows → the local array itself");
+  assert.equal(mergeSearchRows(local, null), local);
+  assert.deepEqual(mergeSearchRows(null, yt).map((s) => s.id), ["youtube:a"]);
+  assert.deepEqual(mergeSearchRows(null, null), []);
+});
+
+test("emptyHint: names the query that found nothing", () => {
+  assert.match(emptyHint("tetoris").title, /tetoris/);
+  assert.equal(emptyHint("  ").title, EMPTY_LIBRARY.title, "an empty search is not a failed search");
+  assert.equal(emptyHint("").title, EMPTY_LIBRARY.title);
+  assert.equal(emptyHint(undefined).title, EMPTY_LIBRARY.title);
+});
+
+// A DOM stub just wide enough for the view flags + favorites persistence.
+function stubLibraryDom() {
+  const nodes = new Map();
+  const make = () => ({ classList: { _on: false, toggle(_c, v) { this._on = !!v; }, contains() { return this._on; } }, checked: false, value: "" });
+  for (const id of ["btn-recent", "btn-favorites", "btn-youtube", "set-youtube", "search"]) nodes.set(id, make());
+  globalThis.document = { getElementById: (id) => nodes.get(id) || null };
+  return nodes;
+}
+
+test("libraryView: Recent and Favorites are mutually exclusive, and the flags are LIVE", () => {
+  stubLibraryDom();
+  try {
+    const view = createLibraryView({
+      catalog: fakeCatalog(CAT), settings: { get: () => false }, getLib: () => ({ renderList() {}, refresh() {} }),
+      setStatus: () => {}, youtubeSupported: () => false,
+      getQueueIds: () => [], getRecentIds: () => [], getRecentSongs: () => [], storage: fakeStorage(),
+    });
+    // A captured copy would go stale here; the getter must track.
+    const readFlags = () => [view.recentMode, view.favoritesMode];
+    assert.deepEqual(readFlags(), [false, false]);
+
+    view.setRecentMode(true);
+    assert.deepEqual(readFlags(), [true, false]);
+    view.setFavoritesMode(true);
+    assert.deepEqual(readFlags(), [false, true], "opening one closes the other");
+    view.setRecentMode(true);
+    assert.deepEqual(readFlags(), [true, false]);
+
+    assert.equal(view.leaveSpecialViews(), true);
+    assert.deepEqual(readFlags(), [false, false]);
+    assert.equal(view.leaveSpecialViews(), false, "nothing to leave the second time");
+  } finally { delete globalThis.document; }
+});
+
+test("libraryView: a starred YouTube song keeps its pointer even after leaving the queue", () => {
+  stubLibraryDom();
+  try {
+    const storage = fakeStorage();
+    const catalog = { ...fakeCatalog(CAT), addExternal() {}, search: () => [] };
+    let queueIds = [];
+    const view = createLibraryView({
+      catalog, settings: { get: () => false }, getLib: () => ({ renderList() {}, refresh() {} }),
+      setStatus: () => {}, youtubeSupported: () => false,
+      // LIVE reads: capturing these at construction is the silent-failure trap.
+      getQueueIds: () => queueIds, getRecentIds: () => [], getRecentSongs: () => [], storage,
+    });
+
+    const rec = { id: "youtube:abc", kind: "youtube", videoId: "abc", name: "Song" };
+    view.registerYoutube(rec);
+    queueIds = ["youtube:abc"];
+    view.persistYoutubeCache();
+    assert.ok(JSON.parse(storage.getItem(YOUTUBE_KEY))["youtube:abc"], "queued → kept");
+
+    // Star it, then take it out of the queue: the pointer must survive on the favorite alone.
+    view.toggleFavorite(rec);
+    queueIds = [];
+    view.persistYoutubeCache();
+    assert.ok(JSON.parse(storage.getItem(YOUTUBE_KEY))["youtube:abc"], "starred → still kept");
+    assert.deepEqual(JSON.parse(storage.getItem(FAVORITES_KEY)), ["youtube:abc"]);
+
+    // Un-star it with nothing else referencing it → the pointer is dropped.
+    view.toggleFavorite(rec);
+    view.persistYoutubeCache();
+    assert.deepEqual(JSON.parse(storage.getItem(YOUTUBE_KEY)), {}, "unreferenced → not persisted");
+  } finally { delete globalThis.document; }
+});
+
+test("libraryView: the blocklist persists and hides a dead video from the next result", () => {
+  stubLibraryDom();
+  try {
+    const storage = fakeStorage();
+    const deps = {
+      catalog: { ...fakeCatalog(CAT), addExternal() {}, search: () => [] },
+      settings: { get: () => false }, setStatus: () => {}, youtubeSupported: () => false,
+      getQueueIds: () => [], getRecentIds: () => [], getRecentSongs: () => [], storage,
+    };
+    const rows = [
+      { id: "youtube:a", kind: "youtube", videoId: "a" },
+      { id: "youtube:b", kind: "youtube", videoId: "b" },
+      { id: "midi:1", kind: "midi" },
+      { id: "youtube:c", kind: "youtube", videoId: "c" },
+    ];
+    const view = createLibraryView({ ...deps, getLib: () => ({ getList: () => rows, renderList() {}, refresh() {} }) });
+
+    view.blockYoutube("b");
+    assert.equal(view.isBlocked("b"), true);
+    // The skip must jump PAST the blocked one, and past the non-YouTube row.
+    assert.equal(view.nextYoutubeInList(rows[0]).id, "youtube:c");
+    assert.equal(view.nextYoutubeInList(rows[3]), null, "nothing after the last one");
+    assert.equal(view.nextYoutubeInList({ id: "not-in-list" }), null);
+
+    // It survives a reload — the point of the blocklist.
+    const reloaded = createLibraryView({ ...deps, getLib: () => ({ getList: () => rows, renderList() {}, refresh() {} }) });
+    reloaded.loadBlocked();
+    assert.equal(reloaded.isBlocked("b"), true);
+    assert.equal(reloaded.blockedCount, 1);
+  } finally { delete globalThis.document; }
 });
