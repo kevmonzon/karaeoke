@@ -48,8 +48,10 @@ your local library plays offline after first-run setup.
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files; play full-stage with real-time **key change** + volume >100% |
 | 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with scrolling lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
+| 🏆 | **Score** — your singing rated against the song's own guide melody, with a full-stage score card when it ends |
 | 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
 | 📱 | **Phone remote** — show a QR on the queue; guests scan it to queue, search & control playback from their phones |
+| 🎉 | **Party features** — fair-play queue ordering, a per-guest song cap, emoji reactions that float on the screen, and a recap of the night |
 | 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
 
 > **About:** *Ka-Rae-oke* is an independent, client-side karaoke player, reconstructed for
@@ -247,7 +249,26 @@ counts as secure, so no HTTPS needed). Once live, your voice mixes with the musi
 ### 🎯 Pitch guide
 ⚙ → **Pitch guide → Show pitch guide** (on by default): a scrolling piano-roll of the melody to
 sing (read from the MIDI's guide track). With the mic on it overlays your **live pitch**, a fading
-**trail** of where you've been, and an optional running **score** (scoring is off by default).
+**trail** of where you've been, and the running **score** number (turn it off under ⚙ → Pitch guide).
+
+### 🏆 Score
+With the **mic on**, MIDI songs are scored against their own guide melody — the same notes the
+pitch guide draws, so nothing extra has to be authored per song. When the song ends you get a
+**full-stage score card**: the number, a verdict ("Good job!", "Excellent singing!"), who was
+singing, and your **personal best** for that song.
+
+It's deliberately forgiving, because a scoring system that makes people feel bad is broken however
+accurate it is:
+- **Octave-invariant** — singing the right note an octave down is right, so nobody is punished for
+  the song being in someone else's range.
+- **Graded, not pass/fail** — full credit within half a semitone, tapering off from there.
+- **Silence is neutral** — you're allowed to breathe; only a note you *sing wrong* costs you.
+- **Golden notes** — the longest notes count double.
+- A small **line bonus** chip rates each lyric line as it goes by, so the feedback starts long
+  before the final number.
+
+Video and YouTube songs carry no note data, so they aren't scored. ⚙ → **Score** turns the whole
+thing (or just the card, or golden notes) off. Bests are kept per song in this browser.
 
 ### 🎼 Guide vocal
 Turn the detected **melody channel** up to learn a song, **mute** it to perform, or **solo**
@@ -290,9 +311,10 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 **needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
 
 ### 📱 Remote control (phones)
-Turn on **⚙ → Sources → Remote** and a **QR code + room code** appear on the queue panel. Guests
-scan the QR with their phones (same network) to open **`/remote`**. Scanning auto-connects; anyone
-typing the URL by hand enters the **room code** shown on screen. Five tabs:
+A **QR code + room code** sit on the queue panel (the remote is **on by default**; turn it off under
+**⚙ → Sources → Remote** for an untrusted network). Guests scan the QR with their phones (same
+network) to open **`/remote`**. Scanning auto-connects; anyone typing the URL by hand enters the
+**room code** shown on screen. Five tabs:
 - **Now** — the current song with play/pause, next, seek, **key / tempo / volume** (tempo is a −/＋
   stepper), and a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from their phone
   (mirrors the host's 🎵 button).
@@ -302,7 +324,8 @@ typing the URL by hand enters the **room code** shown on screen. Five tabs:
   says so. If your phone reads a touch early or late, nudge it with the **sync** slider at the bottom —
   it only moves *your* screen (the **You** tab's lyric offset moves everyone's).
 - **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
-- **Queue** — the live queue with an "added by" name, plus remove / reorder.
+- **Queue** — the live queue with an "added by" name and a rough **"~7 min"** wait for each song,
+  plus remove / reorder. Reactions (👏 🎉 🔥 ❤️ 😂 🙌) are a tap away on the **Now** tab.
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size,
   **how the lyrics look on your phone** (lyric lines 2–8 and lyrics size 70–180% — yours alone; the
   karaoke screen keeps its own layout), and the connection status + room code.
@@ -312,10 +335,36 @@ build the queue together. When a song was queued from a phone, the host shows **
 the melody guide and on the title card, and an **"up next"** line in the last 20 seconds.
 
 The **room code** is generated once per host browser and kept there (stable across restarts). Each
-host has its own code, so several karaoke stations can share one server. **On by default** (turn it off
-in ⚙ for an untrusted network). ⚠️ The
-code is a **friction gate for a trusted network, not real security** — anyone on your LAN who has the
-code can control playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
+host has its own code, so several karaoke stations can share one server. ⚠️ The code is a **friction
+gate for a trusted network, not real security** — anyone on your LAN who has the code can control
+playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
+
+The phone keeps its **screen awake** while it's connected, and pull-to-refresh is disabled so an
+accidental swipe can't reload the page mid-song.
+
+**Second screen:** open `/remote?room=CODE&kiosk=1` on a spare tablet and it becomes a dedicated
+lyric monitor — the Lyrics tab full-bleed, header and tabs hidden, type scaled up.
+
+### 🎉 Party features
+- **Fair play** (⚙ → Queue) — each *new* request joins the back of its singer's own round, so
+  everyone sings once before anyone sings twice. Songs already waiting never move: people watch
+  that list, and a song sliding backwards reads as a cheat. Off by default — plain FIFO is what
+  people expect until they ask for fair.
+- **Reservation cap** (⚙ → Queue) — the polite version of "don't hog the mic": how many songs one
+  phone may have waiting. `0` = unlimited. A guest over the cap is told why, not silently ignored.
+- **Reactions** (⚙ → Reactions) — a guest taps 👏 🎉 🔥 ❤️ 😂 🙌 on their phone and it floats up
+  the karaoke screen; 👏 also fires a burst of applause (synthesized — the app ships no audio
+  files). Only those six can ever appear, since this is a stranger's phone drawing on your TV.
+- **Tonight's recap** (⚙ → Library → 🏆) — songs sung, singers, and top scores for the night. A
+  six-hour gap starts a new night. Nothing is recorded or uploaded; it's the data the queue and
+  scorer already produce, kept in order.
+
+### 💾 Backup & reset
+Your queue, recents, favorites, settings, scores and saved-YouTube pointers live **only in this
+browser**. ⚙ → **Backup** exports all of it to one JSON file and imports it back (handy when moving
+machines, or before clearing site data). ⚙ → Library → **Reset to defaults** restores the default
+settings but keeps your library data; **Erase all app data** (red, two-click) wipes everything
+including the cached soundfont and starts fresh. That one is irreversible.
 
 ### 🎬 Title card, Bluetooth mode
 - **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
@@ -328,7 +377,12 @@ Set the overall **Font size** — **Small / Medium / Large** (**⚙ → Display 
 the whole player's text + controls for your viewing distance (pick **Large** for a TV across the
 room); the Lyrics **Lyrics size** slider fine-tunes just the lyrics on top. Collapse the **song list
 / queue** from the top-bar toggles (**🔍 ▦**), go **full screen** with the **⛶** button (top-right),
-and find the live **song count** under ⚙ → Library.
+and find the live **song count** under ⚙ → Library. Pick a **Theme** — Auto (follows your OS), Dark
+or Light — under ⚙ → Display.
+
+**Focus mode (◎)** clears everything but the lyrics for 10-foot viewing: panels and chrome fade out,
+the "up next" pill grows, and the phone-remote QR moves onto the stage so guests can still scan it.
+Any keypress or mouse move brings the controls back; **Esc** exits.
 
 On **phones and tablets in portrait** the layout stacks to a single column with the lyrics front and
 centre, and the **song list (🔍)** and **queue (▦)** open **one at a time** to save space (tap the
@@ -355,15 +409,20 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | **Key** | auto-detect, show key badge |
 | **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
 | **Chords** | show chord lane, simplify (collapse 7ths/sus to triads) |
+| **Score** | enable scoring, show the end-of-song card, golden notes |
+| **Queue** | fair-play round-robin ordering, max songs reserved per guest |
+| **Reactions** | enable guest reactions, applause sound |
 | **MIDI mode** | enable the per-channel mixer band (volume/mute/solo/VU) |
 | **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
 | **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
 | **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
 | **Font size** | Small / Medium / Large — scales the whole player's text + controls (the Lyrics "Lyrics size" slider fine-tunes lyrics on top) |
+| **Theme** | Auto (follows your OS) / Dark / Light |
 | **Playback controls** | Always show (off = the transport overlay auto-hides) + auto-hide delay |
 | **Title card** | seconds shown, 0–10 (0 = off; default 5) |
 | **Bluetooth** | latency-compensation mode |
 | **UI** | collapsible-panel visibility |
+| **Backup** | export / import every setting and library list as one JSON file |
 
 ---
 
@@ -372,10 +431,27 @@ categories at once (it matches labels, section names, and synonyms like "latency
 | Key | Action |
 |---|---|
 | **Space** | Play / pause |
-| **Enter** (in search) | Play the top search hit |
 | **`[`** / **`]`** | Nudge lyric offset −/+ 50 ms |
-| **Esc** (in search) | Clear the search box |
+| **Esc** | Close the settings drawer or the recap; leave focus mode |
 | **Double-click** a song | Play now |
+
+**In the search box**
+
+| Key | Action |
+|---|---|
+| **Enter** | Play the top search hit |
+| **Esc** | Clear the search box |
+
+**In the song list** — Tab into it once, then it's all keyboard:
+
+| Key | Action |
+|---|---|
+| **↑ / ↓** | Move through songs |
+| **PageUp / PageDown** | Move a screenful |
+| **Home / End** | First / last song |
+| **Enter** | Play the highlighted song |
+| **Space** | Select it |
+| **＋** | Add it to the queue |
 
 ---
 
@@ -470,9 +546,13 @@ karaoke-clone/
     ├── config.js             ← DEFAULT_CONFIG (editable defaults)
     ├── css/style.css · css/remote.css
     ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
-    ├── js/                   ← app modules (app, catalog, audio, video, youtube, audiofile, lyrics,
-    │                            lyrics-formats, mic, melody, remote-host, remote [phone], sync-clock,
-    │                            asset-cache, …)
+    ├── js/                   ← app modules. app.js orchestrates; the rest own one thing each:
+    │                            playback engines (audio · video · youtube · audiofile · media-engine),
+    │                            content (catalog · lyrics · lyrics-formats · chords · melody · mic),
+    │                            state (queue · session · library-view · store · duration-hints),
+    │                            features (scoring · score-presentation · recap · reactions · midi-mixer),
+    │                            remote (remote-host · remote-glue · remote [phone] · sync-clock),
+    │                            and helpers (settings · library-ui · settings-ui · asset-cache · pitch-*)
     └── vendor/               ← SpessaSynth engine + pako + qrcode (committed)
 ```
 
@@ -501,7 +581,7 @@ karaoke-clone/
 | **Phone remote won't connect** | Enable ⚙ → Remote on the host, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
 | **QR code doesn't render** | The QR needs `src/vendor/qrcode.min.js` — re-run `python tools/serve.py` once to fetch it. The URL text is always shown even without the image. |
 | **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `data/soundfont.sf2`. |
-| **Run the tests** | `npm test` (or `node --test`) — covers the pure functions. Needs Node.js. |
+| **Run the tests** | `npm test` runs both suites — `npm run test:js` (Node, the pure functions) and `npm run test:py` (Python 3, the catalog grammar + server). Needs Node.js for the JS half. |
 
 ---
 
