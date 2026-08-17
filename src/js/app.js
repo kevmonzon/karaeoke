@@ -1743,6 +1743,10 @@ function wireUI() {
 
   document.onkeydown = (e) => {
     if (e.target.tagName === "INPUT") return;
+    // A focused song row owns its own keys (Space selects, Enter plays, ＋ queues — see the
+    // roving tabindex in library-ui.js). Without this, Space would BOTH select the row and
+    // toggle the transport.
+    if (e.target.closest && e.target.closest(".song")) return;
     if (e.code === "Space") { e.preventDefault(); $("btn-play").click(); }
     else if (e.key === "[") nudgeOffset(-50);
     else if (e.key === "]") nudgeOffset(50);

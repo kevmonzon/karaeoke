@@ -57,6 +57,14 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   let selectedSong = null;
   let nowPlaying = null;
   let emptyState = null;   // {title, hint} shown when `songs` is empty — see renderWindow
+  // Roving tabindex: exactly ONE row is a tab stop, and the arrow keys move which. Without
+  // this the 65k-row list was unreachable by keyboard entirely — you could Tab to the search
+  // box and every button around it, but never to a song, which on a ten-foot app driven from
+  // a couch is the whole library being off-limits. Virtualization is why it needs care: the
+  // roving row must stay RENDERED even when scrolled out, or the tab stop vanishes with it
+  // (see renderWindow).
+  let focusIndex = 0;
+  let pendingFocus = false;   // focus the roving row after the next render (keyboard nav only)
 
   // Coalesce scroll-driven re-renders to one per frame: a fling fires scroll events faster
   // than the display refreshes, and each one rebuilt the whole visible row set.
@@ -75,6 +83,8 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       (selectedSong && s.id === selectedSong.id ? " selected" : "") +
       (nowPlaying && s.id === nowPlaying.id ? " playing" : "");
     li.style.top = `${i * h}px`;
+    li.tabIndex = i === focusIndex ? 0 : -1;   // roving tabindex — one stop for the whole list
+    li.dataset.index = i;
     li.innerHTML =
       kindSpan(s) +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
@@ -94,7 +104,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     addBtn.onclick = (ev) => { ev.stopPropagation(); onQueue(s); };
     li.appendChild(addBtn);
     li.ondblclick = () => onPlay(s);
-    li.onclick = () => selectRow(s);
+    li.onclick = () => { focusIndex = i; selectRow(s); };
     return li;
   }
 
@@ -126,8 +136,65 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     const end = Math.min(songs.length, Math.ceil((top + vh) / h) + OVERSCAN);
     const frag = document.createDocumentFragment();
     for (let i = start; i < end; i++) frag.appendChild(makeRow(songs[i], i, h));
+    // Keep the roving row in the DOM even when it's scrolled out of the window, or the list's
+    // only tab stop disappears and Tab skips the library again. It stays absolutely positioned
+    // at its real offset, so focusing it just scrolls it into view.
+    if (focusIndex >= 0 && focusIndex < songs.length && (focusIndex < start || focusIndex >= end)) {
+      frag.appendChild(makeRow(songs[focusIndex], focusIndex, h));
+    }
+    // replaceChildren DESTROYS the focused element, so keyboard focus would be dropped to
+    // <body> by any re-render — including the scroll a keyboard move itself causes. Note where
+    // focus was before swapping, and put it back on the roving row after.
+    const hadFocus = viewport.contains(document.activeElement);
     viewport.replaceChildren(frag); // rows are the ul's only children; height is from ::after
+    if (pendingFocus || hadFocus) {
+      pendingFocus = false;
+      const el = viewport.querySelector(`.song[data-index="${focusIndex}"]`);
+      if (el) el.focus();
+    }
   }
+
+  /** Move the roving focus to `i`, scroll it into view, and put real focus on it. */
+  function moveFocus(i) {
+    if (!songs.length) return;
+    focusIndex = Math.max(0, Math.min(songs.length - 1, i));
+    const h = rowH();
+    const top = focusIndex * h;
+    const vh = viewport.clientHeight || 1;
+    if (top < viewport.scrollTop) viewport.scrollTop = top;
+    else if (top + h > viewport.scrollTop + vh) viewport.scrollTop = top + h - vh;
+    pendingFocus = true;
+    renderWindow();   // the scroll above may also fire renderWindow; both are idempotent
+  }
+
+  // Keyboard navigation for the list. Deliberately NOT a listbox: the <ul role="list"> +
+  // <li> structure is a documented a11y invariant here (§5.19), so this stays a list whose
+  // items happen to be focusable and actionable, which is what they already were by mouse.
+  viewport.addEventListener("keydown", (e) => {
+    if (!songs.length) return;
+    const row = e.target.closest && e.target.closest(".song");
+    const i = row ? +row.dataset.index : focusIndex;
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); moveFocus(i + 1); break;
+      case "ArrowUp": e.preventDefault(); moveFocus(i - 1); break;
+      case "PageDown": e.preventDefault(); moveFocus(i + 10); break;
+      case "PageUp": e.preventDefault(); moveFocus(i - 10); break;
+      case "Home": e.preventDefault(); moveFocus(0); break;
+      case "End": e.preventDefault(); moveFocus(songs.length - 1); break;
+      case "Enter":
+        if (row) { e.preventDefault(); onPlay(songs[i]); }
+        break;
+      case " ":
+        // Space selects the row (the transport's global Space-to-play only applies when
+        // focus isn't in the list — see app.js, which ignores keys from a focused row).
+        if (row) { e.preventDefault(); focusIndex = i; selectRow(songs[i]); }
+        break;
+      case "+": case "=":
+        if (row) { e.preventDefault(); onQueue(songs[i]); }   // matches the ＋ button
+        break;
+      default: return;
+    }
+  });
 
   // Set the ::after scroll-height var from the CURRENT row height. Must run whenever
   // --row-h changes (display-size profile switch) as well as when the list changes,
@@ -140,6 +207,8 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   function renderList(newSongs, empty) {
     songs = newSongs;
     emptyState = empty || null;
+    focusIndex = 0;          // a new result set starts at the top
+    pendingFocus = false;    // …but never steals focus from whatever the user is typing in
     setScrollHeight();
     viewport.scrollTop = 0;
     renderWindow();
