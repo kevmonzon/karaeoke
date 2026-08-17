@@ -178,6 +178,19 @@ function tag(song, kind) {
   return song;
 }
 
+/**
+ * Resolve a STORED reference back to a song.
+ *
+ * The current format is a stable id ("midi:5" / "video:5" / "youtube:<videoId>"); sessions
+ * written before ids existed stored a bare numeric code, which means a MIDI code. Shared by
+ * the session, favorites and the YouTube pointer cache so the back-compat rule has exactly
+ * one implementation.
+ */
+export function resolveSongRef(catalog, ref) {
+  if (!catalog) return undefined;
+  return (typeof ref === "string" && ref.includes(":")) ? catalog.getById(ref) : catalog.get(ref);
+}
+
 /** fetch() a JSON array. `required` sources throw on failure; optional ones → []. */
 async function fetchArray(url, required) {
   try {

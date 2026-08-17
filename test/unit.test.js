@@ -31,6 +31,8 @@ import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js"
 import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY } from "../src/js/recap.js";
 import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-presentation.js";
 import { createQueue, queueItemMatches } from "../src/js/queue.js";
+import { createSession, SESSION_KEY } from "../src/js/session.js";
+import { resolveSongRef } from "../src/js/catalog.js";
 import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
@@ -1414,4 +1416,78 @@ test("queue: restore is silent, and drops attribution", () => {
   q.restore(src);
   src.push(song("y"));
   assert.equal(q.length, 1);
+});
+
+// --- session persistence ----------------------------------------------------
+// A catalog stub with the two lookups a stored reference can use.
+function fakeCatalog(songs) {
+  const byId = new Map(songs.map((s) => [s.id, s]));
+  const byCode = new Map();
+  // Mirrors the real Catalog: the FIRST record with a code keeps it, so MIDI wins a
+  // code shared with a video (§5.10).
+  for (const s of songs) if (s.code != null && !byCode.has(String(s.code))) byCode.set(String(s.code), s);
+  return { getById: (id) => byId.get(String(id)), get: (c) => byCode.get(String(c)) };
+}
+const CAT = [
+  { id: "midi:1", code: 1, name: "Tahan" },
+  { id: "midi:2", code: 2, name: "Beer" },
+  { id: "video:1", code: 1, name: "My Way" },
+];
+
+test("resolveSongRef: stable ids win, and a bare code still means MIDI", () => {
+  const cat = fakeCatalog(CAT);
+  assert.equal(resolveSongRef(cat, "video:1").name, "My Way");
+  assert.equal(resolveSongRef(cat, "midi:1").name, "Tahan");
+  assert.equal(resolveSongRef(cat, 1).name, "Tahan", "an old bare code resolves as MIDI");
+  assert.equal(resolveSongRef(cat, "1").name, "Tahan");
+  assert.equal(resolveSongRef(cat, "midi:999"), undefined);
+  assert.equal(resolveSongRef(null, "midi:1"), undefined);
+});
+
+test("session: the queue and recents round-trip a reload", () => {
+  const storage = fakeStorage();
+  const catalog = fakeCatalog(CAT);
+  const s1 = createSession({ catalog, storage });
+
+  s1.push({ id: "midi:1" });
+  s1.push({ id: "video:1" });
+  s1.save(["midi:2", "midi:1"]);
+  assert.deepEqual(s1.recent, ["video:1", "midi:1"], "most recent first");
+
+  const s2 = createSession({ catalog, storage });
+  const out = s2.restore();
+  assert.deepEqual(out.recent, ["video:1", "midi:1"]);
+  assert.deepEqual(out.queue.map((x) => x.id), ["midi:2", "midi:1"]);
+  assert.deepEqual(s2.recentSongs().map((x) => x.name), ["My Way", "Tahan"]);
+});
+
+test("session: a song that has left the library is dropped, not restored as a hole", () => {
+  const storage = fakeStorage({
+    [SESSION_KEY]: JSON.stringify({ queue: ["midi:1", "midi:404", "midi:2"], recent: ["midi:404", "video:1"] }),
+  });
+  const s = createSession({ catalog: fakeCatalog(CAT), storage });
+  const out = s.restore();
+  assert.deepEqual(out.queue.map((x) => x.id), ["midi:1", "midi:2"]);
+  assert.deepEqual(out.recent, ["video:1"]);
+});
+
+test("session: restore tolerates a missing, empty or malformed store", () => {
+  const catalog = fakeCatalog(CAT);
+  assert.deepEqual(createSession({ catalog, storage: fakeStorage() }).restore(), { recent: [], queue: [] });
+  const junk = fakeStorage({ [SESSION_KEY]: JSON.stringify({ queue: "nope", recent: 7 }) });
+  assert.deepEqual(createSession({ catalog, storage: junk }).restore(), { recent: [], queue: [] });
+});
+
+test("session: recents de-duplicate, cap at 40, and ignore a song with no id", () => {
+  const s = createSession({ catalog: fakeCatalog(CAT), storage: fakeStorage() });
+  s.push({ id: "a" }); s.push({ id: "b" }); s.push({ id: "a" });
+  assert.deepEqual(s.recent, ["a", "b"], "replaying a song moves it up, it doesn't duplicate");
+
+  for (let i = 0; i < 60; i++) s.push({ id: `s${i}` });
+  assert.equal(s.recent.length, 40);
+  assert.equal(s.recent[0], "s59");
+
+  const before = s.recent.length;
+  s.push(null); s.push({}); s.push({ id: "" });
+  assert.equal(s.recent.length, before);
 });

@@ -11,7 +11,7 @@
  * its own module; this file wires them together.
  */
 
-import { Catalog } from "./catalog.js";
+import { Catalog, resolveSongRef } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
@@ -31,6 +31,7 @@ import { createDurationHints } from "./duration-hints.js";
 import { createRecap } from "./recap.js";
 import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
 import { createQueue } from "./queue.js";
+import { createSession } from "./session.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -49,6 +50,7 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 // --- singletons -------------------------------------------------------------
 const settings = new Settings();
 const catalog = new Catalog();
+const session = createSession({ catalog });
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
@@ -73,7 +75,6 @@ let current = null;
 let currentBy = "";              // who queued the NOW-PLAYING song via the remote ("" if host-added)
 let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE, audioFile=AUDIO)
 let armed = false;    // true once the user has started playback (gates queue auto-advance)
-let recent = []; // recently-played song ids, most-recent first
 let userPaused = false;   // true only when the user paused (the auto-advance exception)
 let autoAdvancing = false; // guard so the idle auto-advance fires once
 let playDelayTimer = null; // delays music start until ~1s before the title card fades
@@ -703,11 +704,9 @@ function syncTransportLabels() {
 }
 
 // ---------------------------------------------------------------------------
-// Session persistence — queue + recently played survive reloads (localStorage).
-// The queue is restored but NOT auto-played (no user gesture on load).
+// App data — factory reset, backup/export, and the thin wrappers over session.js
+// (which owns the queue + recently-played persistence).
 // ---------------------------------------------------------------------------
-const sessionStore = jsonStore("karaeoke.session.v1", null);
-
 // Full factory reset ("Erase all app data"): remove EVERY karaeoke.* localStorage key
 // (settings, session/queue+recents, favorites, ⚙ panel state, remote room code, the
 // YouTube pointer cache + blocklist) AND every Cache Storage cache (the ~32 MB soundfont
@@ -741,26 +740,18 @@ async function importAppData(file) {
   return restoreAppData(JSON.parse(await file.text()));
 }
 
-// Resolve a stored reference to a song. New format = stable id ("midi:5"/"video:5");
-// old sessions stored a bare numeric code → treat as a MIDI code (back-compat).
-function resolveSong(ref) {
-  return (typeof ref === "string" && ref.includes(":")) ? catalog.getById(ref) : catalog.get(ref);
-}
-
 function saveSession() {
-  sessionStore.write({ queue: queue.list.map((s) => s.id), recent });
+  session.save(queue.list.map((s) => s.id));
   saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
-  const data = sessionStore.read();
-  if (!data) return;
-  recent = (Array.isArray(data.recent) ? data.recent : [])
-    .map(resolveSong).filter(Boolean).map((s) => s.id);
-  const q = (data.queue || []).map(resolveSong).filter(Boolean);
-  if (q.length) { queue.restore(q); lib.renderQueue(queue.list, queue.listBy); }
+  const { queue: songs } = session.restore();
+  // Only touch the queue when there IS one: an empty restore must not clobber whatever the
+  // boot sequence has already put there, or re-render the panel for nothing.
+  if (songs.length) { queue.restore(songs); lib.renderQueue(queue.list, queue.listBy); }
 }
 function pushRecent(song) {
-  recent = [song.id, ...recent.filter((id) => id !== song.id)].slice(0, 40);
+  session.push(song);
   saveSession();
 }
 function setRecentMode(on) {
@@ -769,7 +760,7 @@ function setRecentMode(on) {
   if (on && favoritesMode) setFavoritesMode(false); // the two library views are mutually exclusive
 }
 function showRecent() {
-  const songs = recent.map((id) => catalog.getById(id)).filter(Boolean);
+  const songs = session.recentSongs();
   lib.renderList(songs, { title: "Nothing played yet tonight", hint: "Songs you play show up here." });
   setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
 }
@@ -777,13 +768,13 @@ function showRecent() {
 // ---------------------------------------------------------------------------
 // Favorites — starred songs, persisted separately from the session (localStorage).
 // Stored as an array of stable ids so KAR/VID are unambiguous (§5.10); old bare
-// codes resolve as MIDI via resolveSong (same back-compat as the queue/recent).
+// codes resolve as MIDI via resolveSongRef (same back-compat as the queue/recent).
 // ---------------------------------------------------------------------------
 const favoritesStore = jsonStore("karaeoke.favorites.v1", []);
 
 function loadFavorites() {
   const data = favoritesStore.read();
-  const ids = (Array.isArray(data) ? data : []).map(resolveSong).filter(Boolean).map((s) => s.id);
+  const ids = (Array.isArray(data) ? data : []).map((r) => resolveSongRef(catalog, r)).filter(Boolean).map((s) => s.id);
   favorites = new Set(ids);
 }
 function saveFavorites() {
@@ -843,7 +834,7 @@ function loadYoutubeCache() {
 }
 /** Persist only the YouTube records still referenced by a favorite / the queue / recent. */
 function saveYoutubeCache() {
-  const keep = new Set([...favorites, ...queue.list.map((s) => s.id), ...recent]);
+  const keep = new Set([...favorites, ...queue.list.map((s) => s.id), ...session.recent]);
   const obj = {};
   for (const id of keep) {
     const rec = youtubeCache.get(id);
