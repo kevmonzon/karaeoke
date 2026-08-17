@@ -30,6 +30,7 @@ import { REACTIONS, createReactions } from "../src/js/reactions.js";
 import { createDurationHints, DURATIONS_KEY } from "../src/js/duration-hints.js";
 import { createRecap, recapSummary, appendPerformance, RECAP_GAP_MS, RECAP_KEY } from "../src/js/recap.js";
 import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-presentation.js";
+import { createQueue, queueItemMatches } from "../src/js/queue.js";
 import { readFileSync } from "node:fs";
 
 // --- snapNote ---------------------------------------------------------------
@@ -1314,4 +1315,103 @@ test("score.finish: a song with no id still scores, it just isn't remembered", (
   assert.equal(res.score, 80);
   assert.equal(res.song, null);
   assert.equal(storage.getItem(SCORES_KEY), null, "nothing keyed on null");
+});
+
+// --- queue ------------------------------------------------------------------
+const song = (id, name = id) => ({ id, name });
+
+test("queueItemMatches: a stale index can't delete the wrong song", () => {
+  const list = [song("midi:1"), song("midi:2"), song("midi:3")];
+  assert.equal(queueItemMatches(list, 1, "midi:2"), true);
+  assert.equal(queueItemMatches(list, 1, "midi:9"), false, "the queue moved under the guest");
+  assert.equal(queueItemMatches(list, 1, undefined), true, "an older phone sends no id");
+  // Out of range, including the negative index that splice() would count from the END.
+  assert.equal(queueItemMatches(list, -1, undefined), false);
+  assert.equal(queueItemMatches(list, 3, undefined), false);
+  assert.equal(queueItemMatches(list, 1.5, undefined), false);
+  assert.equal(queueItemMatches(list, "1", undefined), false);
+  assert.equal(queueItemMatches(null, 0, undefined), false);
+});
+
+test("queue: add/remove/move keep the song and its singer in lockstep", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+
+  q.add(song("a"), "Rae");
+  q.add(song("b"), "Mia");
+  q.add(song("c"), "");            // host-added
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b", "c"]);
+  assert.deepEqual(q.listBy, ["Rae", "Mia", ""]);
+  assert.equal(q.length, 3);
+  assert.equal(changes, 3);
+
+  assert.equal(q.move(2, 0), true);
+  assert.deepEqual(q.list.map((s) => s.id), ["c", "a", "b"]);
+  assert.deepEqual(q.listBy, ["", "Rae", "Mia"], "attribution moves WITH the song");
+
+  assert.equal(q.removeAt(1), true);
+  assert.deepEqual(q.list.map((s) => s.id), ["c", "b"]);
+  assert.deepEqual(q.listBy, ["", "Mia"]);
+});
+
+test("queue: an out-of-range remove or move does nothing at all", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.add(song("a"), "Rae"); q.add(song("b"), "Mia");
+  changes = 0;
+
+  for (const i of [-1, 2, 1.5, "1", null, undefined, NaN]) assert.equal(q.removeAt(i), false);
+  assert.equal(q.move(0, 5), false);
+  assert.equal(q.move(-1, 0), false);
+  assert.equal(q.move(0, 0), false, "a no-op move is not a change");
+  assert.equal(changes, 0, "a rejected mutation must not render, persist or push");
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b"], "nothing moved");
+});
+
+test("queue: shift hands over the song AND its singer, and survives an empty queue", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.add(song("a"), "Rae");
+  changes = 0;
+
+  const taken = q.shift();
+  assert.equal(taken.song.id, "a");
+  assert.equal(taken.by, "Rae");
+  assert.equal(q.length, 0);
+
+  assert.equal(q.shift(), null, "a drained queue reports nothing, it does not throw");
+  assert.equal(changes, 2, "the empty case still re-renders and clears the saved queue");
+});
+
+test("queue: fair play round-robins new songs; countBy drives the reservation cap", () => {
+  const q = createQueue();
+  q.add(song("a1"), "Rae", true);
+  q.add(song("b1"), "Mia", true);
+  q.add(song("a2"), "Rae", true);   // Rae's 2nd → after everyone's 1st
+  q.add(song("c1"), "Cha", true);   // Cha's 1st → ahead of Rae's 2nd
+  assert.deepEqual(q.list.map((s) => s.id), ["a1", "b1", "c1", "a2"]);
+
+  assert.equal(q.countBy("Rae"), 2);
+  assert.equal(q.countBy("Cha"), 1);
+  assert.equal(q.countBy("nobody"), 0);
+
+  // Fair play off appends, and never reorders what is already waiting.
+  const plain = createQueue();
+  plain.add(song("a1"), "Rae"); plain.add(song("b1"), "Mia"); plain.add(song("a2"), "Rae");
+  assert.deepEqual(plain.list.map((s) => s.id), ["a1", "b1", "a2"]);
+});
+
+test("queue: restore is silent, and drops attribution", () => {
+  let changes = 0;
+  const q = createQueue({ onChange: () => { changes++; } });
+  q.restore([song("a"), song("b")]);
+  assert.equal(changes, 0, "loading a saved queue is not a change to persist or push");
+  assert.deepEqual(q.list.map((s) => s.id), ["a", "b"]);
+  assert.deepEqual(q.listBy, ["", ""], "who queued it last night is not restored");
+
+  // The restored array must be the queue's own copy, not the caller's.
+  const src = [song("x")];
+  q.restore(src);
+  src.push(song("y"));
+  assert.equal(q.length, 1);
 });

@@ -23,7 +23,6 @@ import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { Scorer } from "./scoring.js";
-import { fairInsertIndex, countBy } from "./queue-order.js";
 import { createLibraryUI } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
@@ -31,6 +30,7 @@ import { createReactions } from "./reactions.js";
 import { createDurationHints } from "./duration-hints.js";
 import { createRecap } from "./recap.js";
 import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
+import { createQueue } from "./queue.js";
 import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { jsonStore, collectAppData, restoreAppData, clearAppData } from "./store.js";
@@ -60,8 +60,15 @@ let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 let remoteHost;                  // host↔phone relay driver (created at boot)
 
 // --- mutable player state ---------------------------------------------------
-let queue = [];
-let queueBy = [];                // parallel to `queue`: who queued each song (phone nickname, or "")
+// The queue owns its own two parallel arrays (song + who reserved it); every mutation renders,
+// persists and pushes to the phones through this one callback.
+const queue = createQueue({
+  onChange() {
+    lib.renderQueue(queue.list, queue.listBy);
+    saveSession();
+    if (remoteHost) remoteHost.push();
+  },
+});
 let current = null;
 let currentBy = "";              // who queued the NOW-PLAYING song via the remote ("" if host-added)
 let media = audio;    // the engine driving the current song (audio=MIDI, video=VIDEO, youtube=YOUTUBE, audioFile=AUDIO)
@@ -449,50 +456,24 @@ function pcDist(a, b) {
 // ---------------------------------------------------------------------------
 // Queue
 // ---------------------------------------------------------------------------
-// `queueBy` runs parallel to `queue` — index i holds who queued queue[i] (a phone
-// nickname, or "" for a host-added song). Every queue mutation keeps them in lockstep.
+// The list itself lives in queue.js (song + who reserved it, kept in lockstep). What stays
+// here is only what needs the playback state: when to start playing, and what to do when the
+// queue runs dry.
 function enqueue(song, by = "") {
-  // Fair play: a new song joins the end of its singer's own "round" rather than the end of
-  // the list, so one enthusiastic guest can't own the night (queue-order.js). Already-queued
-  // songs never move — people watch this list and would notice theirs sliding backwards.
-  const at = settings.get("queue.fairPlay") ? fairInsertIndex(queueBy, by) : queue.length;
-  queue.splice(at, 0, song);
-  queueBy.splice(at, 0, by);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
+  queue.add(song, by, !!settings.get("queue.fairPlay"));
   // Start playing if nothing is — but NOT while a song is still loading. `current` isn't set
   // until a play* gets past its awaits, so during a cold start (or any slow load) every extra
   // ＋ click read "nothing is playing" and shifted ANOTHER song off the queue to play. Queue
   // three songs quickly and the middle one vanished: never played, no longer queued.
+  // This guard has to stay HERE — only app.js can see the playback state it reads.
   if (!current && !loadingSong) advanceQueue();
 }
-function removeFromQueue(i) {
-  // Bounds-check like reorderQueue does: splice(-1, 1) counts from the END, so an out-of-range
-  // index would silently delete the wrong song rather than doing nothing.
-  if (!Number.isInteger(i) || i < 0 || i >= queue.length) return;
-  queue.splice(i, 1);
-  queueBy.splice(i, 1);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-}
+function removeFromQueue(i) { queue.removeAt(i); }
 // Move a queued song from one position to another (used by the phone remote's reorder).
-function reorderQueue(from, to) {
-  if (from < 0 || from >= queue.length || to < 0 || to >= queue.length || from === to) return;
-  const [s] = queue.splice(from, 1); queue.splice(to, 0, s);
-  const [b] = queueBy.splice(from, 1); queueBy.splice(to, 0, b);
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-}
+function reorderQueue(from, to) { queue.move(from, to); }
 function advanceQueue() {
-  const next = queue.shift();
-  const by = queueBy.shift() || "";  // keep the attribution array in lockstep + carry it to the singer banner
-  lib.renderQueue(queue, queueBy);
-  saveSession();
-  if (remoteHost) remoteHost.push();
-  if (next) playNow(next, by);
+  const taken = queue.shift();
+  if (taken) playNow(taken.song, taken.by);
   else {
     media.stop();            // nothing more queued → halt the active engine
     current = null; autoAdvancing = false;
@@ -620,9 +601,9 @@ function remoteSnapshot() {
     // the song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
     score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
   } : null;
-  const q = queue.map((s, i) => ({
+  const q = queue.list.map((s, i) => ({
     id: s.id, name: s.name || "", artist: s.artistName || "",
-    kind: s.kind, code: s.code || "", by: queueBy[i] || "",
+    kind: s.kind, code: s.code || "", by: queue.listBy[i] || "",
     dur: durations.get(s.id),   // learned length → the phone computes "how long until mine"
   }));
   const settingsSub = {};
@@ -649,11 +630,6 @@ function remoteResolveSong(c) {
 // advanced, or another guest removed one first). When the command carries the song's stable
 // id we require it to match, so the worst case becomes "nothing happened" instead of "the
 // wrong song vanished". Commands without an id (older phone build) still apply by index.
-function queueItemMatches(index, id) {
-  if (!Number.isInteger(index) || index < 0 || index >= queue.length) return false;
-  return !id || queue[index].id === id;
-}
-
 // Apply one guest command (already validated server-side to a known type).
 function applyRemoteCommand(cmd) {
   switch (cmd.type) {
@@ -661,7 +637,7 @@ function applyRemoteCommand(cmd) {
       const by = String(cmd.by || "").slice(0, 24);
       // Optional reservation cap — the digital form of "don't hog the mic". 0 = off.
       const cap = +settings.get("queue.maxPerGuest") || 0;
-      if (cap > 0 && by && countBy(queueBy, by) >= cap) {
+      if (cap > 0 && by && queue.countBy(by) >= cap) {
         setStatus(`${by} already has ${cap} song${cap === 1 ? "" : "s"} reserved — wait for your turn.`);
         break;
       }
@@ -670,10 +646,10 @@ function applyRemoteCommand(cmd) {
       break;
     }
     case "remove":
-      if (queueItemMatches(cmd.index, cmd.id)) removeFromQueue(cmd.index);
+      if (queue.matches(cmd.index, cmd.id)) removeFromQueue(cmd.index);
       break;
     case "reorder":
-      if (Number.isInteger(cmd.to) && queueItemMatches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
+      if (Number.isInteger(cmd.to) && queue.matches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
       break;
     case "react":
       // Allowlisted, never free text: this is drawn on the host's TV from a stranger's phone.
@@ -772,7 +748,7 @@ function resolveSong(ref) {
 }
 
 function saveSession() {
-  sessionStore.write({ queue: queue.map((s) => s.id), recent });
+  sessionStore.write({ queue: queue.list.map((s) => s.id), recent });
   saveYoutubeCache(); // keep the YouTube pointer cache in step with the queue/recent
 }
 function loadSession() {
@@ -781,7 +757,7 @@ function loadSession() {
   recent = (Array.isArray(data.recent) ? data.recent : [])
     .map(resolveSong).filter(Boolean).map((s) => s.id);
   const q = (data.queue || []).map(resolveSong).filter(Boolean);
-  if (q.length) { queue = q; queueBy = q.map(() => ""); lib.renderQueue(queue, queueBy); }
+  if (q.length) { queue.restore(q); lib.renderQueue(queue.list, queue.listBy); }
 }
 function pushRecent(song) {
   recent = [song.id, ...recent.filter((id) => id !== song.id)].slice(0, 40);
@@ -867,7 +843,7 @@ function loadYoutubeCache() {
 }
 /** Persist only the YouTube records still referenced by a favorite / the queue / recent. */
 function saveYoutubeCache() {
-  const keep = new Set([...favorites, ...queue.map((s) => s.id), ...recent]);
+  const keep = new Set([...favorites, ...queue.list.map((s) => s.id), ...recent]);
   const obj = {};
   for (const id of keep) {
     const rec = youtubeCache.get(id);
@@ -1770,8 +1746,8 @@ function updateStageBanner() {
   if (current && media && media.duration > 0 && queue.length) {
     const remaining = media.duration - media.currentTime;
     if (remaining > 0 && remaining <= 20) {
-      upName = queue[0].name || "(untitled)";
-      upWho = queueBy[0] || "";
+      upName = queue.list[0].name || "(untitled)";
+      upWho = queue.listBy[0] || "";
     }
   }
   const upKey = upName ? `${upName}|${upWho}` : "";
