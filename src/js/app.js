@@ -455,7 +455,11 @@ function enqueue(song, by = "") {
   lib.renderQueue(queue, queueBy);
   saveSession();
   if (remoteHost) remoteHost.push();
-  if (!current) advanceQueue();
+  // Start playing if nothing is — but NOT while a song is still loading. `current` isn't set
+  // until a play* gets past its awaits, so during a cold start (or any slow load) every extra
+  // ＋ click read "nothing is playing" and shifted ANOTHER song off the queue to play. Queue
+  // three songs quickly and the middle one vanished: never played, no longer queued.
+  if (!current && !loadingSong) advanceQueue();
 }
 function removeFromQueue(i) {
   // Bounds-check like reorderQueue does: splice(-1, 1) counts from the END, so an out-of-range
@@ -1502,10 +1506,19 @@ function onMediaError(kind, why) {
 // sequencer stalls with `paused` false and the clock plateaued just short of duration, so it
 // reports via `ended`; video/audio reach duration cleanly; YouTube fires its own onEnded.
 function songHasEnded() {
-  if (!current || !media || media.paused) return false;
-  if (media === audio) return !!audio.ended;
-  const d = media.duration;
-  return d > 0 && media.currentTime >= d - 0.15;
+  if (!current || !media) return false;
+  const t = media.currentTime, d = media.duration;
+  // MIDI. MEASURED IN A BROWSER, and it contradicts what §5.14 used to claim: at the natural
+  // end the Sequencer BOTH pauses itself AND raises `isFinished`, with the clock landing
+  // exactly on duration (paused:true, ended:true, t === d). So a `!paused` guard vetoes the
+  // precise event it was meant to catch, and the queue never advances — the song just sits
+  // there finished. Anchor on the CLOCK instead: a STALE `isFinished` left over from the
+  // previous song (the thing that guard was protecting against) cannot fool us, because the
+  // title-card hold parks the clock at 0 before the new song starts.
+  if (media === audio) return !!audio.ended && t > 0.5;
+  // Video/audio elements: `paused` here means the USER paused, so it still guards correctly.
+  if (media.paused) return false;
+  return d > 0 && t >= d - 0.15;
 }
 function tick() {
   setPlayIcon(); // keep the transport button mirroring the real play/pause state every frame

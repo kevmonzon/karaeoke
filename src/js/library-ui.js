@@ -224,14 +224,30 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     renderWindow();
   }
 
+  // Selection and now-playing are STATE changes, not content changes: patch the classes on the
+  // rows already on screen instead of rebuilding them. A full rebuild replaced the <li> under
+  // the user's cursor, and a click whose mousedown and mouseup land on different elements never
+  // fires — so tapping ＋ down a list silently dropped songs, because the previous tap had just
+  // re-rendered the row being tapped. (Caught in a browser: three ＋ taps produced two enqueues.)
+  function paintRowStates() {
+    for (const li of viewport.querySelectorAll(".song")) {
+      const s = songs[+li.dataset.index];
+      if (!s) continue;
+      li.classList.toggle("selected", !!selectedSong && s.id === selectedSong.id);
+      li.classList.toggle("playing", !!nowPlaying && s.id === nowPlaying.id);
+      li.tabIndex = +li.dataset.index === focusIndex ? 0 : -1; // keep the single tab stop honest
+                                                              // without a rebuild
+    }
+  }
+
   function selectRow(song) {
     selectedSong = song;
-    renderWindow(); // repaint to move the highlight
+    paintRowStates(); // move the highlight without replacing any DOM under the pointer
   }
 
   function setNowPlaying(song) {
     nowPlaying = song;
-    renderWindow();
+    paintRowStates();
   }
 
   // Queue rows mirror the search-list `.song` layout: [icon][title / artist(+singer)][✕].
