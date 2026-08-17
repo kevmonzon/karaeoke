@@ -80,16 +80,24 @@
   --surface-2: #1b2030;
   --border: #262c3d;
   --border-soft: #1d2231;
-  --text: #eef2ff;
-  --text-muted: #8b93ab;
+  --text: #eef2ff;              /* APCA Lc 99 on --bg */
+  --text-muted: #99a1b8;        /* was #8b93ab (Lc 44) — attribution/secondary read at 3 m */
 
-  --brand: var(--pink);
+  /* --pink stays the brand hue. The DARK theme spends it one step lighter and slightly
+     less saturated: a near-max-chroma accent visually VIBRATES against a dark ground
+     (Material's dark-theme guidance), and pink sits next to red, which TV guidance caps
+     for large areas — so it also stays on small elements. Light keeps its own variant. */
+  --brand: #ff4d8b;             /* tuned var(--pink) — see above */
   --brand-ink: #ffffff;         /* text/glyph on a brand fill */
   --brand-2: var(--teal);
   --brand-2-ink: #05201c;
 
-  --sung: var(--gold);          /* karaoke wipe (foreground) */
-  --unsung: #7b84a0;
+  --sung: var(--gold);          /* karaoke wipe (foreground) — Lc 82 on --bg */
+  /* The NOT-yet-sung half of every lyric line. Was #7b84a0 = APCA Lc 37 on --bg — the
+     dimmest text in the app, despite being lyrics people read AHEAD on. Lc 62 clears the
+     Lc 60 target. The cost is a slightly gentler wipe contrast, taken deliberately:
+     legible upcoming syllables beat a more dramatic sweep. */
+  --unsung: #adb5cc;
 
   --scrim: rgba(5, 6, 10, .62); /* dim behind sheets/overlays (never over lyrics) */
   --focus: var(--teal);
@@ -162,6 +170,40 @@
   --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
 
   color-scheme: light;
+}
+
+/* ============================================================================
+ * 3b. THE REMOTE'S "DIMMER SIBLING" — the phone, dark only.
+ *
+ * Same hues, same semantic names; the phone just spends them darker. The host palette
+ * is tuned for a TV three metres away — that identical luminance held 40 cm from a face
+ * in the same dark room is glare, and a phone's persistent surfaces are exactly what
+ * OLED wear punishes. So: ground a step deeper, surfaces pulled CLOSER together (a
+ * handheld needs less separation than a wall does), accents desaturated one more step,
+ * and --text eased off the host's near-white.
+ *
+ * Scoped to BOTH attributes so it can only ever apply on /remote, and only in dark:
+ * two attributes beat the base `:root, :root[data-theme="dark"]` on specificity, and
+ * the remote's theme select offers dark|light ONLY (no auto), so light is untouched.
+ * Unlisted tokens (--brand-ink, --focus, --ok/--warn/--bad, --elev-*) deliberately fall
+ * through to the dark block above — custom properties resolve per-property, not per-block.
+ * src/remote.html carries data-surface="remote" statically; no JS is involved.
+ * ========================================================================== */
+:root[data-surface="remote"][data-theme="dark"] {
+  --bg: #07090e;
+  --surface-0: #0c0f18;
+  --surface-1: #10131e;
+  --surface-2: #161b28;
+  --border: #212739;
+  --border-soft: #191e2b;
+  --text: #e4e9f7;              /* off the host's #eef2ff — near-field glare */
+  --text-muted: #8f98b0;
+
+  --brand: #ee5c90;             /* one step down from the host's #ff4d8b */
+  --brand-2: #3fc9b5;
+
+  --sung: #f5c63c;              /* still the brightest thing on the phone's Lyrics tab */
+  --unsung: #99a2bc;            /* Lc 52 at arm's length — readable without out-shouting --sung */
 }
 
 /* ============================================================================
