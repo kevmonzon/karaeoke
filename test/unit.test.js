@@ -33,6 +33,7 @@ import { createScorePresentation, bonusBand, SCORES_KEY } from "../src/js/score-
 import { createQueue, queueItemMatches } from "../src/js/queue.js";
 import { createSession, SESSION_KEY } from "../src/js/session.js";
 import { createLibraryView, mergeSearchRows, emptyHint, EMPTY_LIBRARY, FAVORITES_KEY, YOUTUBE_KEY } from "../src/js/library-view.js";
+import { createRemoteGlue, REMOTE_SETTABLE, HOST_ROOM_KEY } from "../src/js/remote-glue.js";
 import { resolveSongRef } from "../src/js/catalog.js";
 import { readFileSync } from "node:fs";
 
@@ -1608,4 +1609,147 @@ test("libraryView: the blocklist persists and hides a dead video from the next r
     assert.equal(reloaded.isBlocked("b"), true);
     assert.equal(reloaded.blockedCount, 1);
   } finally { delete globalThis.document; }
+});
+
+// --- remote glue ------------------------------------------------------------
+function glueHarness(over = {}) {
+  const calls = [];
+  const record = (name) => (...args) => calls.push([name, ...args]);
+  const listBy = over.listBy || [];
+  const glue = createRemoteGlue({
+    settings: { get: (p) => (over.settings || {})[p] },
+    catalog: { getById: (id) => (over.songs || {})[id] },
+    queue: {
+      list: over.list || [],
+      listBy,
+      countBy: (who) => listBy.filter((b) => b === who).length,
+      matches: (i, id) => (over.list || [])[i] && (!id || over.list[i].id === id),
+    },
+    reactions: { handle: record("react") },
+    libraryView: { registerYoutube: (r) => ({ ...r, registered: true }) },
+    durations: { get: () => null },
+    getNowPlaying: () => over.now || null,
+    setStatus: record("status"),
+    positionFocusQr: () => {},
+    storage: over.storage || fakeStorage(),
+    actions: {
+      enqueue: record("enqueue"), removeFromQueue: record("remove"), reorderQueue: record("reorder"),
+      play: record("play"), pause: record("pause"), next: record("next"),
+      seek: record("seek"), setVolume: record("volume"), applySetting: record("setting"),
+    },
+  });
+  return { glue, calls };
+}
+
+test("remoteGlue: the room code is stable per browser and shaped for reading aloud", () => {
+  const storage = fakeStorage();
+  const a = glueHarness({ storage }).glue.getHostRoom();
+  assert.match(a, /^[A-CDEFGHJ-NP-Z2-9]{6}$/, "6 chars, no ambiguous 0/O or 1/I");
+  assert.equal(storage.getItem(HOST_ROOM_KEY), a);
+
+  // A second host object in the same browser adopts the SAME code — guests keep working.
+  assert.equal(glueHarness({ storage }).glue.getHostRoom(), a);
+  // A junk stored value is replaced rather than trusted.
+  storage.setItem(HOST_ROOM_KEY, "nope!");
+  const fixed = glueHarness({ storage }).glue.getHostRoom();
+  assert.match(fixed, /^[A-Z0-9]{6}$/);
+  assert.notEqual(fixed, "nope!");
+});
+
+test("remoteGlue: the snapshot carries the room, now-playing, queue and mirrored settings", () => {
+  const now = { id: "midi:1", name: "Tahan", paused: false, position: 3, duration: 200 };
+  const { glue } = glueHarness({
+    now,
+    list: [{ id: "midi:2", name: "Beer", artistName: "Itchyworms", kind: "midi", code: 2 }],
+    listBy: ["Rae"],
+    settings: { "audio.key": 2, "audio.tempo": 1, "audio.volume": 0.8, "lyrics.offsetMs": 0, "guide.vocal.mute": false },
+  });
+  const snap = glue.snapshot();
+  assert.match(snap.room, /^[A-Z0-9]{6}$/);
+  assert.deepEqual(snap.now, now);
+  // `code` passes through as the catalog stores it (a number); only a MISSING code becomes "".
+  assert.deepEqual(snap.queue, [{ id: "midi:2", name: "Beer", artist: "Itchyworms", kind: "midi", code: 2, by: "Rae", dur: null }]);
+  assert.equal(glueHarness({ list: [{ id: "x" }], listBy: [""], settings: {} }).glue.snapshot().queue[0].code, "");
+  // Exactly the allowlist is mirrored — no more, no less.
+  assert.deepEqual(Object.keys(snap.settings).sort(), [...REMOTE_SETTABLE].sort());
+});
+
+test("remoteGlue: every command type reaches its action, once", () => {
+  const { glue, calls } = glueHarness({
+    songs: { "midi:1": { id: "midi:1" } },
+    list: [{ id: "midi:1" }, { id: "midi:2" }],
+    settings: { "queue.maxPerGuest": 0 },
+  });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Rae" });
+  glue.applyCommand({ type: "remove", index: 0, id: "midi:1" });
+  glue.applyCommand({ type: "reorder", from: 0, to: 1, id: "midi:1" });
+  glue.applyCommand({ type: "react", emoji: "👏" });
+  glue.applyCommand({ type: "play" });
+  glue.applyCommand({ type: "pause" });
+  glue.applyCommand({ type: "next" });
+  glue.applyCommand({ type: "seek", position: 42 });
+  glue.applyCommand({ type: "volume", value: 1.5 });
+  assert.deepEqual(calls.map((c) => c[0]),
+    ["enqueue", "remove", "reorder", "react", "play", "pause", "next", "seek", "volume"]);
+  assert.equal(calls.find((c) => c[0] === "seek")[1], 42);
+  assert.equal(calls.find((c) => c[0] === "enqueue")[2], "Rae");
+});
+
+test("remoteGlue: a stale index, a junk seek and an unknown type all do nothing", () => {
+  const { glue, calls } = glueHarness({ list: [{ id: "midi:1" }], settings: {} });
+  glue.applyCommand({ type: "remove", index: 0, id: "midi:999" });   // the queue moved
+  glue.applyCommand({ type: "remove", index: 5 });
+  glue.applyCommand({ type: "reorder", from: 0, to: "x", id: "midi:1" });
+  glue.applyCommand({ type: "seek", position: "end" });
+  glue.applyCommand({ type: "volume", value: null });
+  glue.applyCommand({ type: "definitely-not-a-command" });
+  assert.deepEqual(calls, []);
+});
+
+test("remoteGlue: a guest setting is gated on BOTH the path and the value", () => {
+  const { glue, calls } = glueHarness({ settings: {} });
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1.5 });
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1e6 });   // clamped to 2
+  glue.applyCommand({ type: "setting", path: "mic.volume", value: 1 });       // NOT allowlisted
+  glue.applyCommand({ type: "setting", path: "__proto__", value: 1 });
+  glue.applyCommand({ type: "setting", path: 42, value: 1 });
+  glue.applyCommand({ type: "setting", path: "audio.key", value: "loud" });
+  assert.deepEqual(calls, [["setting", "audio.volume", 1.5], ["setting", "audio.volume", 2]]);
+});
+
+test("remoteGlue: the reservation cap refuses an over-quota guest with a visible reason", () => {
+  const { glue, calls } = glueHarness({
+    songs: { "midi:1": { id: "midi:1" } },
+    listBy: ["Rae", "Rae"],
+    settings: { "queue.maxPerGuest": 2 },
+  });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Rae" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "status", "the guest is told, rather than silently ignored");
+  assert.match(calls[0][1], /already has 2 songs reserved/);
+
+  // Someone else is unaffected, and the host ("") is never capped.
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "Mia" });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "" });
+  assert.deepEqual(calls.slice(1).map((c) => c[0]), ["enqueue", "enqueue"]);
+});
+
+test("remoteGlue: a YouTube song a phone asks for is reconstructed and registered", () => {
+  const { glue, calls } = glueHarness({ songs: {}, settings: {} });
+  glue.applyCommand({ type: "enqueue", id: "youtube:abc", kind: "youtube", videoId: "abc", name: "T", artist: "C", by: "Rae" });
+  const rec = calls[0][1];
+  assert.equal(calls[0][0], "enqueue");
+  assert.equal(rec.registered, true, "registered so it resolves after a reload");
+  assert.equal(rec.kind, "youtube");
+
+  // A song that resolves to nothing at all is dropped rather than queued as undefined.
+  const b = glueHarness({ songs: {}, settings: {} });
+  b.glue.applyCommand({ type: "enqueue", id: "midi:404", by: "Rae" });
+  assert.deepEqual(b.calls, []);
+});
+
+test("remoteGlue: an over-long nickname is truncated before it reaches the queue", () => {
+  const { glue, calls } = glueHarness({ songs: { "midi:1": { id: "midi:1" } }, settings: {} });
+  glue.applyCommand({ type: "enqueue", id: "midi:1", by: "x".repeat(200) });
+  assert.equal(calls[0][2].length, 24);
 });

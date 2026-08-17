@@ -33,7 +33,8 @@ import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js"
 import { createQueue } from "./queue.js";
 import { createSession } from "./session.js";
 import { createLibraryView } from "./library-view.js";
-import { createRemoteHost, pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
+import { createRemoteGlue } from "./remote-glue.js";
+import { createRemoteHost } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { collectAppData, restoreAppData, clearAppData } from "./store.js";
 
@@ -126,7 +127,10 @@ async function boot() {
     onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => recap.show(),
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
-  remoteHost = createRemoteHost({ getSnapshot: remoteSnapshot, applyCommand: applyRemoteCommand });
+  remoteHost = createRemoteHost({
+    getSnapshot: () => remoteGlue.snapshot(),
+    applyCommand: (cmd) => remoteGlue.applyCommand(cmd),
+  });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
 
   applyVisualSettings();
@@ -488,61 +492,52 @@ function advanceQueue() {
 
 // ---------------------------------------------------------------------------
 // Remote control (phones) — host side. The host stays the authoritative player;
-// remote-host.js POSTs remoteSnapshot() to serve.py and hands back guest COMMANDS
-// which applyRemoteCommand() applies through the SAME functions the local UI uses.
+// remote-host.js POSTs the snapshot to serve.py and hands back guest COMMANDS, which
+// remote-glue.js applies through the SAME functions the local UI uses.
 // See src/remote.html / src/js/remote.js (the phone) and §5.x in CLAUDE.md.
 // ---------------------------------------------------------------------------
-// The host-settings subset mirrored to phones AND the allowlist a guest may change.
-// A guest `setting` command with any other path is ignored — never settings.set() an
-// arbitrary path off the network. The paths AND their legal value ranges live together
-// in remote-host.js (REMOTE_SETTING_RANGES): allowlisting the path is not enough, since
-// the phone UI clamps client-side and a raw POST doesn't — see clampRemoteSetting.
-const REMOTE_SETTABLE = new Set(REMOTE_SETTABLE_PATHS);
-
-// Room code — OWNED BY THIS HOST BROWSER (generated once, kept in localStorage). Each host has
-// its own code; guests reach THIS host's room by it (baked into the QR). The server keys its
-// multi-room relay on the code. 6 chars, no ambiguous glyphs.
-const HOST_ROOM_KEY = "karaeoke.remote.host.v1";
-let hostRoom = null;
-function getHostRoom() {
-  if (hostRoom) return hostRoom;
-  try { hostRoom = localStorage.getItem(HOST_ROOM_KEY) || ""; } catch (_) { hostRoom = ""; }
-  if (!/^[A-Z0-9]{6}$/.test(hostRoom)) {
-    const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const buf = new Uint32Array(6);
-    (window.crypto || crypto).getRandomValues(buf);
-    hostRoom = Array.from(buf, (n) => A[n % A.length]).join("");
-    try { localStorage.setItem(HOST_ROOM_KEY, hostRoom); } catch (_) {}
-  }
-  return hostRoom;
-}
-
-// Render/refresh (or hide) the QR + URL + room code on the queue panel. The base URL is
-// auto-detected (settings override → the host page's own non-loopback origin → the server's
-// LAN IP); the host's room code is embedded so scanning auto-connects. Degrades quietly if the
-// QR lib 404'd (feature is opt-in anyway).
-let remoteLanUrl = null; // server-detected LAN base (fetched once, cached)
-async function refreshRemoteQr(on) {
-  const box = $("remote-qr");
-  if (!box) return;
-  if (!on) { box.classList.remove("show"); renderQr($("focus-qr"), ""); return; }
-  if (remoteLanUrl == null) {
-    try {
-      const d = await (await fetch("/api/remote/info")).json();
-      remoteLanUrl = (d && d.lanUrl) || "";
-    } catch (_) { remoteLanUrl = ""; }
-  }
-  const room = getHostRoom();
-  const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, remoteLanUrl);
-  const url = base ? `${base}/remote?room=${room}` : "";
-  const roomEl = $("remote-room"); if (roomEl) roomEl.textContent = room;
-  const link = $("remote-qr-url");
-  if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
-  renderQr($("remote-qr-code"), url);
-  renderQr($("focus-qr"), url); // same QR mirrored into the focus-mode overlay (CSS gates visibility)
-  positionFocusQr();
-  box.classList.add("show");
-}
+// The room code, the QR, the snapshot the phones mirror and the guest-command translation all
+// live in remote-glue.js. What stays here is only what writes the playback state — handed over
+// as `actions` — plus positionFocusQr, which measures this page's own layout.
+const remoteGlue = createRemoteGlue({
+  settings, catalog, queue, reactions, libraryView, durations,
+  // The one legitimate getter in the split: remote-host's interval calls snapshot() on its own
+  // schedule, so there is no caller here to pass the now-playing state in.
+  getNowPlaying: () => (current ? {
+    id: current.id,
+    name: current.name || "",
+    artist: current.artistName || "",
+    kind: current.kind,
+    code: current.code || "",
+    by: currentBy || "",
+    position: (media && media.currentTime) || 0,
+    duration: (media && media.duration) || 0,
+    paused: media ? media.paused : true,
+    // Live score, so the room can watch the number climb on their own phones. Null unless the
+    // song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
+    score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
+  } : null),
+  setStatus: (m) => setStatus(m),
+  positionFocusQr: () => positionFocusQr(),
+  actions: {
+    enqueue: (song, by) => enqueue(song, by),
+    removeFromQueue: (i) => removeFromQueue(i),
+    reorderQueue: (from, to) => reorderQueue(from, to),
+    play: () => remotePlay(),
+    pause: () => remotePause(),
+    next: () => skipCurrent(),
+    seek: (position) => {
+      // Clamped HERE: only app.js knows which engine is driving and how long the song is.
+      if (current && media.duration > 0) media.seek(Math.max(0, Math.min(media.duration, position)));
+    },
+    setVolume: (v) => setRemoteVolume(v),
+    applySetting: (path, v) => {
+      settings.set(path, v);           // → onSettingChanged fans it out
+      settingsUI.syncSettingsUI();     // refresh the ⚙ panel controls
+      syncTransportLabels();           // …and the bottom key/tempo/volume labels
+    },
+  },
+});
 
 // Focus-mode QR placement: overlay it on the RIGHT side of the melody guide, sized square to
 // the guide's height. The guide's top is dynamic (below the now-playing header), so we measure
@@ -565,122 +560,12 @@ function positionFocusQr() {
   qr.style.right = (s.right - g.right) + "px";           // right edge aligned to the guide's
 }
 
-// Draw a QR into `el` using the vendored qrcode-generator (window.qrcode). No-op if the
-// lib is missing or the URL is empty.
-function renderQr(el, text) {
-  if (!el) return;
-  el.innerHTML = "";
-  const qrcode = window.qrcode;
-  if (!text || typeof qrcode !== "function") return;
-  try {
-    const qr = qrcode(0, "M");        // type 0 = auto-fit the data, error-correction level M
-    qr.addData(text);
-    qr.make();
-    el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
-  } catch (e) { console.error("QR render failed:", e); }
-}
-
 function applyRemoteMode() {
   const on = !!settings.get("remote.enabled");
   document.body.classList.toggle("remote-on", on);
   if (!remoteHost) return;
   if (on) remoteHost.start(); else remoteHost.stop();
-  refreshRemoteQr(on); // render/refresh (or hide) the QR on the queue panel — see Stage 3
-}
-
-// Snapshot the host state for the phones: now-playing, the queue (with attribution),
-// and the mirrored settings subset. remote-host.js adds the ackSeq before POSTing.
-function remoteSnapshot() {
-  const now = current ? {
-    id: current.id,
-    name: current.name || "",
-    artist: current.artistName || "",
-    kind: current.kind,
-    code: current.code || "",
-    by: currentBy || "",
-    position: (media && media.currentTime) || 0,
-    duration: (media && media.duration) || 0,
-    paused: media ? media.paused : true,
-    // Live score, so the room can watch the number climb on their own phones. Null unless
-    // the song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
-    score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
-  } : null;
-  const q = queue.list.map((s, i) => ({
-    id: s.id, name: s.name || "", artist: s.artistName || "",
-    kind: s.kind, code: s.code || "", by: queue.listBy[i] || "",
-    dur: durations.get(s.id),   // learned length → the phone computes "how long until mine"
-  }));
-  const settingsSub = {};
-  for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
-  return { room: getHostRoom(), now, queue: q, settings: settingsSub };
-}
-
-// Resolve a song a phone asked to enqueue. Library songs resolve by id; a YouTube
-// result (not in the local catalog) is reconstructed from the command metadata and
-// registered so it resolves everywhere else (favorites/recent/queue) like a local one.
-function remoteResolveSong(c) {
-  const hit = catalog.getById(c.id);
-  if (hit) return hit;
-  if (c.kind === "youtube" && c.videoId) {
-    return libraryView.registerYoutube(Catalog.makeYoutubeRecord({
-      videoId: c.videoId, title: c.name, channelTitle: c.artist,
-    }));
-  }
-  return null;
-}
-
-// A guest computes a queue index from a snapshot that can already be up to ~2 s stale, so a
-// bare index may point at a DIFFERENT song by the time the command lands (the song auto-
-// advanced, or another guest removed one first). When the command carries the song's stable
-// id we require it to match, so the worst case becomes "nothing happened" instead of "the
-// wrong song vanished". Commands without an id (older phone build) still apply by index.
-// Apply one guest command (already validated server-side to a known type).
-function applyRemoteCommand(cmd) {
-  switch (cmd.type) {
-    case "enqueue": {
-      const by = String(cmd.by || "").slice(0, 24);
-      // Optional reservation cap — the digital form of "don't hog the mic". 0 = off.
-      const cap = +settings.get("queue.maxPerGuest") || 0;
-      if (cap > 0 && by && queue.countBy(by) >= cap) {
-        setStatus(`${by} already has ${cap} song${cap === 1 ? "" : "s"} reserved — wait for your turn.`);
-        break;
-      }
-      const song = remoteResolveSong(cmd);
-      if (song) enqueue(song, by);
-      break;
-    }
-    case "remove":
-      if (queue.matches(cmd.index, cmd.id)) removeFromQueue(cmd.index);
-      break;
-    case "reorder":
-      if (Number.isInteger(cmd.to) && queue.matches(cmd.from, cmd.id)) reorderQueue(cmd.from, cmd.to);
-      break;
-    case "react":
-      // Allowlisted, never free text: this is drawn on the host's TV from a stranger's phone.
-      reactions.handle(cmd.emoji);
-      break;
-    case "play":  remotePlay();  break;
-    case "pause": remotePause(); break;
-    case "next":  skipCurrent(); break;
-    case "seek":
-      if (current && media.duration > 0 && Number.isFinite(cmd.position))
-        media.seek(Math.max(0, Math.min(media.duration, cmd.position)));
-      break;
-    case "volume":
-      if (Number.isFinite(cmd.value)) setRemoteVolume(cmd.value);
-      break;
-    case "setting": {
-      // Two gates, not one: the PATH must be allowlisted and the VALUE must be in range.
-      // A raw POST is unclamped, and audio.volume goes straight to a GainNode.
-      if (typeof cmd.path !== "string" || !REMOTE_SETTABLE.has(cmd.path)) break;
-      const v = clampRemoteSetting(cmd.path, cmd.value);
-      if (v === undefined) break;             // wrong type / NaN / unknown path → ignore
-      settings.set(cmd.path, v);              // → onSettingChanged fans it out
-      settingsUI.syncSettingsUI();            // refresh the ⚙ panel controls
-      syncTransportLabels();                  // …and the bottom key/tempo/volume labels
-      break;
-    }
-  }
+  remoteGlue.refreshQr(on); // render/refresh (or hide) the QR on the queue panel
 }
 
 async function remotePlay() {
