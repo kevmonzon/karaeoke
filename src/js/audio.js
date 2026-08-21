@@ -30,6 +30,7 @@ export class AudioEngine extends MediaEngineBase {
     this.synth = null;
     this.seq = null;
     this.ready = false;
+    this._started = false;  // has the CURRENTLY loaded song been played? (see loadSong / get ended)
     this._transpose = 0;
     this._volume = 0.9;
     // Per-channel mixer state (MIDI mode). Defaults = "don't touch": CC7 stays
@@ -119,6 +120,11 @@ export class AudioEngine extends MediaEngineBase {
   loadSong(midiBuffer) {
     if (!this.ready) throw new Error("AudioEngine not initialised");
     this.seq.loadNewSongList([{ binary: midiBuffer }]);
+    // `isFinished` is NOT cleared by loadNewSongList — it keeps describing the PREVIOUS song
+    // until the new one is actually played. MEASURED: a freshly loaded song reported
+    // {ended:true, currentTime:1.55, duration:179.46}, which app.js read as "this song is over".
+    // `_started` is the missing half: the flag only means anything once we have started THIS song.
+    this._started = false;
     this.applyTranspose(this._transpose); // re-assert on the new song
     this.reassertChannelMix();            // re-apply any locked mixer channels on the new song
   }
@@ -126,6 +132,7 @@ export class AudioEngine extends MediaEngineBase {
   async play() {
     if (this.ctx.state === "suspended") await this.ctx.resume();
     this.seq.play();
+    this._started = true;   // from here on, `isFinished` describes the song we are playing
   }
   pause() { if (this.seq) this.seq.pause(); }
   /** The one engine that can legitimately not be ready: no Sequencer until init() has
@@ -136,6 +143,7 @@ export class AudioEngine extends MediaEngineBase {
     if (!this.seq) return;
     this.seq.pause();
     this.seq.currentTime = 0;
+    this._started = false;
   }
 
   seek(seconds) { if (this.seq) this.seq.currentTime = seconds; }
@@ -289,9 +297,11 @@ export class AudioEngine extends MediaEngineBase {
   get currentTime() { return this.seq ? this.seq.currentTime : 0; }
   get duration() { return this.seq ? this.seq.duration : 0; }
   get paused() { return this.seq ? this.seq.paused : true; }
-  // The Sequencer doesn't loop (loopCount:0) and, at natural end, leaves `paused`
-  // false with `currentTime` plateaued just short of `duration` — so a time-threshold
-  // end-check misses it. `isFinished` is the authoritative "song is over" flag.
-  get ended() { return this.seq ? !!this.seq.isFinished : false; }
+  // The Sequencer doesn't loop (loopCount:0). At natural end it pauses itself AND raises
+  // `isFinished`, with the clock landing exactly on `duration` (measured). `isFinished` is the
+  // "song is over" flag — but it is NOT cleared on load, so on its own it also reports true for
+  // a song that merely FOLLOWS a finished one. `_started` scopes it to the song we actually
+  // played; app.js pairs it with a clock-reached-duration check. See CLAUDE.md §5.14.
+  get ended() { return !!(this._started && this.seq && this.seq.isFinished); }
 }
 

@@ -1057,15 +1057,31 @@ function onMediaError(kind, why) {
 // reports via `ended`; video/audio reach duration cleanly; YouTube fires its own onEnded.
 function songHasEnded() {
   if (!current || !media) return false;
+  // A song that is still LOADING is judged by the PREVIOUS song's engine state. `playMidi`
+  // sets `current`/`media` before `await cachedArrayBuffer(url)`, and for that whole window the
+  // Sequencer still holds the last song's `isFinished` + its plateaued clock — so the MIDI
+  // branch below fired a spurious end on a song that had not started. clearStage() then wiped
+  // the lyrics that had just loaded (and np-title, which playMidi never re-sets), and the
+  // scheduled advanceQueue() ate the song. MEASURED: three songs burned in 1.5 s.
+  // `loadingSong` is exactly "a play* started but doesn't own the stage yet", for all four
+  // engines — and the 1 s hidden-tab watchdog inherits the guard because it lives in here.
+  if (loadingSong) return false;
   const t = media.currentTime, d = media.duration;
   // MIDI. MEASURED IN A BROWSER, and it contradicts what §5.14 used to claim: at the natural
   // end the Sequencer BOTH pauses itself AND raises `isFinished`, with the clock landing
   // exactly on duration (paused:true, ended:true, t === d). So a `!paused` guard vetoes the
   // precise event it was meant to catch, and the queue never advances — the song just sits
-  // there finished. Anchor on the CLOCK instead: a STALE `isFinished` left over from the
-  // previous song (the thing that guard was protecting against) cannot fool us, because the
-  // title-card hold parks the clock at 0 before the new song starts.
-  if (media === audio) return !!audio.ended && t > 0.5;
+  // there finished. Anchor on the CLOCK instead.
+  //
+  // CORRECTED AGAIN 2026-08-21: that fix then used `t > 0.5` as the stale-flag guard, on the
+  // belief that "the title-card hold parks the clock at 0". It does not.
+  // `t > 0.5` used to stand in for "this is not a stale flag", and it does not hold: the
+  // Sequencer keeps `isFinished` from the PREVIOUS song across loadNewSongList, and the
+  // title-card hold leaves ~1.5 s of auto-play residual on the new song's clock — so a
+  // just-loaded song read as finished. MEASURED: {ended:true, t:1.55, d:179.46}. Anchor on the
+  // clock reaching THIS song's duration, the same way every other engine does; `audio.ended`
+  // is now song-scoped too (audio.js `_started`), so both halves have to agree.
+  if (media === audio) return !!audio.ended && d > 0 && t >= d - 0.5;
   // Video/audio elements: `paused` here means the USER paused, so it still guards correctly.
   if (media.paused) return false;
   return d > 0 && t >= d - 0.15;
@@ -1460,6 +1476,11 @@ function clearStage() {
   $("seekbar").style.width = "0%";
   $("time-cur").textContent = "0:00"; $("time-dur").textContent = "0:00";
   $("title-card").classList.remove("show");
+  // A MIDI song held behind the title card starts from a timer. If the stage is cleared before
+  // that timer fires (queue drained, a skip, a failure), the timer still fires and calls
+  // audio.play() with `current` already null — the song plays on with no title and no lyrics,
+  // and nothing can end it because the rAF loop's `current && media` branch is skipped.
+  clearTimeout(playDelayTimer);
   document.body.classList.remove("video-mode"); // leave the clean video stage
   document.body.classList.remove("youtube-mode");
   document.body.classList.remove("audio-mode");
