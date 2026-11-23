@@ -296,8 +296,10 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
      them), so use 16px here to keep the intended gutter and clear the scrollbar on the right. */
   position: absolute; left: 16px; right: 16px; height: var(--row-h); /* library-ui reads --row-h too */
   /* Chrome scales with the display-size profile (--ui-scale) so the highlight box, gaps, icon column
-     and controls stay proportional to the scaled text — otherwise big TV text crams a tiny box. */
-  display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto auto;
+     and controls stay proportional to the scaled text — otherwise big TV text crams a tiny box.
+     --song-lead = the kind-icon column + the fixed number column (the phone rule narrows it). */
+  --song-lead: calc(30px * var(--ui-scale)) calc(56px * var(--ui-scale));
+  display: grid; grid-template-columns: var(--song-lead) 1fr auto auto;
   align-items: center; gap: calc(8px * var(--ui-scale));
   padding: calc(7px * var(--ui-scale)) calc(12px * var(--ui-scale));
   border-radius: var(--r-md); cursor: pointer;
@@ -310,6 +312,16 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 .song .meta { display: flex; flex-direction: column; min-width: 0; }
 .song .title { font-size: calc(14px * var(--ui-scale)); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Number column: the dial number in tabular figures (so titles line up down the list), with the
+   songbook chip under it. A close-match row gets one more track, for its "≈" before the ★. */
+.song.close-match { grid-template-columns: var(--song-lead) 1fr auto auto auto; }
+.song .num { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-width: 0; line-height: 1.2; }
+.song .code { color: var(--muted); font-size: var(--t-label); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.song .src-chip {
+  color: var(--muted); font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em; white-space: nowrap;
+  padding: 0 calc(var(--s-1) * var(--ui-scale)); border: 1px solid var(--border); border-radius: var(--r-pill);
+}
+.song .close-mark { color: var(--muted); font-size: var(--t-body); font-weight: 700; line-height: 1; }
 button.add {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   width: calc(28px * var(--ui-scale)); height: calc(28px * var(--ui-scale));
@@ -899,7 +911,8 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .search-clear { width: 24px; height: 24px; font-size: 12px; right: 8px; }
   .search-row .pill-btn { padding: 9px 14px; }
   button.add { width: 34px; height: 34px; font-size: 17px; }
-  .song { grid-template-columns: 32px 1fr auto auto; }
+  .song { --song-lead: 32px calc(48px * var(--ui-scale)); }   /* number only: the chip is hidden here */
+  .song .src-chip { display: none; }   /* a phone row has no room for it beside ≈ ★ ＋ */
   button.fav { width: 34px; height: 34px; font-size: 19px; }
 
   .now-playing { gap: 10px; }

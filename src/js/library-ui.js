@@ -37,6 +37,8 @@ const kindSpan = (s) => {
   const k = kindIcon(s.kind);
   return `<span class="kind ${k.cls}" title="${k.title}">${k.glyph}</span>`;
 };
+// A dial number is shown whenever the song has one — 0 included; YouTube rows have "".
+const hasCode = (s) => s.code !== "" && s.code != null;
 
 /**
  * @param {object} cb
@@ -45,9 +47,10 @@ const kindSpan = (s) => {
  * @param {(index)=>void} cb.onRemoveFromQueue  remove queue item at index (✕)
  * @param {(song)=>void}  cb.onToggleFavorite   star / un-star a song (★)
  * @param {(song)=>boolean} cb.isFavorite       is this song currently starred?
- * @returns {{ renderList, renderQueue, getSelectedSong, setNowPlaying }}
+ * @param {()=>boolean}   [cb.showSource]       LIVE: show the songbook chip (library.showSource)
+ * @returns {{ renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
   // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
   // by the `--vlist-h` CSS var (set in renderList). That keeps the <ul>'s only real children the
@@ -57,6 +60,8 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   let selectedSong = null;
   let nowPlaying = null;
   let emptyState = null;   // {title, hint} shown when `songs` is empty — see renderWindow
+  let closeSet = null;     // Set of the rows that are close matches (marked "≈"), or null
+  let chips = true;        // library.showSource, read once per window render
   // Roving tabindex: exactly ONE row is a tab stop, and the arrow keys move which. Without
   // this the 65k-row list was unreachable by keyboard entirely — you could Tab to the search
   // box and every button around it, but never to a song, which on a ten-foot app driven from
@@ -77,9 +82,12 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   viewport.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", () => { measureRowH(); renderWindow(); });
 
+  // A row: kind icon · number (the songbook chip under it) · title / artist · [≈] · ★ · ＋.
+  // The number column is a fixed width so titles line up; the chip shares it, costing no width.
   function makeRow(s, i, h) {
+    const close = !!closeSet && closeSet.has(s);
     const li = document.createElement("li");
-    li.className = "song" +
+    li.className = "song" + (close ? " close-match" : "") +
       (selectedSong && s.id === selectedSong.id ? " selected" : "") +
       (nowPlaying && s.id === nowPlaying.id ? " playing" : "");
     li.style.top = `${i * h}px`;
@@ -87,9 +95,29 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     li.dataset.index = i;
     li.innerHTML =
       kindSpan(s) +
+      `<span class="num"><span class="code"></span></span>` +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
+    li.querySelector(".code").textContent = hasCode(s) ? String(s.code) : "";
+    if (chips && s.source) {
+      const chip = document.createElement("span");
+      chip.className = "src-chip";
+      chip.dataset.src = s.source;
+      chip.textContent = s.source;
+      chip.title = `Songbook: ${s.source}`;
+      li.querySelector(".num").appendChild(chip);
+    }
     li.querySelector(".title").textContent = s.name || "(untitled)";
     li.querySelector(".artist").textContent = s.artistName || "";
+    if (close) {
+      // A glyph, not a colour: role="img" is what lets the aria-label name it (§5.19's QR precedent).
+      const mark = document.createElement("span");
+      mark.className = "close-mark";
+      mark.setAttribute("role", "img");
+      mark.setAttribute("aria-label", "close match");
+      mark.title = "Close match";
+      mark.textContent = "≈";
+      li.appendChild(mark);
+    }
     const fav = isFavorite && isFavorite(s);
     const favBtn = document.createElement("button");
     favBtn.className = "fav" + (fav ? " on" : "");
@@ -129,6 +157,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       viewport.replaceChildren(li);
       return;
     }
+    chips = !!showSource();
     const vh = viewport.clientHeight || 1;
     const top = viewport.scrollTop;
     const h = rowH();
@@ -203,10 +232,14 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
   }
 
-  /** @param {{title:string, hint?:string}} [empty] what to say when the list comes back empty */
-  function renderList(newSongs, empty) {
+  /**
+   * @param {{title:string, hint?:string}} [empty] what to say when the list comes back empty
+   * @param {{closeSet?: Set<object>}} [opts]  closeSet: the rows to mark "≈" (close matches)
+   */
+  function renderList(newSongs, empty, { closeSet: marks = null } = {}) {
     songs = newSongs;
     emptyState = empty || null;
+    closeSet = marks;
     focusIndex = 0;          // a new result set starts at the top
     pendingFocus = false;    // …but never steals focus from whatever the user is typing in
     setScrollHeight();

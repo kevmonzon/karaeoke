@@ -33,7 +33,8 @@ import { createRecap } from "./recap.js";
 import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
 import { createQueue } from "./queue.js";
 import { createSession } from "./session.js";
-import { createLibraryView } from "./library-view.js";
+import { createLibraryView, enterDecision } from "./library-view.js";
+import { createSearchClient } from "./search-client.js";
 import { createRemoteGlue } from "./remote-glue.js";
 import { createRemoteHost } from "./remote-host.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
@@ -50,6 +51,9 @@ const npIcon = (kind) => NP_ICON[kind] || "🎵";
 const settings = new Settings();
 const catalog = new Catalog();
 const session = createSession({ catalog });
+// The close-match (typo) index: a module Worker, or a sliced main-thread build without one.
+// Built from the catalogue once it loads (buildSearchIndex); until then search is exact-only.
+const searchClient = createSearchClient();
 // The list's current VIEW (search / Recent / Favorites / YouTube append). It needs library-ui,
 // which is built at boot, so it reaches it through a getter rather than a captured reference.
 const libraryView = createLibraryView({
@@ -61,6 +65,9 @@ const libraryView = createLibraryView({
   getRecentIds: () => session.recent,
   getRecentSongs: () => session.recentSongs(),
   warmYoutube: () => { if (youtube) youtube.warm(); },
+  searchClient,
+  getFuzzy: () => settings.get("search.fuzzy"),
+  fuzzyBelow: () => settings.get("search.fuzzyBelow"),
 });
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
@@ -128,6 +135,7 @@ async function boot() {
   lib = createLibraryUI({
     onPlay: playNow, onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: (s) => libraryView.toggleFavorite(s), isFavorite: (s) => libraryView.isFavorite(s),
+    showSource: () => settings.get("library.showSource"),
   });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
@@ -163,6 +171,9 @@ async function boot() {
     libraryView.loadFavorites();    // restore starred songs (resolved by id) before the first render
     libraryView.renderAll();
     loadSession(); // restore queue + recently-played (no auto-play)
+    // Its own task, not awaited: the hand-off copies every title + artist, and should not
+    // lengthen the task that paints the list. Close matches start once the index is ready.
+    setTimeout(buildSearchIndex, 0);
   } catch (e) {
     setStatus("Failed to load catalog.json — is the server running from the project root?");
     console.error(e);
@@ -252,6 +263,9 @@ function onSettingChanged(path) {
     // reflect the new state in the current search (append or drop YouTube rows)
     if (path === "youtube.enabled" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
   }
+  // Close matches on/off: redo the current search so the list says what the setting now says.
+  if (path === "search.fuzzy" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
+  if (path === "*" || path === "library.showSource") { if (lib) lib.refresh(); } // songbook chip on/off
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   // Only the panel-collapse booleans drive applyUiCollapse — not ui.fontSize / ui.theme
@@ -1209,13 +1223,13 @@ function wireUI() {
   const search = $("search");
   const clearBtn = $("search-clear");
   const toggleClear = () => clearBtn.classList.toggle("show", !!search.value);
-  let deb;
+  let deb = null;   // the pending debounced render (null once it has run) — Enter flushes it
   search.oninput = () => {
     libraryView.leaveSpecialViews();   // typing leaves the Recent / Favorites views
     toggleClear();
     const q = search.value;
     clearTimeout(deb);
-    deb = setTimeout(() => libraryView.renderSearchResults(q, null), 120); // instant local (drops any YouTube rows)
+    deb = setTimeout(() => { deb = null; libraryView.renderSearchResults(q, null); }, 120); // instant local (drops any YouTube rows)
     libraryView.scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
   clearBtn.onclick = () => {
@@ -1286,8 +1300,19 @@ function wireUI() {
   });
   search.onkeydown = (e) => {
     if (e.key === "Enter") {
-      const hits = catalog.search(search.value, 1);
-      if (hits.length) playNow(hits[0]);
+      // A key typed inside the 120 ms debounce has not rendered yet. Render it now, or the top
+      // hit would belong to the query one keystroke earlier.
+      if (deb) { clearTimeout(deb); deb = null; libraryView.renderSearchResults(search.value, null); }
+      const song = libraryView.topHit();
+      if (!song) return;
+      // search.enterAction — "auto" reserves while a song is playing or loading, plays when idle.
+      if (enterDecision(settings.get("search.enterAction"), !!(current || loadingSong)) === "reserve") {
+        enqueue(song);
+        setStatus(`Reserved: ${song.name || song.code || "a song"}`);
+      } else {
+        playNow(song);
+      }
+      if (search.value) clearBtn.onclick();   // clear the field and show the whole library again
     } else if (e.key === "Escape") {
       clearBtn.onclick();
     }
@@ -1531,9 +1556,18 @@ async function onRebuild() {
   const res = await (await fetch("/api/rebuild-catalog", { method: "POST" })).json();
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
+  buildSearchIndex();   // BEFORE the re-render: no close query may reach the old list's index
   libraryView.renderSearchResults($("search").value, null);
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };
+}
+
+// The close-match index over every title + artist (search-client.js). Never awaited: the
+// number and exact tiers do not need it, and close matches simply start once it is ready.
+function buildSearchIndex() {
+  const songs = catalog.songs;
+  searchClient.build(songs.map((s) => s.name || ""), songs.map((s) => s.artistName || ""))
+    .catch((e) => console.error("Close-match index failed to build:", e));
 }
 
 // ---------------------------------------------------------------------------

@@ -108,6 +108,23 @@ export const DEFAULT_CONFIG = {
   //           The whole player is designed for both; "auto" tracks prefers-color-scheme live.
   ui: { library: true, queue: true, playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto" },
 
+  // Song search. A result is one list of up to three tiers: a typed NUMBER (every songbook's
+  // song with exactly that number, then numbers that start with it), the EXACT matches (every
+  // word found, as always), then CLOSE matches — words a typo or two away, marked "≈". Close
+  // matches are looked for only while the exact list is short, and always come after it.
+  search: {
+    fuzzy: true,         // also list close matches (typos) after the exact ones
+    fuzzyBelow: 20,      // …only while the exact list has fewer rows than this (config only)
+    // Enter in the search box takes the top row: "auto" = reserve it while a song is playing
+    // or loading, play it at once when the stage is idle · "reserve" = always queue it ·
+    // "now" = always play it at once (interrupts the current song, as before).
+    enterAction: "auto",
+  },
+
+  // The song list. showSource = the songbook (SH, PLATKAR, TJMEDIA, MIDI) under each song's
+  // number. Songs from a catalogue built before songbooks existed have none to show.
+  library: { showSource: true },
+
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).
   // It still only queries YouTube when the local library comes up short (< autoThreshold hits),

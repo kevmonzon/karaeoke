@@ -106,6 +106,10 @@ const SETTINGS_SCHEMA = [
   { id: "set-youtube-debounce", path: "youtube.debounceMs", type: "range", fmt: (v) => `${(+v / 1000).toFixed(1)} s` },
   { id: "set-youtube-max", path: "youtube.maxResults", type: "range", fmt: (v) => `${v}` },
   { id: "set-youtube-keyword", path: "youtube.keyword", type: "text" },
+  // library search: close matches (typos), what Enter does, the songbook chip on each row
+  { id: "set-search-fuzzy", path: "search.fuzzy", type: "check" },
+  { id: "set-enter-action", path: "search.enterAction", type: "select" },
+  { id: "set-show-source", path: "library.showSource", type: "check" },
   // remote control (phones) — QR on the queue panel opens /remote
   { id: "set-remote", path: "remote.enabled", type: "check" },
   { id: "set-remote-url", path: "remote.baseUrl", type: "text" },
@@ -149,6 +153,9 @@ const SEARCH_KEYWORDS = {
   "set-mic-pitch": "shift transpose octave",
   "set-autotune": "pitch correction tune snap",
   "set-youtube": "online stream byoc",
+  "set-search-fuzzy": "fuzzy typo spelling misspelled approximate similar search",
+  "set-enter-action": "enter key return reserve queue play now search",
+  "set-show-source": "songbook source sh platkar tjmedia midi chip number",
   "set-remote": "phone qr code queue guest party mobile control",
   "set-remote-url": "phone qr url tunnel address host",
   "mic-enable": "microphone singing voice",
