@@ -39,6 +39,17 @@ const SETTINGS_SCHEMA = [
   { id: "set-width", path: "lyrics.lineWidthPct", type: "range", fmt: (v) => `${v}%` },
   { id: "set-font", path: "lyrics.fontScale", type: "range", fmt: (v) => `${(+v).toFixed(2)}×` },
   { id: "set-tc", path: "titleCard.seconds", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
+  // lyric style + the stage style's look (lyrics-stage.js)
+  { id: "set-lyric-style", path: "lyrics.style", type: "select" },
+  { id: "set-stage-rows", path: "lyrics.stage.rows", type: "select" },
+  { id: "set-stage-align", path: "lyrics.stage.align", type: "select" },
+  { id: "set-stage-anim", path: "lyrics.stage.animation", type: "select" },
+  { id: "set-stage-color", path: "lyrics.stage.color", type: "text" },   // <input type=color>: a string, on change
+  { id: "set-stage-random", path: "lyrics.stage.randomColor", type: "check" },
+  { id: "set-stage-outline", path: "lyrics.stage.outline", type: "range", fmt: (v) => `${(+v).toFixed(1).replace(/\.0$/, "")}` },
+  { id: "set-stage-shadow", path: "lyrics.stage.shadow", type: "check" },
+  { id: "set-stage-countdown", path: "lyrics.stage.countdown", type: "check" },
+  { id: "set-stage-interlude", path: "lyrics.stage.interlude", type: "check" },
   // midi mode (channel mixer band)
   { id: "set-midimode", path: "midiMode.enabled", type: "check" },
   // key detection
@@ -111,6 +122,15 @@ const SEARCH_KEYWORDS = {
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",
+  "set-lyric-style": "videoke karaoke stage scroll two rows look",
+  "set-stage-rows": "lines portrait four two",
+  "set-stage-align": "left right split center position",
+  "set-stage-anim": "animation transition fade flip bounce wipe crossfade",
+  "set-stage-color": "highlight sung wipe colour color blue",
+  "set-stage-random": "random colour color highlight",
+  "set-stage-outline": "stroke border thickness",
+  "set-stage-countdown": "count in countdown 4 3 2 1 go dots intro",
+  "set-stage-interlude": "instrumental break interlude gap",
   "set-midimode": "channel mixer volume mute solo vu levels",
   "set-key-auto": "transpose signature",
   "set-key-badge": "transpose signature",

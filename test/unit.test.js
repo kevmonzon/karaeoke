@@ -11,7 +11,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { snapNote, detectKey, keyName, extractMelody } from "../src/js/melody.js";
-import { parseMidi, makeTickToSeconds, buildLines } from "../src/js/lyrics.js";
+import { parseMidi, makeTickToSeconds, buildLines, buildLyrics } from "../src/js/lyrics.js";
+import {
+  STAGE, makeBeatAt, prepareStageLines, buildCountdowns, countdownAt, makeStagePlan, pageAt,
+  wipeWidth, wrapRows, alignX, animFrame, easeInOut,
+} from "../src/js/lyric-pager.js";
 import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuffix } from "../src/js/chords.js";
 import { Catalog } from "../src/js/catalog.js";
 import { channelInfo } from "../src/js/midi-mixer.js";
@@ -1752,4 +1756,228 @@ test("remoteGlue: an over-long nickname is truncated before it reaches the queue
   const { glue, calls } = glueHarness({ songs: { "midi:1": { id: "midi:1" } }, settings: {} });
   glue.applyCommand({ type: "enqueue", id: "midi:1", by: "x".repeat(200) });
   assert.equal(calls[0][2].length, 24);
+});
+
+// --- count-in cues + singer tags in the shared lyric parser (lyrics.js) ------------
+test("buildLyrics: '#' count-in cues are timing, not text, and don't drag the line start early", () => {
+  const t2s = (tick) => tick / 1000;
+  const events = [
+    { tick: 1000, type: 0x05, text: "/" },
+    ...[1000, 1500, 2000, 2500, 3000].map((tick) => ({ tick, type: 0x05, text: "#" })),
+    { tick: 3500, type: 0x05, text: "Bar" },
+    { tick: 4000, type: 0x05, text: "ce" },
+    { tick: 4500, type: 0x05, text: "lo" },
+    { tick: 5000, type: 0x05, text: "na" },
+  ];
+  const { lines, cues } = buildLyrics(events, t2s);
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].syllables.map((s) => s.text).join(""), "Barcelona");
+  assert.equal(lines[0].start, 3.5);                 // was 1.0 — five beats early — with the '#'s as text
+  assert.deepEqual(cues, [1, 1.5, 2, 2.5, 3]);
+  assert.deepEqual(buildLines(events, t2s), lines);  // the old entry point gets the same fix
+});
+
+test("buildLyrics: a line break riding on a '#' cue (either side) still breaks the line", () => {
+  const t2s = (tick) => tick / 1000;
+  const { lines, cues } = buildLyrics([
+    { tick: 0, type: 0x05, text: "one" },
+    { tick: 1000, type: 0x05, text: "#/" },
+    { tick: 2000, type: 0x05, text: "two" },
+    { tick: 3000, type: 0x05, text: "/#" },
+    { tick: 4000, type: 0x05, text: "three" },
+  ], t2s);
+  assert.deepEqual(lines.map((l) => l.syllables.map((s) => s.text).join("")), ["one", "two", "three"]);
+  assert.deepEqual(cues, [1, 3]);
+});
+
+test("buildLyrics: @m/@w/@c and M:/F: tags set the singer; KAR @-metadata is still skipped", () => {
+  const t2s = (tick) => tick / 1000;
+  const { lines } = buildLyrics([
+    { tick: 0, type: 0x05, text: "@TTitle of the song" },   // KAR title tag — metadata, not a singer
+    { tick: 0, type: 0x05, text: "@LENG" },
+    { tick: 100, type: 0x05, text: "@m" },
+    { tick: 200, type: 0x05, text: "He " },
+    { tick: 300, type: 0x05, text: "sings" },
+    { tick: 400, type: 0x05, text: "/F: She " },
+    { tick: 500, type: 0x05, text: "sings" },
+    { tick: 600, type: 0x05, text: "/@c Both" },
+  ], t2s);
+  assert.deepEqual(lines.map((l) => l.singer), ["m", "w", "c"]);
+  assert.deepEqual(lines.map((l) => l.syllables.map((s) => s.text).join("")), ["He sings", "She sings", "Both"]);
+});
+
+// --- lyric-pager.js: the stage view's timing + layout rules ------------------------
+const L = (pairs, singer = "") => ({ singer, syllables: pairs.map(([time, text]) => ({ time, text })) });
+
+test("prepareStageLines: (backing) syllables lose their brackets and are flagged; a bracket closes at line end", () => {
+  const [a, b] = prepareStageLines([
+    L([[0, "I "], [0.5, "(oh "], [1, "yeah) "], [1.5, "go"]]),
+    L([[2, "(never "], [2.5, "closed"]]),
+    L([[3, "plain"]]),
+  ]);
+  assert.deepEqual(a.syllables.map((s) => [s.text, s.paren]), [["I ", false], ["oh ", true], ["yeah ", true], ["go", false]]);
+  assert.deepEqual(b.syllables.map((s) => s.paren), [true, true]);
+  const c = prepareStageLines([L([[2, "(never "], [2.5, "closed"]]), L([[3, "plain"]])])[1];
+  assert.equal(c.syllables[0].paren, false);
+});
+
+test("prepareStageLines: a syllable ends at the next one, a >4-beat gap is capped at 2 beats, the last gets 1 s", () => {
+  const beat = () => 0.5;
+  const [a, b] = prepareStageLines([L([[1, "Hel"], [1.5, "lo"]]), L([[20, "after"]])], beat);
+  assert.equal(a.syllables[0].end, 1.5);
+  assert.equal(a.syllables[1].end, 2.5);   // 18.5 s to the next syllable > 4 beats → 2 beats
+  assert.equal(a.end, 2.5);
+  assert.equal(b.syllables[0].end, 20 + STAGE.LAST_SYLLABLE);
+});
+
+test("prepareStageLines: the singer marker shows when the singer changes or after a 5 s gap", () => {
+  const lines = prepareStageLines([
+    L([[0, "a"]], "m"), L([[1.2, "b"]], "m"), L([[2.4, "c"]], "w"), L([[20, "d"]], "w"), L([[21.2, "e"]], ""),
+  ]);
+  assert.deepEqual(lines.map((l) => l.showSinger), [true, false, true, true, false]);
+});
+
+test("makeBeatAt: seconds per beat follow the tempo map", () => {
+  const beatAt = makeBeatAt([{ tick: 0, usPerQuarter: 500000 }, { tick: 960, usPerQuarter: 1000000 }], (tick) => tick / 480 * 0.5);
+  assert.equal(beatAt(0.5), 0.5);
+  assert.equal(beatAt(1.5), 1);
+  assert.equal(makeBeatAt([], () => 0)(3), STAGE.DEFAULT_BEAT);
+});
+
+// A small song: three close lines, a 14 s break, a final line. 120 bpm.
+function stageSong() {
+  const lines = prepareStageLines([
+    L([[1, "Hel"], [1.5, "lo "], [2, "world"]]),
+    L([[3, "Sec"], [3.5, "ond"]]),
+    L([[4.5, "Third "], [5, "line"]]),
+    L([[20, "Af"], [20.5, "ter"]]),
+  ], () => 0.5);
+  return makeStagePlan(lines, buildCountdowns(lines, [], () => 0.5));
+}
+
+test("buildCountdowns: first line after 3 s and any line >8 s after the previous END get four beats", () => {
+  const plan = stageSong();
+  assert.deepEqual(plan.countdowns.map((c) => c.line), [3]);           // line 0 starts at 1 s: no count-in
+  assert.deepEqual(plan.countdowns[0].beats, [18, 18.5, 19, 19.5]);    // ends one beat before the line
+  const late = prepareStageLines([L([[6, "late"]])]);
+  assert.deepEqual(buildCountdowns(late)[0].beats, [4, 4.5, 5, 5.5]);
+  // a gap of exactly 8 s from the previous line's END is not "longer than 8 s"
+  const edge = prepareStageLines([L([[0, "a"]]), L([[9, "b"]])]);     // a ends at 1.0, b starts at 9.0
+  assert.equal(buildCountdowns(edge).length, 0);
+});
+
+test("buildCountdowns: the file's own '#' cues win, attach to the next line, and count down from 5", () => {
+  const lines = prepareStageLines([L([[12.5, "Bar"], [13, "ce"]])]);
+  const [cd] = buildCountdowns(lines, [10, 10.5, 11, 11.5, 12]);
+  assert.deepEqual(cd.beats, [10, 10.5, 11, 11.5, 12]);
+  assert.equal(countdownAt(cd, 10.1).count, 5);
+  assert.equal(countdownAt(cd, 12.2).count, 1);
+});
+
+test("countdownAt: 4-3-2-1 on the beats, then GO! for one beat, then nothing", () => {
+  const cd = stageSong().countdowns[0];
+  assert.equal(countdownAt(cd, 17.9), null);
+  assert.deepEqual(countdownAt(cd, 18), { count: 4, phase: 0 });
+  assert.equal(countdownAt(cd, 18.25).phase, 0.5);
+  assert.equal(countdownAt(cd, 19.6).count, 1);
+  assert.equal(countdownAt(cd, 20.1).count, 0);   // GO!
+  assert.equal(countdownAt(cd, 20.6), null);
+});
+
+const rowsAt = (plan, t, rows = 2) => pageAt(plan, t, rows).slots.map((s) => (s ? `${s.index}:${s.state}` : "-"));
+
+test("pageAt: the first line takes the top row with the next one previewed below", () => {
+  const plan = stageSong();
+  assert.deepEqual(rowsAt(plan, 0.5), ["0:1", "1:0"]);
+  assert.equal(pageAt(plan, 0.5).intro, true);
+  assert.deepEqual(rowsAt(plan, 1.2), ["0:1", "1:0"]);
+});
+
+test("pageAt: rows take turns, and the sung line stays until the new one passes its 2nd syllable", () => {
+  const plan = stageSong();
+  assert.deepEqual(rowsAt(plan, 3.2), ["0:2", "1:1"]);   // line 1 sings in the bottom row; line 0 stays, sung
+  assert.deepEqual(rowsAt(plan, 3.6), ["2:0", "1:1"]);   // past its 2nd syllable → preview line 2 on top
+  assert.deepEqual(rowsAt(plan, 4.6), ["2:1", "1:2"]);
+});
+
+test("pageAt: before a count-in the last line lingers 0.6 s, then the rows blank for the break", () => {
+  const plan = stageSong();
+  assert.deepEqual(rowsAt(plan, 5.2), ["2:1", "1:2"]);   // next line is behind a count-in → keep the previous
+  assert.deepEqual(rowsAt(plan, 6.5), ["2:2", "1:2"]);   // line 2 ended at 6.0; lingering
+  const gap = pageAt(plan, 6.7);
+  assert.equal(gap.interlude, true);
+  assert.deepEqual(gap.slots, [null, null]);
+});
+
+test("pageAt: the line after a count-in restarts at the TOP row, with the count running", () => {
+  const plan = stageSong();
+  const p = pageAt(plan, 18.2);
+  assert.deepEqual(rowsAt(plan, 18.2), ["3:1", "-"]);     // by turns it would be the bottom row
+  assert.deepEqual(p.countdown, { count: 4, phase: p.countdown.phase });
+  assert.equal(pageAt(plan, 20.1).countdown.count, 0);    // GO!
+});
+
+test("pageAt: everything clears 0.5 s after the last line ends", () => {
+  const plan = stageSong();                                // last line ends at 21.5
+  assert.deepEqual(rowsAt(plan, 21.9), ["3:2", "-"]);
+  assert.deepEqual(rowsAt(plan, 22.0), ["-", "-"]);
+});
+
+test("pageAt: four rows are a fixed ring — current, two previews, and the sung line until the 2nd syllable", () => {
+  const lines = prepareStageLines([0, 2, 4, 6, 8, 10].map((t) => L([[t, "a"], [t + 0.5, "b"]])));
+  const plan = makeStagePlan(lines, buildCountdowns(lines));
+  assert.deepEqual(rowsAt(plan, 2.2, 4), ["0:2", "1:1", "2:0", "3:0"]);
+  assert.deepEqual(rowsAt(plan, 2.6, 4), ["4:0", "1:1", "2:0", "3:0"]);
+  assert.deepEqual(rowsAt(plan, 4.6, 4), ["4:0", "5:0", "2:1", "3:0"]);
+});
+
+test("pageAt: a seek lands on the same rows a straight play-through would (paging is stateless)", () => {
+  const plan = stageSong();
+  const straight = [0.5, 1.2, 3.2, 3.6, 4.6].map((t) => rowsAt(plan, t)).pop();
+  assert.deepEqual(rowsAt(plan, 4.6), straight);
+});
+
+test("wipeWidth: linear inside a syllable, still in the gaps, whole syllables when not smooth", () => {
+  const syl = [{ time: 0, end: 1, text: "ab" }, { time: 2, end: 3, text: "cd" }];
+  const w = [100, 50];
+  assert.equal(wipeWidth(syl, w, 0), 0);
+  assert.equal(wipeWidth(syl, w, 0.5), 50);
+  assert.equal(wipeWidth(syl, w, 1.5), 100);              // gap: holds
+  assert.equal(wipeWidth(syl, w, 2.5), 125);
+  assert.equal(wipeWidth(syl, w, 9), 150);
+  assert.equal(wipeWidth(syl, w, 0.5, false), 100);
+});
+
+test("wrapRows: wraps greedily at word boundaries and never splits a word", () => {
+  const syl = ["Hel", "lo ", "won", "der", "ful ", "world"].map((text) => ({ text }));
+  const w = [30, 30, 30, 30, 30, 50];
+  assert.deepEqual(wrapRows(syl, w, 200), [{ from: 0, to: 6, width: 200 }]);
+  assert.deepEqual(wrapRows(syl, w, 150).map((r) => [r.from, r.to]), [[0, 5], [5, 6]]);
+  assert.deepEqual(wrapRows(syl, w, 100).map((r) => [r.from, r.to]), [[0, 2], [2, 5], [5, 6]]);
+  assert.deepEqual(wrapRows(syl, w, 10).map((r) => [r.from, r.to]), [[0, 2], [2, 5], [5, 6]]);  // too narrow: one word per row
+  assert.equal(wrapRows(syl.slice(0, 2), w, 200, 40)[0].width, 100);                            // the marker counts on row 1
+});
+
+test("alignX: center, left-right split and close split", () => {
+  assert.equal(alignX(200, 1000, "left", "center", 40), 400);
+  assert.equal(alignX(200, 1000, "left", "split", 40), 40);
+  assert.equal(alignX(200, 1000, "right", "split", 40), 760);
+  assert.equal(alignX(200, 1000, "left", "close", 40), 300);
+  assert.equal(alignX(200, 1000, "right", "close", 40), 500);
+  assert.equal(alignX(900, 1000, "right", "close", 40), 60);   // never past the margin
+});
+
+test("animFrame: the six line-change animations", () => {
+  assert.equal(easeInOut(0), 0);
+  assert.equal(easeInOut(1), 1);
+  assert.deepEqual(animFrame("none", 0.3).new, { alpha: 1, scaleY: 1, reveal: 1 });
+  const cf = animFrame("crossfade", 0.5);
+  assert.ok(Math.abs(cf.old.alpha + cf.new.alpha - 1) < 1e-9);
+  assert.equal(animFrame("fade", 0.2).old, null);
+  assert.ok(animFrame("wipe", 0.5).new.reveal > 0.4 && animFrame("wipe", 0.5).new.reveal < 0.6);
+  assert.equal(animFrame("flip", 0.25).new, null);                // first half: the old line folds away
+  assert.equal(animFrame("flip", 0.25).old.scaleY, 0.5);
+  const peak = Math.max(...[0.2, 0.25, 0.29, 0.33].map((p) => animFrame("bounce", p).new.scaleY));
+  assert.ok(peak > 1.2, `bounce overshoots (${peak})`);
+  assert.ok(Math.abs(animFrame("bounce", 1).new.scaleY - 1) < 1e-9);
 });

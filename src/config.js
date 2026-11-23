@@ -43,6 +43,24 @@ export const DEFAULT_CONFIG = {
 
     // Multiplier on the lyric font size (0.6–1.8).
     fontScale: 1.0,
+
+    // Lyric style: "stage" = the videoke look — two fixed rows that take turns, outlined
+    // text, a hard-edged wipe and a 4-3-2-1 count-in (lyrics-stage.js); "scroll" = the
+    // smooth-scrolling column (lineCount / mergeLines / lineWidthPct apply to it only).
+    style: "stage",
+
+    // The stage style's look. Its defaults reproduce the commercial videoke app's.
+    stage: {
+      rows: "auto",       // "auto" (2 rows; 4 when the screen is portrait) | "2" | "4"
+      align: "center",    // "center" | "split" (top row left, bottom right) | "close" (split, pulled in)
+      animation: "none",  // line change: "none" | "fade" | "wipe" | "crossfade" | "flip" | "bounce"
+      color: "#0000ff",   // sung-text colour (it gets a white outline; unsung text is white, outlined black)
+      randomColor: false, // pick a highlight colour per song from a 20-colour palette instead
+      outline: 6,         // outline thickness (0–12, relative to the font)
+      shadow: true,       // drop shadow under the outline
+      countdown: true,    // 4-3-2-1-GO before the first line and after breaks longer than 8 s
+      interlude: true,    // "♪ Instrumental" pill while the rows are blank during a break
+    },
   },
 
   audio: {

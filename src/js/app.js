@@ -17,6 +17,7 @@ import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
 import { AudioFileEngine } from "./audiofile.js";
 import { parseMidi, LyricsEngine, makeTickToSeconds } from "./lyrics.js";
+import { StageLyricsEngine, LyricsSwitch } from "./lyrics-stage.js";
 import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
 import { ChordEngine } from "./chords.js";
 import { Settings } from "./settings.js";
@@ -101,11 +102,17 @@ async function boot() {
   document.body.classList.add("booting"); // hairline sweep under the topbar until the catalog lands
   purgeStaleCaches(); // drop the old service-worker cache; keep our asset cache
 
-  lyrics = new LyricsEngine($("lyrics"), {
-    lineCount: settings.get("lyrics.lineCount"),
-    smooth: settings.get("lyrics.smooth"),
-    mergeLines: settings.get("lyrics.mergeLines"),
-  });
+  // One lyric surface, two styles (lyrics.style): the smooth-scrolling column, or the
+  // fixed-row videoke "stage" (lyrics-stage.js). LyricsSwitch keeps both loaded.
+  lyrics = new LyricsSwitch(
+    new LyricsEngine($("lyrics"), {
+      lineCount: settings.get("lyrics.lineCount"),
+      smooth: settings.get("lyrics.smooth"),
+      mergeLines: settings.get("lyrics.mergeLines"),
+    }),
+    new StageLyricsEngine($("lyrics"), stageLyricOptions()),
+    settings.get("lyrics.style"),
+  );
   mic = new MicEngine(audio, settings);
   pitchGuide = new PitchGuide($("pitch-guide"), settings);
   chordEngine = new ChordEngine($("chords"), { simplify: settings.get("chords.simplify") });
@@ -181,6 +188,8 @@ function applyVisualSettings() {
     smooth: settings.get("lyrics.smooth"),
     mergeLines: settings.get("lyrics.mergeLines"),
   });
+  lyrics.setStyle(settings.get("lyrics.style"));
+  lyrics.setStageOptions(stageLyricOptions()); // also re-measures: --font-scale may have just changed
   // Keep the offset slider in step when the value is changed from code (e.g. the
   // Bluetooth auto-set) — not just from the slider itself. Idempotent otherwise.
   const off = $("set-offset");
@@ -193,6 +202,12 @@ function applyVisualSettings() {
   // For a VIDEO song the lyrics are baked into the picture, so the offset moves the
   // AUDIO instead (same sign: >0 = picture/lyrics lead the sound). VideoEngine owns it.
   if (video) video.setOffset(settings.get("lyrics.offsetMs") || 0);
+}
+
+// The stage lyric view's options, straight from lyrics.stage.* (+ the shared smooth wipe).
+function stageLyricOptions() {
+  const s = settings.get("lyrics.stage") || {};
+  return { ...s, smooth: settings.get("lyrics.smooth") };
 }
 
 function applyAudioSettings() {
@@ -263,6 +278,7 @@ function applyFontSize() {
   requestAnimationFrame(() => {
     if (lib) lib.refresh();          // --row-h changed → re-measure the virtualized list
     if (pitchGuide) pitchGuide.resize();
+    if (lyrics) lyrics.redraw();     // --ui-scale changed the lyric font → re-measure the stage
   });
 }
 // Host color theme. "auto" follows the OS (prefers-color-scheme); "dark"/"light" force it.
