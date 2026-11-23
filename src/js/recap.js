@@ -6,8 +6,10 @@
  * queue, the singer banner and the scorer already produce, kept in order. No recording, no
  * upload.
  *
- * The module owns its own dialog DOM (#recap / #recap-body / #recap-close), the same way
- * midi-mixer.js owns its band — app.js only says "log this" and "show it".
+ * The module fills its own dialog body (#recap-body), the same way midi-mixer.js owns its
+ * band. Opening and closing the dialog (#recap, with #recap-close carrying data-ov-close) is
+ * the overlay stack's job: app.js opens it with overlays.open("recap"), and the overlay's
+ * onOpen hook calls render().
  */
 import { jsonStore } from "./store.js";
 
@@ -70,18 +72,11 @@ export function createRecap(storage) {
 
     get items() { return recap.items; },
 
-    isOpen() {
-      const el = $("recap");
-      return !!el && !el.classList.contains("hidden");
-    },
-
-    hide() { const el = $("recap"); if (el) el.classList.add("hidden"); },
-
-    show() {
-      const el = $("recap");
-      if (!el) return;
-      const items = recap.items;
+    /** Fill #recap-body from tonight's log. Called each time the recap dialog opens. */
+    render() {
       const body = $("recap-body");
+      if (!body) return;
+      const items = recap.items;
       body.replaceChildren();
       if (!items.length) {
         const p = document.createElement("p");
@@ -118,15 +113,6 @@ export function createRecap(storage) {
         }
         body.appendChild(ul);
       }
-      el.classList.remove("hidden");
-    },
-
-    /** Wire the close button and the click-the-scrim-to-dismiss. Call once at boot. */
-    wire() {
-      const close = $("recap-close");
-      if (close) close.onclick = () => this.hide();
-      const el = $("recap");
-      if (el) el.onclick = (e) => { if (e.target === el) this.hide(); };
     },
   };
 }

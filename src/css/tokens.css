@@ -10,7 +10,10 @@
  *   2. Semantic    — intent tokens (--bg, --surface-*, --text, --brand…) that FLIP per theme.
  *   3. Themes      — dark (default, the neon world) + a designed light theme.
  *   4. Font size   — --scale (text/UI multiplier) set by the ⚙ Font size
- *                    Small/Medium/Large (:root[data-fontsize]).
+ *                    Extra small/Small/Medium/Large (:root[data-fontsize]).
+ *   5. Scale unit  — --u: ONE unit for type, spacing, targets and rows, derived
+ *                    from the viewport × --scale (stage-first shell, M3). Every
+ *                    size downstream is a multiple of it (16px = 1u at 1280×720).
  *
  * Design-only: no behavior. See docs/redesign/README.md.
  * ========================================================================== */
@@ -24,12 +27,21 @@
   --teal: #37e0c8;
   --gold: #ffd23f;              /* the sung-syllable wipe — reserved, used once */
 
-  /* Space — 4px base. Kills scattered magic numbers. */
-  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px;
-  --s-5: 24px; --s-6: 32px; --s-7: 48px; --s-8: 72px;
+  /* Space — the old 4px steps, now in scale units (N / 16 × --u: identical at 1280×720,
+     proportional everywhere else). Kills scattered magic numbers. */
+  --s-1: calc(4 / 16 * var(--u));  --s-2: calc(8 / 16 * var(--u));
+  --s-3: calc(12 / 16 * var(--u)); --s-4: calc(16 / 16 * var(--u));
+  --s-5: calc(24 / 16 * var(--u)); --s-6: calc(32 / 16 * var(--u));
+  --s-7: calc(48 / 16 * var(--u)); --s-8: calc(72 / 16 * var(--u));
 
-  /* Radius */
-  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-pill: 999px;
+  /* Radius (pill stays a px sentinel: it only has to exceed half the height). */
+  --r-sm: calc(8 / 16 * var(--u)); --r-md: calc(12 / 16 * var(--u));
+  --r-lg: calc(16 / 16 * var(--u)); --r-xl: calc(22 / 16 * var(--u)); --r-pill: 999px;
+
+  /* Theme-agnostic fills: a video letterbox is black and a QR quiet zone is white in
+     BOTH themes (a QR must stay dark-on-light to scan). */
+  --media-bg: #000;
+  --qr-bg: #fff;
 
   /* Motion — reuse the app's existing easing; animate transform/opacity only. */
   --ease: cubic-bezier(.33, 0, .1, 1);
@@ -39,29 +51,56 @@
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  /* Fluid type tiers — clamp(min, viewport-blend, max) × the --scale ramp.
-     Replaces the old per-screen `calc(px * --ui-scale)` sprinkled everywhere. */
-  --t-display: calc(clamp(2rem,   1.1rem + 4.2vw, 4rem)   * var(--scale));
-  --t-lyric:   calc(clamp(1.35rem, 0.95rem + 2.4vw, 2.6rem) * var(--scale));
-  --t-h1:      calc(clamp(1.3rem, 1.1rem + 1vw,   1.9rem) * var(--scale));
-  --t-h2:      calc(clamp(1.1rem, 1rem + .6vw,    1.4rem) * var(--scale));
-  --t-h3:      calc(clamp(.95rem, .9rem + .3vw,   1.1rem) * var(--scale));
-  --t-body:    calc(1rem      * var(--scale));
-  --t-label:   calc(.8125rem  * var(--scale));  /* 13px */
-  --t-tiny:    calc(.6875rem  * var(--scale));  /* 11px */
-
-  /* Density — row heights / control sizing (was the per-screen --row-h constants).
-     library-ui.js reads --row-h; keep that name. */
-  --row-h: 46px;
   --control-h: 40px;
-  --touch: 44px;                /* minimum touch target */
+  --touch: 44px;                /* minimum touch target (superseded by --hit below) */
 
-  /* Column widths (docked rails on a wide desktop). */
-  --lib-w: 340px;
-  --queue-w: 320px;
-
-  /* ---- 4. SCALE RAMP (default; overridden below) ----------------------- */
+  /* ---- 4. SCALE RAMP (default; overridden by :root[data-fontsize] below) -- */
   --scale: 1;
+
+  /* ---- 5. THE SCALE UNIT ------------------------------------------------
+     One unit drives every size (stage-first shell). 14px floor (a phone), then
+     1.25vw / 2.25vh, whichever is smaller (16px at 1280×720, 18 at 1440×900,
+     24 at 1080p, 48 at 4K), times the ⚙ Font size. Browser zoom does not move
+     it above the floor: Font size is the control. */
+  --u: calc(max(14px, min(1.25vw, 2.25vh)) * var(--scale));
+
+  /* Type tiers (multiples of --u). */
+  --t-tiny:    calc(0.72 * var(--u));
+  --t-label:   calc(0.82 * var(--u));
+  --t-body:    var(--u);
+  --t-h3:      calc(1.15 * var(--u));
+  --t-h2:      calc(1.4  * var(--u));
+  --t-h1:      calc(1.8  * var(--u));
+  --t-display: calc(3 * var(--u));
+
+  /* Targets, rows, rhythm. --row-h is an EXPRESSION now: library-ui.js measures a
+     rendered row instead of parsing this value. */
+  --hit:   max(44px, calc(2.75 * var(--u)));    /* every interactive target */
+  --row-h: max(44px, calc(3 * var(--u)));       /* list rows */
+  --gap:   calc(0.75 * var(--u));
+  --pad:   calc(1.25 * var(--u));
+  --radius: calc(0.6 * var(--u));
+  --focus-w: max(3px, calc(0.2 * var(--u)));
+
+  /* Side panels: one width for all four. Full width on a phone in portrait. */
+  --panel-w: min(100vw, max(calc(30 * var(--u)), 38vw));
+  /* What the stage gives up beside an open panel: --panel-w, or 0 when the panel is the
+     full width (it then simply covers the stage). No breakpoint: the ×9999 turns any
+     positive leftover width into "huge", and min() caps it at --panel-w. */
+  --panel-pad: min(var(--panel-w), calc((100vw - var(--panel-w)) * 9999));
+
+  /* Safe areas (notches, rounded corners) and TV overscan. app.js writes --overscan
+     inline on <html> as a length from ui.overscanPct (e.g. "2vmax"); 0 by default. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --overscan: 0px;
+  /* The inset every edge-hugging surface keeps (stage flow, control bar, home, status). */
+  --edge-t: calc(max(var(--pad), var(--safe-t)) + var(--overscan));
+  --edge-r: calc(max(var(--pad), var(--safe-r)) + var(--overscan));
+  --edge-b: calc(max(var(--pad), var(--safe-b)) + var(--overscan));
+  --edge-l: calc(max(var(--pad), var(--safe-l)) + var(--overscan));
 }
 
 /* ============================================================================
@@ -107,6 +146,21 @@
   --elev-1: 0 8px 24px -12px rgba(0, 0, 0, .5);
   --elev-2: 0 24px 60px -20px rgba(0, 0, 0, .6);
 
+  /* Stage-first surfaces (M3). Panels are OPAQUE --bg — the old library/queue columns'
+     ground, so the surface-1 queue rows and the surface-1 row hover still read on them.
+     The control bar and the queue bar sit on a translucent --bg so lyrics stay legible. */
+  --overlay-bg: var(--bg);
+  --overlay-bg-soft: color-mix(in srgb, var(--bg) 86%, transparent);
+  --chip-bg: var(--surface-2);
+  --chip-on-bg: var(--brand-2);
+  --chip-on-ink: var(--brand-2-ink);
+  /* Per-note verdicts (M9 paints them; defined now so both themes are complete). */
+  --v-perfect: #ffd23f;
+  --v-excellent: #9be37a;
+  --v-great: #37e0c8;
+  --v-good: #98b8ff;            /* APCA on --bg: perfect 82 · excellent 78 · great 74 · good 64 · miss 51 */
+  --v-miss: #99a1b8;
+
   color-scheme: dark;
 }
 
@@ -138,6 +192,17 @@
     --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
     --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
 
+    --overlay-bg: var(--bg);
+    --overlay-bg-soft: color-mix(in srgb, var(--bg) 86%, transparent);
+    --chip-bg: var(--surface-2);
+    --chip-on-bg: var(--brand-2);
+    --chip-on-ink: var(--brand-2-ink);
+    --v-perfect: #a4650a;
+    --v-excellent: #3f7d1e;
+    --v-great: #0f8576;
+    --v-good: #3b5fc4;
+    --v-miss: #5c667e;
+
     color-scheme: light;
   }
 }
@@ -168,6 +233,17 @@
 
   --elev-1: 0 8px 24px -14px rgba(20, 24, 40, .28);
   --elev-2: 0 24px 60px -22px rgba(20, 24, 40, .34);
+
+  --overlay-bg: var(--bg);
+  --overlay-bg-soft: color-mix(in srgb, var(--bg) 86%, transparent);
+  --chip-bg: var(--surface-2);
+  --chip-on-bg: var(--brand-2);
+  --chip-on-ink: var(--brand-2-ink);
+  --v-perfect: #a4650a;
+  --v-excellent: #3f7d1e;
+  --v-great: #0f8576;
+  --v-good: #3b5fc4;
+  --v-miss: #5c667e;
 
   color-scheme: light;
 }
@@ -207,15 +283,16 @@
 }
 
 /* ============================================================================
- * 4. FONT SIZE — explicit Small / Medium / Large (⚙ → Display → Font size).
- *   The ⚙ setting stamps :root[data-fontsize]; --scale drives the whole player's
- *   text + controls (via --ui-scale), and --row-h keeps the virtual-list rows in
- *   step. The Lyrics "Lyrics size" slider (--font-scale) fine-tunes lyrics on top.
+ * 4. FONT SIZE — explicit Extra small / Small / Medium / Large (⚙ → Display).
+ *   The ⚙ setting stamps :root[data-fontsize] and sets ONLY --scale; --u (and so
+ *   every size, the list's row height included) follows from it. The Lyrics
+ *   "Lyrics size" slider (--font-scale) fine-tunes lyrics on top.
  *   (Replaced the old auto display-size profile + TV width-ramp — app.js.)
  * ========================================================================== */
-:root[data-fontsize="small"]  { --scale: 0.9; --row-h: 44px; }
-:root[data-fontsize="medium"] { --scale: 1.0; --row-h: 48px; }
-:root[data-fontsize="large"]  { --scale: 1.3; --row-h: 60px; --lib-w: 420px; --queue-w: 360px; }
+:root[data-fontsize="xsmall"] { --scale: 0.65; }
+:root[data-fontsize="small"]  { --scale: 0.9; }
+:root[data-fontsize="medium"] { --scale: 1.0; }
+:root[data-fontsize="large"]  { --scale: 1.3; }
 
 /* Respect reduced-motion at the token layer too (components read --dur-*). */
 @media (prefers-reduced-motion: reduce) {

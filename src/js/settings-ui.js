@@ -1,5 +1,5 @@
 /*
- * settings-ui.js — the ⚙ settings drawer, driven by a single control SCHEMA.
+ * settings-ui.js — the ⚙ settings panel, driven by a single control SCHEMA.
  *
  * Each panel control is described ONCE in SETTINGS_SCHEMA (its element id, the
  * settings path, its type, and — for ranges — a label formatter). That one entry
@@ -23,10 +23,13 @@ const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0)} MB
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
 const SETTINGS_SCHEMA = [
-  // overall font size (small/medium/large) + color theme
+  // overall font size (extra small/small/medium/large) + color theme
   { id: "set-fontsize", path: "ui.fontSize", type: "select" },
   { id: "set-theme", path: "ui.theme", type: "select" },
-  // playback-controls overlay: always-show toggle + idle auto-hide duration
+  // the stage: TV overscan inset + key hints (keys mode only)
+  { id: "set-overscan", path: "ui.overscanPct", type: "range", fmt: (v) => `${+v}%` },
+  { id: "set-key-hints", path: "ui.keyHints", type: "check" },
+  // control bar: always-show toggle + idle auto-hide duration
   { id: "set-playback", path: "ui.playback", type: "check" },
   { id: "set-autohide", path: "ui.autoHideSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
   // lyrics
@@ -61,7 +64,9 @@ const SETTINGS_SCHEMA = [
   // pitch guide
   { id: "set-guide", path: "guide.enabled", type: "check" },
   { id: "set-guide-win", path: "guide.windowSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
-  { id: "set-guide-h", path: "guide.height", type: "range", fmt: (v) => `${v} px` },
+  // The band is sized in the stage's scale unit (16 px at the 1280×720 reference), so the label
+  // shows rows of that unit, not pixels. The stored value and its range are unchanged.
+  { id: "set-guide-h", path: "guide.height", type: "range", fmt: (v) => `${(v / 16).toFixed(1)} rows` },
   { id: "set-guide-ch", path: "guide.channel", type: "range", fmt: (v) => (v < 0 ? "auto" : `${+v + 1}`) },
   { id: "set-guide-mic", path: "guide.showMic", type: "check" },
   { id: "set-guide-trail", path: "guide.trail", type: "check" },
@@ -110,8 +115,9 @@ const SETTINGS_SCHEMA = [
   { id: "set-search-fuzzy", path: "search.fuzzy", type: "check" },
   { id: "set-enter-action", path: "search.enterAction", type: "select" },
   { id: "set-show-source", path: "library.showSource", type: "check" },
-  // remote control (phones) — QR on the queue panel opens /remote
+  // remote control (phones) — QR on the queue panel (and the stage, per qrOnStage) opens /remote
   { id: "set-remote", path: "remote.enabled", type: "check" },
+  { id: "set-qr-stage", path: "remote.qrOnStage", type: "select" },
   { id: "set-remote-url", path: "remote.baseUrl", type: "text" },
 ];
 
@@ -119,7 +125,10 @@ const SETTINGS_SCHEMA = [
 // them. Keyed by the control's (or action button's) element id. Optional sugar —
 // a control without an entry is still searchable by its label + section titles.
 const SEARCH_KEYWORDS = {
-  "set-fontsize": "font text size small medium large scale zoom big display readability",
+  "set-fontsize": "font text size extra small medium large scale zoom big display readability",
+  "set-overscan": "tv edge crop margin inset safe area border cut off",
+  "set-key-hints": "keyboard remote arrows shortcuts help tips",
+  "set-qr-stage": "phone qr code stage home idle corner always never guests",
   "set-theme": "dark light color theme appearance mode night day",
   "set-playback": "playback controls transport seek bar show hide always overlay dock",
   "set-autohide": "auto hide fade idle timeout duration seconds controls transport overlay",
@@ -187,7 +196,7 @@ export function matchesQuery(text, query) {
  * @param {object} deps.mic        the MicEngine (enable button + status)
  * @param {()=>Promise<{ok:boolean, records?:number, error?:string}>} deps.onRebuild
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
- * @returns {{ wireSettings, syncSettingsUI, updateMicBtn }}
+ * @returns {{ wireSettings, syncSettingsUI, updateMicBtn, onOpen }}  onOpen: the overlay's open hook
  */
 export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData, onShowRecap }) {
   const label = (c, v) => {
@@ -315,8 +324,13 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     const input = $("set-search");
     if (!input) return;
     input.addEventListener("input", () => applyFilter(input.value));
+    // Escape in a field WITH text clears it and stops there; in an empty field it is left to
+    // the page, where Back closes the panel (the overlay stack owns that).
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { input.value = ""; applyFilter(""); e.stopPropagation(); }
+      if (e.key === "Escape" && input.value) {
+        input.value = ""; applyFilter("");
+        e.preventDefault(); e.stopPropagation();
+      }
     });
     $("set-search-clear").onclick = () => { input.value = ""; applyFilter(""); input.focus(); };
     // persist manual open/close, but not the force-opens that happen mid-search
@@ -332,73 +346,16 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     btn.classList.toggle("on", mic.enabled);
   }
 
-  // The drawer is a modal dialog (role/aria-modal live on the element in index.html), so it
-  // owes keyboard users four things it never had: Escape to dismiss, focus moved INTO it on
-  // open, focus RETURNED to the ⚙ button on close, and a trap so Tab can't wander out into
-  // the page behind it — which `aria-modal` tells a screen reader is unreachable, so leaving
-  // Tab free to go there is worse than no dialog semantics at all.
-  let lastFocus = null;
-
-  // Only elements that are actually reachable: the panel's own search filter hides rows with
-  // `display:none`, and a hidden control must not become an invisible Tab stop.
-  const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
-  function focusableInPanel() {
-    const panel = $("settings-panel");
-    if (!panel) return [];
-    return [...panel.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
-  }
-
-  function trapTab(e) {
-    if (e.key !== "Tab") return;
-    const items = focusableInPanel();
-    if (!items.length) return;
-    const first = items[0], last = items[items.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || !items.includes(active))) {
-      e.preventDefault(); last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault(); first.focus();
-    }
-  }
-
-  function openSettings() {
-    syncSettingsUI(); // reflect changes made via non-panel controls (🎵 melody, steppers, remote)
-    lastFocus = document.activeElement;
-    $("settings-panel").classList.remove("hidden");
-    document.body.classList.add("settings-open"); // wide screens reflow the stage beside the drawer (never cover the lyrics)
-    const s = $("set-search");
-    if (s) setTimeout(() => s.focus(), 60); // after the slide-in
-  }
-
-  function closeSettings() {
-    if ($("settings-panel").classList.contains("hidden")) return;
-    $("settings-panel").classList.add("hidden");
-    document.body.classList.remove("settings-open");
-    if (lastFocus && lastFocus.focus) lastFocus.focus();
-    lastFocus = null;
+  // The panel is one overlay of the stage-first shell. Opening, closing, Escape/Back, the
+  // inert page behind it, focus in and focus back all belong to the overlay stack
+  // (ui/overlays-dom.js); #settings-close carries data-ov-close. What is left here is the part
+  // only this module knows: bring every control up to date as the panel opens, because values
+  // change from outside it (the 🎵 melody button, the steppers, a phone).
+  function onOpen() {
+    syncSettingsUI();
   }
 
   function wireSettings() {
-    $("btn-settings").onclick = openSettings;
-    $("settings-close").onclick = closeSettings;
-
-    // Escape closes the drawer. The panel's own search box handles Escape first (it clears the
-    // field and stopPropagation()s), so typing isn't interrupted — a second Escape closes.
-    $("settings-panel").addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { e.stopPropagation(); closeSettings(); }
-      else trapTab(e);
-    });
-    // …and when focus sits outside the drawer (opened, then clicked the stage behind it):
-    // Escape still closes, and Tab pulls focus back in rather than walking the hidden page.
-    document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") { closeSettings(); return; }
-      if (e.key !== "Tab" || !document.body.classList.contains("settings-open")) return;
-      const panel = $("settings-panel");
-      if (!panel || panel.contains(document.activeElement)) return;
-      const items = focusableInPanel();
-      if (items.length) { e.preventDefault(); items[0].focus(); }
-    });
-
     autoBind();
     wireSearch();
 
@@ -513,5 +470,5 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     }
   }
 
-  return { wireSettings, syncSettingsUI, updateMicBtn };
+  return { wireSettings, syncSettingsUI, updateMicBtn, onOpen };
 }

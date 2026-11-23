@@ -95,18 +95,21 @@ export const DEFAULT_CONFIG = {
   // output isn't practical). The offset stays adjustable afterward.
   bt: { enabled: false },
 
-  // Collapsible panels (library / queue toggled from the top bar; true = shown). Persisted.
-  //   playback = "Always show playback controls" (the transport/seek overlay). true = always
-  //              visible in normal mode; false = it auto-hides after `autoHideSec` idle seconds
-  //              (the same behavior focus mode always uses) and returns on pointer/key activity.
-  //   autoHideSec = idle seconds before the playback controls fade — used in focus mode AND when
-  //              `playback` is off. Reappear on any movement/keypress.
-  //   fontSize = overall text/UI size: "small" | "medium" | "large" (drives --ui-scale, i.e.
-  //              the whole player's text + controls). The Lyrics "Lyrics size" slider fine-tunes
+  // The stage and its controls. (The old `library` / `queue` panel toggles are gone: Songs and
+  // Queue are panels opened from the control bar. A stored value for either is simply ignored.)
+  //   playback = "Always show playback controls" (the control bar). true = always visible;
+  //              false = while a song plays it hides after `autoHideSec` idle seconds and returns
+  //              on any pointer move, tap or key. It never hides while paused or idle.
+  //   autoHideSec = idle seconds before the control bar hides (when `playback` is off).
+  //   fontSize = overall text/UI size: "xsmall" | "small" | "medium" | "large" (×0.65 / ×0.9 /
+  //              ×1 / ×1.3 on the stage's scale unit). The Lyrics "Lyrics size" slider fine-tunes
   //              just the lyrics on top of this.
   //   theme = the color theme: "auto" (follow the device / OS preference), "dark", or "light".
   //           The whole player is designed for both; "auto" tracks prefers-color-scheme live.
-  ui: { library: true, queue: true, playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto" },
+  //   overscanPct = extra inset (0–5, % of the screen) around the stage, for a TV that crops
+  //              the picture's edges.
+  //   keyHints = show short key / remote-button hints (they appear only in keyboard / remote use).
+  ui: { playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto", overscanPct: 0, keyHints: true },
 
   // Song search. A result is one list of up to three tiers: a typed NUMBER (every songbook's
   // song with exactly that number, then numbers that start with it), the EXACT matches (every
@@ -172,6 +175,10 @@ export const DEFAULT_CONFIG = {
     // isn't localhost (covers LAN-IP / cloudflared), else the server-detected LAN IP. Set this
     // to your public/tunnel origin (e.g. "https://karaoke.example.com") if auto-detect is wrong.
     baseUrl: "",
+    // The QR on the stage itself (the queue panel always has one): "idle" = the large QR on the
+    // home screen only · "always" = also a small corner code while a song is loaded, for guests
+    // who arrive mid-song · "never" = no QR on the stage at all.
+    qrOnStage: "idle",
   },
 
   // Pitch guide — reads the guide melody from the MIDI and shows a scrolling

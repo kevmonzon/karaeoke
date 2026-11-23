@@ -58,13 +58,14 @@ export function renderQr(el, text) {
  * @param {object} deps.durations
  * @param {() => object|null} deps.getNowPlaying  the `now` block, built by app.js
  * @param {(msg:string)=>void} deps.setStatus
- * @param {() => void} deps.positionFocusQr       stays in app.js: it measures the stage layout
  * @param {object} deps.actions      playback-touching operations, all implemented in app.js
  * @param {object} [deps.storage]
+ * (A `positionFocusQr` dependency is still accepted and ignored: the focus-mode QR it placed
+ *  is gone, and the stage QR chip is positioned by CSS.)
  */
 export function createRemoteGlue({
   settings, catalog, queue, reactions, libraryView, durations,
-  getNowPlaying, setStatus, positionFocusQr, actions, storage,
+  getNowPlaying, setStatus, actions, storage,
 }) {
   const store = storage !== undefined ? storage : (() => {
     try { return window.localStorage; } catch (_) { return null; }
@@ -168,14 +169,24 @@ export function createRemoteGlue({
     },
 
     /**
-     * Render/refresh (or hide) the QR + URL + room code on the queue panel. The base URL is
+     * Render/refresh (or clear) the QR + URL + room code. One renderer, three places: the queue
+     * panel (#remote-qr-code), the home layer (#home-qr, with the code in #home-room) and the
+     * small stage chip (#stage-qr). Which of the stage copies is VISIBLE is not decided here: it
+     * depends on body[data-idle], which changes without this running, so the CSS owns it
+     * (body.remote-on + body[data-qr] = remote.qrOnStage, written by app.js). The base URL is
      * auto-detected (settings override → the host page's own non-loopback origin → the server's
      * LAN IP); the room code is embedded so scanning auto-connects.
      */
     async refreshQr(on) {
       const box = $("remote-qr");
       if (!box) return;
-      if (!on) { box.classList.remove("show"); renderQr($("focus-qr"), ""); return; }
+      const homeQr = $("home-qr"), homeRoom = $("home-room"), stageQr = $("stage-qr");
+      if (!on) {
+        box.classList.remove("show");
+        renderQr(homeQr, ""); renderQr(stageQr, "");
+        if (homeRoom) homeRoom.textContent = "";
+        return;
+      }
       if (lanUrl == null) {
         try {
           const d = await (await fetch("/api/remote/info")).json();
@@ -189,8 +200,9 @@ export function createRemoteGlue({
       const link = $("remote-qr-url");
       if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
       renderQr($("remote-qr-code"), url);
-      renderQr($("focus-qr"), url); // the same QR mirrored into the focus-mode overlay (CSS gates it)
-      positionFocusQr();
+      renderQr(homeQr, url);
+      renderQr(stageQr, url);
+      if (homeRoom) homeRoom.textContent = `Room code ${room}`;
       box.classList.add("show");
     },
   };

@@ -10,6 +10,14 @@
        Loaded BEFORE style.css so the app's legacy variable names can alias the tokens. -->
   <link rel="stylesheet" href="./css/tokens.css" />
   <link rel="stylesheet" href="./css/style.css" />
+  <!-- Stage-first shell: the stage layers, then the overlay system; the four after them
+       are filled by later features (sheet, browse, scoring, backgrounds). -->
+  <link rel="stylesheet" href="./css/stage.css" />
+  <link rel="stylesheet" href="./css/overlays.css" />
+  <link rel="stylesheet" href="./css/sheet.css" />
+  <link rel="stylesheet" href="./css/browse.css" />
+  <link rel="stylesheet" href="./css/scoring.css" />
+  <link rel="stylesheet" href="./css/backgrounds.css" />
 
   <!-- pako (UMD) — song payloads may be raw-deflate-compressed MIDI; we inflate
        them client-side before handing bytes to the synth. Exposes window.pako. -->
@@ -31,7 +39,7 @@
   }
   </script>
 </head>
-<body>
+<body data-idle="true" data-ov="" data-kind="">
   <!-- Icon sprite. The chrome used to be raw system emoji, which meant the transport row mixed
        full-colour emoji (🎤 🎵) with monochrome glyphs (▶ ⏭ − ＋) at different weights and
        baselines on every OS — noise rather than one instrument, and unreadable across a room.
@@ -54,45 +62,49 @@
       <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+      <symbol id="i-restart" viewBox="0 0 24 24"><path d="M5 12a7 7 0 1 0 2.1-5"/><path d="M5 4v4h4"/></symbol>
+      <symbol id="i-keypad" viewBox="0 0 24 24"><circle cx="7" cy="5" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="17" cy="5" r="1"/><circle cx="7" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="17" cy="10" r="1"/><circle cx="7" cy="15" r="1"/><circle cx="12" cy="15" r="1"/><circle cx="17" cy="15" r="1"/><circle cx="12" cy="20" r="1"/></symbol>
+      <symbol id="i-mixer" viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><path d="M4 15h4M10 8h4M16 13h4"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.5 12 5l8 6.5"/><path d="M6.5 10v9h11v-9"/><path d="M10.5 19v-5h3v5"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
+      <symbol id="i-playnext" viewBox="0 0 24 24"><path d="M4 5.5v7l5.5-3.5z" fill="currentColor" stroke-linejoin="round"/><path d="M13 9h7M4 16h16M4 20h11"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z"/></symbol>
     </defs>
   </svg>
 
-  <header class="topbar">
-    <div class="brand">Ka-<span>Rae</span>-oke</div>
-    <div id="status" class="status">Loading…</div>
-    <div class="toggles">
-      <button id="toggle-lib" class="gear" title="Toggle song list" aria-label="Toggle song list"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
-      <button id="toggle-queue" class="gear" title="Toggle queue" aria-label="Toggle queue"><svg class="icon" aria-hidden="true"><use href="#i-queue"></use></svg></button>
-    </div>
-    <button id="btn-focus" class="gear" title="Focus mode — hide panels for a full-screen lyrics view (Esc to exit)" aria-label="Focus mode"><svg class="icon" aria-hidden="true"><use href="#i-focus"></use></svg></button>
-    <button id="btn-settings" class="gear" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
-    <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"></use></svg></button>
+  <!-- THE STAGE: one full-screen surface on every device. Layers, bottom to top: background,
+       media, the flow (queue bar · guide · chords · lyrics), the idle home layer, the HUD.
+       Everything else (songs, queue, mixer, settings, recap, controls) is an overlay below. -->
+  <main id="stage" class="stage" tabindex="-1">
+    <div id="bg-layer" class="bg-layer" aria-hidden="true"></div>
+
+    <!-- VIDEO karaoke: #kv is the picture (muted); #kva carries the sound, its
+         clock offset from the picture so the lyric-offset control moves the audio.
+         #kv fills the freed middle only in body.video-mode. -->
+    <video id="kv" class="kv" muted playsinline></video>
+    <audio id="kva" class="kva"></audio>
+
+    <!-- AUDIO karaoke: a recorded audio file (its lyrics come from a separate sidecar,
+         shown on the normal lyric surface). Routed through WebAudio by AudioFileEngine so
+         the Key control pitch-shifts it (stereo) and volume can exceed 100%. No layout. -->
+    <audio id="kaudio" class="kaudio"></audio>
+
+    <!-- YOUTUBE karaoke (BYOC): the official YouTube IFrame player. Must be a
+         `credentialless` iframe so the cross-origin-isolated (COEP) page is allowed to
+         embed YouTube, which ships no CORP/COEP — see src/js/youtube.js. Fills the middle
+         only in body.youtube-mode. -->
+    <iframe id="ytplayer" class="ytplayer" credentialless
+            allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+            allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
     <div class="boot-bar" aria-hidden="true"></div>
-  </header>
 
-  <main class="layout">
-    <!-- LEFT: library -->
-    <section class="library">
-      <div class="search-row">
-        <div class="search-box">
-          <input id="search" type="text" inputmode="search"
-                 placeholder="Search by title or artist…" autocomplete="off" />
-          <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
-        </div>
-        <div class="seg-filter" role="group" aria-label="Filters">
-          <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
-          <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
-          <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
-        </div>
-      </div>
-      <ul id="song-list" class="song-list" role="list" aria-label="Song library"></ul>
-    </section>
-
-    <!-- CENTER: stage -->
-    <section class="stage">
-      <!-- Unified now-playing header: source icon · title/artist · singer · key · lyric badge.
-           (Merged with the former singer/up-next banner into one cohesive header.) -->
-      <div class="now-playing">
+    <div id="stage-flow" class="stage-flow">
+      <!-- The queue bar: source icon · title/artist · singer · key · lyric badge · up next ·
+           the queued-song count (a button that opens the queue). -->
+      <header id="queue-bar" class="queue-bar now-playing">
         <span id="np-code" class="np-code"></span>
         <div class="np-meta">
           <div id="np-title" class="np-title">Select a song to begin</div>
@@ -101,40 +113,13 @@
         <span id="now-singer" class="now-singer"></span>
         <span id="np-key" class="np-key"></span>
         <span id="lyric-badge" class="badge"></span>
-        <!-- Queued-song count (far right): "⏭ N", hidden when the queue is empty. Updated
-             (change-guarded) in updateStageBanner. Especially useful when the queue panel is
-             hidden (focus mode / phone). -->
-        <span id="queue-count" class="badge queue-count" title="Songs queued"></span>
         <!-- "Up next" (last ~20 s) — a pill that OVERLAYS the now-playing bar (absolute, so it never
              reflows the lyrics); collapses when empty. Populated only for phone-queued songs. -->
         <div id="up-next" class="up-next"></div>
-      </div>
-
-      <!-- VIDEO karaoke: #kv is the picture (muted); #kva carries the sound, its
-           clock offset from the picture so the lyric-offset control moves the audio.
-           #kv fills the freed middle only in body.video-mode. -->
-      <video id="kv" class="kv" muted playsinline></video>
-      <audio id="kva" class="kva"></audio>
-
-      <!-- AUDIO karaoke: a recorded audio file (its lyrics come from a separate sidecar,
-           shown on the normal lyric surface). Routed through WebAudio by AudioFileEngine so
-           the Key control pitch-shifts it (stereo) and volume can exceed 100%. No layout. -->
-      <audio id="kaudio" class="kaudio"></audio>
-
-      <!-- YOUTUBE karaoke (BYOC): the official YouTube IFrame player. Must be a
-           `credentialless` iframe so the cross-origin-isolated (COEP) page is allowed to
-           embed YouTube, which ships no CORP/COEP — see src/js/youtube.js. Fills the middle
-           only in body.youtube-mode. -->
-      <iframe id="ytplayer" class="ytplayer" credentialless
-              allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-              allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
-
+        <!-- Queued-song count: "⏭ N", hidden when the queue is empty (:empty). Opens the queue. -->
+        <button id="queue-count" class="badge queue-count" title="Open the queue" aria-label="Open the queue"></button>
+      </header>
       <canvas id="pitch-guide" class="pitch-guide"></canvas>
-
-      <!-- Focus-mode phone-remote QR: in focus mode (queue panel hidden) it overlays the RIGHT
-           side of the melody guide, matched to its height (positioned in JS: positionFocusQr).
-           Shown only in body.focus-mode.remote-on; falls back to a top-right corner if no guide. -->
-      <div id="focus-qr" class="focus-qr" role="img" aria-label="Scan to control from your phone"></div>
 
       <!-- chord follow-along lane (MIDI only): auto-detected chords, scrolls in sync
            with the lyrics; hidden in video/youtube mode (baked-in, no note data) -->
@@ -162,20 +147,37 @@
 
         <!-- Per-line bonus: a small chip flashed as each lyric line goes by. -->
         <div id="line-bonus" class="line-bonus" aria-hidden="true"></div>
+
+        <!-- Per-note verdict chip (filled by a later milestone). Too frequent to announce. -->
+        <div id="verdict" class="verdict" aria-hidden="true"></div>
       </div>
+    </div>
 
-      <!-- MIDI mode: per-channel mixer band (volume / mute / solo + live VU). Rows are
-           built in JS (midi-mixer.js); shown only in body.midi-mode for a MIDI song. -->
-      <div id="midi-mixer" class="midi-mixer"></div>
+    <!-- Home: the idle stage (nothing loaded, nothing queued). Tiles are built in JS. -->
+    <div id="home" class="home">
+      <div class="home-brand">Ka-<span>Rae</span>-oke</div>
+      <div class="home-prompt">Select a song</div>
+      <div id="home-qr" class="home-qr" role="img" aria-label="Scan to control from your phone"></div>
+      <div id="home-room" class="home-room"></div>
+      <nav id="home-tiles" class="home-tiles" aria-label="Menu"></nav>
+      <div id="home-hints" class="key-hints" aria-hidden="true"></div>
+    </div>
 
-      <div id="offset-toast" class="offset-toast"></div>
+    <!-- HUD: the small remote QR chip (remote.qrOnStage = "always") and the offset toast. -->
+    <div id="stage-qr" class="stage-qr" role="img" aria-label="Scan to control from your phone"></div>
+    <div id="offset-toast" class="offset-toast"></div>
+  </main>
 
-      <!-- Playback dock: the seek bar + transport float as a translucent OVERLAY pinned to the
-           bottom of the stage (absolute), so the lyrics/guide get the freed vertical space.
-           Always visible when ui.playback ("Always show playback controls") is on; otherwise it
-           auto-hides after ui.autoHideSec idle seconds (also always in focus mode) via
-           body.controls-hidden — see app.js showControls/applyControlsAutoHide. -->
-      <div id="playback-dock" class="playback-dock">
+  <div id="scrim" class="scrim" hidden></div>
+  <!-- The one status line. Outside #stage so a modal overlay (which makes the stage inert)
+       never hides it from assistive tech. -->
+  <div id="status" class="status" role="status" aria-live="polite">Loading…</div>
+
+  <!-- Control bar: seek bar + transport + Key/Tempo/Volume + the panel buttons. Its one owner
+       is shell.js (body.controls-hidden); it auto-hides while a song plays unless
+       ui.playback ("Always show playback controls") is on. -->
+  <section id="ov-controls" class="ov ov-bar" data-ov="controls" aria-label="Playback controls">
+    <div id="playback-dock" class="playback-dock">
       <!-- seek bar with the current/total time inline on either side -->
       <div class="seek-row">
         <span id="time-cur" class="t-time">0:00</span>
@@ -188,6 +190,7 @@
            .playbar flex directly (even space-between); it regroups on phones. -->
       <div class="playbar">
         <div class="transport">
+          <button id="btn-restart" title="Restart song" aria-label="Restart song"><svg class="icon" aria-hidden="true"><use href="#i-restart"></use></svg></button>
           <button id="btn-play" class="primary" title="Play/Pause (Space)" aria-label="Play or pause"><svg class="icon" aria-hidden="true"><use id="play-icon" href="#i-play"></use></svg></button>
           <button id="btn-next" title="Next in queue" aria-label="Next song in queue"><svg class="icon" aria-hidden="true"><use href="#i-next"></use></svg></button>
           <button id="btn-melody" class="melody-toggle" title="Melody guide on/off" aria-label="Melody guide on or off"><svg class="icon" aria-hidden="true"><use href="#i-melody"></use></svg></button>
@@ -216,30 +219,75 @@
             <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
           </div>
         </div>
+        <div class="ctl-actions">
+          <button id="toggle-lib" class="gear" title="Songs" aria-label="Songs"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
+          <button id="toggle-queue" class="gear" title="Queue" aria-label="Queue"><svg class="icon" aria-hidden="true"><use href="#i-queue"></use></svg></button>
+          <button id="btn-mixer" class="gear" title="Channel mixer" aria-label="Channel mixer" hidden><svg class="icon" aria-hidden="true"><use href="#i-mixer"></use></svg></button>
+          <button id="btn-settings" class="gear" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
+          <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"></use></svg></button>
+        </div>
       </div>
-      </div><!-- /#playback-dock -->
-    </section>
+    </div><!-- /#playback-dock -->
+  </section>
 
-    <!-- RIGHT: queue -->
-    <aside class="queue">
-      <h3>Queue <span id="queue-heading-count" class="muted"></span></h3>
-      <!-- Phone-remote QR (shown only while remote.enabled; see remote-glue.js refreshQr). -->
-      <div id="remote-qr" class="remote-qr">
-        <div class="remote-qr-title">📱 Scan to control from your phone</div>
-        <div id="remote-qr-code" class="remote-qr-code" role="img" aria-label="Remote-control QR code"></div>
-        <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
-        <div class="remote-qr-urlrow">URL <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a></div>
+  <section id="ov-search" class="ov ov-panel ov-right" data-ov="search" role="dialog" aria-modal="true" aria-labelledby="ov-search-title" hidden>
+    <header class="ov-head"><h2 id="ov-search-title">Songs</h2><button class="ov-close" data-ov-close title="Close" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
+    <div class="search-row">
+      <div class="search-box">
+        <input id="search" type="text" inputmode="search"
+               placeholder="Search by title or artist…" autocomplete="off" />
+        <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
       </div>
-      <ul id="queue-list" class="queue-list"></ul>
-      <p class="hint">Double-click a song to play now · ＋ to queue · Space to play/pause</p>
-    </aside>
-  </main>
+      <span id="search-who" class="search-who" hidden></span>
+      <button id="btn-numpad" class="pill pill-btn icon" title="Number pad" aria-label="Number pad" aria-pressed="false" hidden>123</button>
+      <div class="seg-filter" role="group" aria-label="Filters">
+        <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
+        <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
+        <button id="btn-youtube" class="pill pill-btn icon" title="Search YouTube for karaoke videos (Chromium only)" aria-label="Toggle YouTube search">🌐</button>
+      </div>
+    </div>
+    <div id="browse-tabs" class="browse-tabs" role="tablist" hidden></div>
+    <div id="filter-chips" class="filter-chips" role="group" aria-label="Filters" hidden></div>
+    <ul id="song-list" class="song-list" role="list" aria-label="Song library"></ul>
+    <div id="browse-pane" class="browse-pane" hidden></div>
+    <div id="numpad" class="numpad" role="group" aria-label="Number pad" hidden></div>
+    <footer class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose · Back close</footer>
+  </section>
 
-  <!-- settings drawer -->
-  <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <section id="ov-queue" class="ov ov-panel ov-right" data-ov="queue" role="dialog" aria-modal="true" aria-labelledby="ov-queue-title" hidden>
+    <header class="ov-head"><h2 id="ov-queue-title">Queue <span id="queue-heading-count" class="muted"></span></h2><button class="ov-close" data-ov-close title="Close" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
+    <!-- Phone-remote QR (shown only while remote.enabled; see remote-glue.js refreshQr). -->
+    <div id="remote-qr" class="remote-qr">
+      <div class="remote-qr-title">📱 Scan to control from your phone</div>
+      <div id="remote-qr-code" class="remote-qr-code" role="img" aria-label="Remote-control QR code"></div>
+      <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
+      <div class="remote-qr-urlrow">URL <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a></div>
+    </div>
+    <ul id="queue-list" class="queue-list"></ul>
+    <div id="queue-actions" class="queue-actions"></div>
+    <footer class="key-hints" aria-hidden="true">▲▼ move · OK choose · Back close</footer>
+  </section>
+
+  <section id="ov-mixer" class="ov ov-panel ov-right" data-ov="mixer" role="dialog" aria-modal="true" aria-label="Channel mixer" hidden>
+    <header class="ov-head"><h2>Mixer</h2><button class="ov-close" data-ov-close title="Close" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-close"></use></svg></button></header>
+    <!-- MIDI mode: per-channel mixer band (volume / mute / solo + live VU). Rows are
+         built in JS (midi-mixer.js); shown only in body.midi-mode for a MIDI song. -->
+    <div id="midi-mixer" class="midi-mixer"></div>
+  </section>
+
+  <section id="ov-song"      class="ov ov-sheet"  data-ov="song"      role="dialog" aria-modal="true" aria-label="Song actions" hidden></section>
+  <section id="ov-adjust"    class="ov ov-toast"  data-ov="adjust"    role="status" aria-live="polite" hidden></section>
+  <section id="ov-calibrate" class="ov ov-dialog" data-ov="calibrate" role="dialog" aria-modal="true" aria-label="Microphone calibration" hidden></section>
+  <section id="ov-confirm"   class="ov ov-dialog" data-ov="confirm"   role="alertdialog" aria-modal="true" aria-labelledby="ov-confirm-title" hidden>
+    <h2 id="ov-confirm-title"></h2><p id="ov-confirm-text"></p>
+    <div class="ov-actions"><button id="ov-confirm-cancel">Cancel</button><button id="ov-confirm-ok" class="danger"></button></div>
+  </section>
+
+  <!-- Settings panel -->
+  <div id="settings-panel" class="settings-panel ov ov-panel ov-right" data-ov="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
     <div class="settings-head">
       <h3 id="settings-title">Settings</h3>
-      <button id="settings-close" class="gear" title="Close" aria-label="Close settings">✕</button>
+      <button id="settings-close" data-ov-close class="gear" title="Close" aria-label="Close settings">✕</button>
     </div>
     <div class="settings-body">
       <div class="set-search">
@@ -263,12 +311,23 @@
         <label class="row">
           <span>Font size</span>
           <select id="set-fontsize">
+            <option value="xsmall">Extra small</option>
             <option value="small">Small</option>
             <option value="medium">Medium</option>
             <option value="large">Large</option>
           </select>
         </label>
         <div class="hint sub">Scales the whole player's text + controls. Use the Lyrics <strong>Lyrics size</strong> slider to fine-tune just the lyrics on top.</div>
+        <label class="row">
+          <span>Overscan <em id="set-overscan-val">0%</em></span>
+          <input id="set-overscan" type="range" min="0" max="5" step="0.5" value="0" />
+        </label>
+        <div class="hint sub">Moves the stage in from the screen edges, for a TV that crops the picture.</div>
+        <label class="row toggle">
+          <span>Show key hints</span>
+          <input id="set-key-hints" type="checkbox" />
+        </label>
+        <div class="hint sub">Short hints for the arrow keys and remote buttons. They show only while you use the keys.</div>
       </section>
       <section>
         <h4>Playback controls</h4>
@@ -280,7 +339,7 @@
           <span>Auto-hide after <em id="set-autohide-val">3.0 s</em></span>
           <input id="set-autohide" type="range" min="1" max="15" step="0.5" value="3" />
         </label>
-        <div class="hint sub">The transport + seek bar float as an overlay at the bottom of the stage. With <strong>Always show</strong> off (and in focus mode), they fade after this idle time and reappear on any movement or keypress.</div>
+        <div class="hint sub">The transport + seek bar float as an overlay at the bottom of the stage. With <strong>Always show</strong> off, they fade after this idle time while a song plays and reappear on any movement or keypress.</div>
       </section>
       <section>
         <h4>Lyrics</h4>
@@ -391,7 +450,7 @@
       <section>
         <h4>MIDI mode</h4>
         <label class="row toggle"><span>Channel mixer</span><input id="set-midimode" type="checkbox" /></label>
-        <div class="hint sub">A per-channel band (between the lyrics and controls) with volume, mute/solo and live levels for the current MIDI song. MIDI songs only.</div>
+        <div class="hint sub">Adds a Mixer button to the playback controls: volume, mute/solo and live levels per channel for the current MIDI song. MIDI songs only.</div>
       </section>
 
       <section>
@@ -420,7 +479,7 @@
           <input id="set-guide-win" type="range" min="2" max="10" step="0.5" value="5" />
         </label>
         <label class="row">
-          <span>Band height <em id="set-guide-h-val">150 px</em></span>
+          <span>Band height <em id="set-guide-h-val">9.4 rows</em></span>
           <input id="set-guide-h" type="range" min="90" max="300" step="10" value="150" />
         </label>
         <label class="row">
@@ -541,10 +600,18 @@
           <input id="set-remote" type="checkbox" />
         </label>
         <label class="row">
+          <span>QR on the stage</span>
+          <select id="set-qr-stage">
+            <option value="idle">When idle</option>
+            <option value="always">Always</option>
+            <option value="never">Never</option>
+          </select>
+        </label>
+        <label class="row">
           <span>URL override</span>
           <input id="set-remote-url" type="text" class="set-text" placeholder="auto-detect" />
         </label>
-        <div class="hint sub">Shows a QR on the queue panel; phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
+        <div class="hint sub">Shows a QR on the queue panel (and on the stage: <strong>When idle</strong> = the home screen only, <strong>Always</strong> = also a small corner code during a song); phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
       </section>
 
       <section>
@@ -612,11 +679,11 @@
   </div>
 
   <!-- Tonight's recap (⚙ → Library). Rendered from the performance log app.js keeps. -->
-  <div id="recap" class="recap hidden" role="dialog" aria-modal="true" aria-labelledby="recap-title">
+  <div id="recap" class="recap ov ov-dialog" data-ov="recap" role="dialog" aria-modal="true" aria-labelledby="recap-title" hidden>
     <div class="recap-card">
       <div class="recap-head">
         <h3 id="recap-title">🏆 Tonight</h3>
-        <button id="recap-close" class="gear" title="Close" aria-label="Close recap">✕</button>
+        <button id="recap-close" data-ov-close class="gear" title="Close" aria-label="Close recap">✕</button>
       </div>
       <div id="recap-body" class="recap-body"></div>
     </div>

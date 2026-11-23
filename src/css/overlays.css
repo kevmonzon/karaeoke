@@ -1,0 +1,251 @@
+/* ============================================================================
+ * overlays.css — the overlay system of the stage-first shell (M3).
+ *
+ * One stack above the stage (stage.css). overlays-dom.js shows an overlay by
+ * removing `hidden`, forcing a style pass, then adding `.open`; it closes one by
+ * removing `.open` and setting `hidden` after the element's OWN transition time.
+ * So every motion below sits on the `.ov` element itself (and on #scrim) and
+ * animates transform / opacity only; reduced motion zeroes the token durations,
+ * which also makes the close instant. Nothing here delays visibility.
+ *
+ *   z 20 control bar · 25 adjust toast · 30 status (stage.css) · 35 scrim ·
+ *   40 panels · 50 sheet · 60 dialogs · 70 confirm · 90 boot veil (style.css)
+ * ========================================================================== */
+
+/* ---- Base ------------------------------------------------------------------ */
+.ov[hidden] { display: none; }
+
+/* ---- Keyboard focus -----------------------------------------------------------
+   One ring for every control (replaces the old 2px rule). Scales with --u, offset
+   from the control, with a --bg edge so it reads on any background. :focus-visible
+   keeps it off for pointer users. */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  outline: var(--focus-w) solid var(--focus);
+  outline-offset: var(--focus-w);
+  box-shadow: 0 0 0 calc(var(--focus-w) * 2) var(--bg);
+}
+/* List rows live inside a scroll container that would clip an outside ring on the first
+   and last row: they get the same ring drawn inside their own edge. */
+.song:focus-visible, .queue-list li:focus-visible {
+  outline-offset: calc(-1 * var(--focus-w));
+  box-shadow: none;
+}
+/* D-pad mode (html[data-input="keys"], set from M4): focused tiles and buttons also grow a
+   little, so the focus reads from across a room. Not under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html[data-input="keys"] :is(.home-tile, .ov-bar button, .ov-close, [data-ov-close], .ov-actions button):focus-visible {
+    transform: scale(1.04);
+  }
+}
+
+/* What a modal makes inert behind it (the control bar while a panel is open) is dimmed, so it
+   reads as unavailable. The stage itself is not dimmed: the lyrics stay readable beside an
+   open panel, and the tinted scrim covers it for sheets and dialogs. */
+.ov-bar[inert] { opacity: .55; }
+
+/* ---- Scrim -----------------------------------------------------------------------
+   Takes the tap that closes the top overlay. Transparent for panels (the stage stays
+   visible and reflows beside them); tinted for sheets and dialogs, and lifted to just
+   under that overlay so whatever is behind it — a panel included — is tinted too. */
+.scrim {
+  position: fixed; inset: 0; z-index: 35;
+  background: transparent;
+  opacity: 0; transition: opacity var(--dur-base) var(--ease);
+}
+.scrim.open { opacity: 1; }
+body[data-ov="song"] .scrim,
+body[data-ov="recap"] .scrim,
+body[data-ov="calibrate"] .scrim,
+body[data-ov="confirm"] .scrim { background: var(--scrim); backdrop-filter: blur(3px); }
+body[data-ov="song"] .scrim { z-index: 45; }
+body[data-ov="recap"] .scrim,
+body[data-ov="calibrate"] .scrim { z-index: 55; }
+body[data-ov="confirm"] .scrim { z-index: 65; }
+
+/* ---- Control bar (#ov-controls) ---------------------------------------------------
+   Pinned to the bottom, over the stage. shell.js owns it: the bar is "open" unless
+   body.controls-hidden (it never gets `hidden`). The dock inside (style.css) carries the
+   gradient and the edge padding; .playbar wraps when it runs out of width. */
+.ov-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease), padding var(--dur-base) var(--ease);
+}
+body.controls-hidden .ov-bar {
+  opacity: 0; pointer-events: none; transform: translateY(calc(10 / 16 * var(--u)));
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease), padding var(--dur-base) var(--ease);
+}
+/* The cursor hides with the bar (the shell never hides the bar while idle). */
+body.controls-hidden { cursor: none; }
+/* Beside an open panel the bar's content moves left with the stage (§4.2 rule 6). */
+body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
+
+/* The panel buttons: Songs · Queue · Mixer · Settings · Full screen. Each carries a short
+   visible label in landscape (TV, desktop, tablet and phone on their side), taken from its
+   aria-label; portrait shows the icons only so the wrapped bar stays compact. */
+.ctl-actions { display: flex; align-items: center; gap: calc(8 / 16 * var(--u)); flex: none; }
+.ctl-actions button {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: calc(0.25 * var(--u));
+  min-width: var(--hit); width: auto; height: auto; min-height: var(--hit);
+  padding: calc(0.3 * var(--u)) calc(0.45 * var(--u));
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: var(--u); line-height: 1; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.ctl-actions button::after {
+  content: attr(aria-label);
+  font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em; /* full --text: small type needs the contrast */
+  white-space: nowrap;
+}
+@media (hover: hover) {
+  .ctl-actions button:hover { border-color: var(--brand-2); }
+}
+.ctl-actions button:active { transform: scale(.93); }
+
+/* Portrait: the bar regroups into centred rows — transport / Key · Tempo · Volume / panel
+   buttons — instead of left-aligned leftovers, with a narrower volume slider. */
+@media (orientation: portrait) {
+  .ov-bar .playbar { justify-content: center; column-gap: calc(20 / 16 * var(--u)); }
+  .ov-bar .ctl input[type=range] { width: calc(108 / 16 * var(--u)); }
+  .ctl-actions button::after { content: none; }
+}
+
+/* ---- Panels (Songs, Queue, Mixer, Settings) ---------------------------------------
+   One edge, one width, one motion: every panel is fixed full height on the RIGHT, --panel-w
+   wide (full width on a phone in portrait), and slides in over --dur-base. Opaque. Its
+   content keeps clear of the safe areas and TV overscan on the sides it touches. */
+.ov-panel {
+  position: fixed; top: 0; bottom: 0; right: 0; z-index: 40;
+  width: var(--panel-w);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  padding: calc(var(--safe-t) + var(--overscan)) calc(var(--safe-r) + var(--overscan)) calc(var(--safe-b) + var(--overscan)) 0;
+  background: var(--overlay-bg); color: var(--text);
+  border-inline-start: 1px solid var(--border); box-shadow: var(--elev-2);
+  transform: translateX(100%);
+  transition: transform var(--dur-base) var(--ease);
+}
+.ov-right { right: 0; left: auto; }
+.ov-panel.open { transform: none; }
+
+/* Panel header: title + close. */
+.ov-head {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--gap);
+  padding: var(--gap) var(--gap) var(--gap) var(--pad);
+  margin-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.ov-head h2 { margin: 0; font: 800 calc(12 / 16 * var(--u))/1 var(--font-mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text); }
+
+/* Every close button (.ov-close, and the settings / recap ✕ that carry data-ov-close). */
+.ov-close, [data-ov-close] {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: var(--hit); height: var(--hit); padding: 0;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: var(--u); line-height: 1; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+@media (hover: hover) {
+  .ov-close:hover, [data-ov-close]:hover { border-color: var(--brand-2); }
+}
+
+/* The scrolling body of each panel takes the height that is left. */
+.ov-panel > .song-list,
+.ov-panel > .queue-list { flex: 1 1 auto; min-height: 0; }
+.ov-panel > .search-row, .ov-panel > .browse-tabs, .ov-panel > .filter-chips,
+.ov-panel > .numpad, .ov-panel > .queue-actions, .ov-panel > .remote-qr { flex: none; }
+/* The Queue panel keeps the old queue column's inset around its QR card, list and actions. */
+#ov-queue > :not(.ov-head) { margin-inline: var(--s-4); }
+
+/* Key hints (◄►▲▼ move · OK choose · Back close): text, shown only in D-pad mode (M4). */
+.key-hints { display: none; }
+html[data-input="keys"] .key-hints {
+  display: block; flex: none;
+  padding: var(--gap) var(--pad);
+  color: var(--text-muted); font: 600 var(--t-tiny)/1.3 var(--font-mono); letter-spacing: .08em;
+}
+html[data-input="keys"] .ov-panel > .key-hints { border-top: 1px solid var(--border-soft); text-align: center; }
+html[data-input="keys"] .key-hints:empty { display: none; }
+
+/* ---- Sheet (song actions — M5 fills it) ------------------------------------------
+   Landscape: docked right, full height. Portrait: from the bottom, centred, full width on
+   a phone and at most 30u on a tablet. */
+.ov-sheet {
+  position: fixed; top: 0; bottom: 0; right: 0; z-index: 50;
+  width: min(100vw, calc(26 * var(--u)));
+  display: flex; flex-direction: column; min-height: 0; overflow: auto;
+  padding: calc(var(--safe-t) + var(--overscan)) calc(var(--safe-r) + var(--overscan)) calc(var(--safe-b) + var(--overscan)) 0;
+  background: var(--overlay-bg); color: var(--text);
+  border-inline-start: 1px solid var(--border); box-shadow: var(--elev-2);
+  transform: translateX(100%);
+  transition: transform var(--dur-base) var(--ease);
+}
+.ov-sheet.open { transform: none; }
+@media (orientation: portrait) {
+  .ov-sheet {
+    top: auto; right: auto; left: 50%;
+    width: min(100vw, calc(30 * var(--u))); max-height: 80vh;
+    padding: 0 calc(var(--safe-r) + var(--overscan)) calc(var(--safe-b) + var(--overscan)) calc(var(--safe-l) + var(--overscan));
+    border-inline-start: 0; border-top: 1px solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+    transform: translate(-50%, 100%);
+  }
+  .ov-sheet.open { transform: translate(-50%, 0); }
+}
+
+/* ---- Dialogs (recap, calibrate, confirm) ------------------------------------------
+   Centred over the tinted scrim; they fade. */
+.ov-dialog {
+  position: fixed; left: 50%; top: 50%; z-index: 60;
+  width: min(92vw, calc(36 * var(--u)));
+  max-height: calc(100vh - 2 * var(--pad)); overflow: auto;
+  padding: var(--pad);
+  background: var(--surface-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: var(--elev-2);
+  transform: translate(-50%, -50%);
+  opacity: 0; transition: opacity var(--dur-base) var(--ease);
+}
+.ov-dialog.open { opacity: 1; }
+#ov-confirm { z-index: 70; }
+.ov-dialog h2 { margin: 0 0 var(--gap); font-size: var(--t-h3); font-weight: 800; }
+.ov-dialog p { margin: 0 0 var(--pad); color: var(--text); } /* body text: Lc ≥ 60 (muted is 51) */
+
+/* Dialog buttons (#ov-confirm-cancel, #ov-confirm-ok.danger). */
+.ov-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--gap); }
+.ov-actions button {
+  min-height: var(--hit); min-width: calc(6 * var(--u)); padding: 0 var(--pad);
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: var(--t-body); font-weight: 600; line-height: 1; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+/* Destructive: the label stays full --text (red text on the dialog ground is only APCA Lc 45);
+   the red border + tint carry the warning, the words carry the meaning. */
+.ov-actions button.danger { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 18%, transparent); }
+@media (hover: hover) {
+  .ov-actions button:hover { border-color: var(--brand-2); }
+  .ov-actions button.danger:hover { border-color: var(--bad); background: color-mix(in srgb, var(--bad) 28%, transparent); }
+}
+
+/* ---- Adjust toast (#ov-adjust: key / tempo / melody / volume / offset read-out) ---
+   Top centre, under the queue bar — centred in the stage space beside an open panel. */
+.ov-toast {
+  position: fixed; z-index: 25; pointer-events: none;
+  top: calc(var(--edge-t) + 4.5 * var(--u)); left: 50%;
+  max-width: calc(100vw - 2 * var(--pad));
+  transform: translateX(-50%);
+  padding: calc(8 / 16 * var(--u)) var(--u);
+  background: color-mix(in srgb, var(--surface-0) 92%, transparent);
+  border: 1px solid var(--accent-2); border-radius: var(--r-pill); color: var(--ink);
+  font-size: calc(13 / 16 * var(--u)); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease);
+}
+.ov-toast.open { opacity: 1; }
+body[data-panel="right"] .ov-toast { left: calc((100vw - var(--panel-pad)) / 2); }
+
+/* ---- Not before M8 --------------------------------------------------------------
+   #btn-numpad, #numpad and #search-who carry `hidden` until M8 fills them; the global
+   [hidden] rule in stage.css keeps them out even though .pill-btn.icon sets a display. */

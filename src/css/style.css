@@ -1,9 +1,11 @@
-/* Ka-Rae-oke — offline karaoke styling */
-/* Palette + scale now come from tokens.css (loaded first, see index.html). The app's
-   legacy variable names are ALIASED to the semantic tokens so every existing rule keeps
-   working while the redesign migrates surface-by-surface — and the whole app inherits
-   both themes + the Small/Medium/Large --scale for free. tokens.css owns
-   --bg / --sung / --unsung, --row-h, the column widths, and the per-[data-fontsize] scale. */
+/* Ka-Rae-oke — offline karaoke styling: the COMPONENT rules (song rows, queue rows, playbar,
+   steppers, settings body, pitch guide, chords, lyrics, title/score cards, mixer rows,
+   reactions, recap body). Page geometry lives in stage.css (the stage + its layers) and
+   overlays.css (control bar, panels, sheets, dialogs, scrim, focus ring).
+   Palette + scale come from tokens.css (loaded first, see index.html). The app's legacy
+   variable names are ALIASED to the semantic tokens. Every size is a multiple of the scale
+   unit --u: a former `Npx` is `calc(N / 16 * var(--u))` (16px = 1u at 1280×720, so the
+   desktop look is unchanged there); hairlines, borders and shadow blurs stay px. */
 :root {
   --panel: var(--surface-1);
   --panel-2: var(--surface-2);
@@ -14,21 +16,8 @@
   --line: var(--border);
   --line-width: 90%;
   --font-scale: 1;
-  --ui-scale: var(--scale);   /* legacy name → the new distance-aware ramp (tokens.css) */
 }
 * { box-sizing: border-box; }
-html, body { height: 100%; margin: 0; }
-body {
-  background: radial-gradient(1200px 600px at 70% -10%, var(--surface-2) 0%, var(--bg) 55%);
-  color: var(--ink);
-  font: 15px/1.4 "Segoe UI", system-ui, -apple-system, sans-serif;
-  display: flex; flex-direction: column;
-  /* This is a fixed-viewport app (panels scroll internally) — it should never scroll the
-     page sideways. Guards against any element poking past the viewport (e.g. a collapsed
-     panel's leftover padding in its 0-width grid track). clip = no scroll container, and it
-     doesn't force overflow-y to auto the way `hidden` would. */
-  overflow-x: clip;
-}
 
 /* ---------------------------------------------------------------------------
    Cohesive micro-motion. Every interactive control gets a light state
@@ -49,159 +38,53 @@ body {
 /* subtle lift on song-row hover so browsing feels alive (transform only → cheap) */
 .song:hover { transform: translateX(2px); }
 
-/* ---------------------------------------------------------------------------
-   Keyboard focus. This is a 10-foot app — someone will drive it from a couch
-   with a keyboard, and it had NO visible focus state anywhere (several rules
-   below explicitly cleared the browser default and replaced it with nothing but
-   a border tint). One rule covers every control; :focus-visible keeps it off
-   for pointer users. --focus is the token tokens.css defined for exactly this
-   purpose and nothing referenced. The outline follows each control's own
-   border-radius automatically, so no per-component tuning is needed.
-   --------------------------------------------------------------------------- */
-a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
-textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
+/* Keyboard focus: the ring lives in overlays.css (one rule for every control, scaled with --u). */
 
-/* Topbar — a calm cluster: brand · status eyebrow · grouped view toggles · icon buttons. */
-.topbar {
-  position: relative;   /* anchors the .boot-bar sweep at its bottom edge */
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s-4);
-  padding: var(--s-3) var(--s-5); border-bottom: 1px solid var(--border-soft);
-  background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(10px);
-}
-.brand { font-weight: 800; letter-spacing: .3px; font-size: 19px; }
-.brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
-.status { flex: 1; text-align: center; color: var(--text-muted);
-  font: 600 11px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; }
 /* Icon-button primitive (matches the gallery .icon-btn). */
 .gear {
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-  width: 38px; height: 38px; border-radius: var(--r-md); cursor: pointer; font-size: 16px;
+  width: calc(38 / 16 * var(--u)); height: calc(38 / 16 * var(--u)); border-radius: var(--r-md); cursor: pointer; font-size: calc(16 / 16 * var(--u));
   line-height: 1; padding: 0; flex: none;
 }
 .gear:hover { border-color: var(--brand-2); }
-/* The three panel toggles read as ONE segmented control (declutters the header). */
-.toggles { display: inline-flex; align-items: center; gap: 2px; padding: 3px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-pill); }
-.toggles .gear { border: 0; background: none; width: 32px; height: 32px; font-size: 14px; opacity: .4; color: var(--text-muted); border-radius: var(--r-pill); }
-.toggles .gear.active { opacity: 1; color: var(--brand-2); } /* shown = subtle teal glyph; collapsed = dimmed */
-.toggles .gear:hover { opacity: 1; }
-#btn-focus, #btn-settings, #btn-fullscreen { margin-left: var(--s-2); }
-
-/* Collapsible panels (topbar toggles) — ANIMATED slide/fade (token durations, so they
-   auto-disable under prefers-reduced-motion). Library/queue animate their grid column to
-   0 while the panel fades + clips (min-width:0 lets the track actually reach 0); the
-   playback strip collapses its height so the stage reclaims the space. */
-.layout { transition: grid-template-columns var(--dur-base) var(--ease), margin-right var(--dur-base) var(--ease); }
-.library, .queue { overflow: hidden; min-width: 0; transition: opacity var(--dur-base) var(--ease); }
-body.lib-collapsed .layout { grid-template-columns: 0 1fr var(--queue-w); }
-body.queue-collapsed .layout { grid-template-columns: var(--lib-w) 1fr 0; }
-body.lib-collapsed.queue-collapsed .layout { grid-template-columns: 0 1fr 0; }
-/* padding:0 so a collapsed panel is truly 0-wide in its 0-width grid track — otherwise its
-   16px side padding (→ 32px box) pokes past the viewport and adds horizontal page scroll. */
-body.lib-collapsed .library { opacity: 0; pointer-events: none; padding: 0; }
-body.queue-collapsed .queue { opacity: 0; pointer-events: none; padding: 0; }
-/* Playback dock — the seek bar + transport float as a translucent OVERLAY pinned to the
-   bottom of the stage (absolute, so they no longer occupy flow space: the lyrics/guide get
-   the freed height). The gradient fades the lyric text behind the bar so it stays legible.
-   Auto-hide (body.controls-hidden) slides + fades it — see app.js. */
+/* Playback dock — the seek bar + transport, inside the control bar overlay (#ov-controls,
+   positioned and auto-hidden in overlays.css). The gradient fades the lyric text behind the
+   bar so it stays legible; the padding keeps clear of safe areas and TV overscan, and the
+   bottom strip always leaves room for the #status line (stage.css) under the controls. */
 .playback-dock {
-  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
-  padding: 10px 26px 14px;
-  background: linear-gradient(to top, var(--bg) 62%, transparent);
-  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
+  padding: calc(10 / 16 * var(--u)) var(--edge-r)
+           calc(max(var(--pad), var(--safe-b) + 1.1 * var(--u)) + var(--overscan)) var(--edge-l);
+  background: linear-gradient(to top, var(--overlay-bg-soft) 62%, transparent);
 }
-body.controls-hidden .playback-dock {
-  opacity: 0; pointer-events: none; transform: translateY(10px);
-  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
-}
-/* MIDI mode drops a per-channel mixer band at the bottom of the flow — reserve room so the
-   overlay doesn't cover its lowest rows (only mode with in-flow content behind the dock). */
-body.midi-mode .stage { padding-bottom: 120px; }
-
-/* Focus mode — distraction-free full-stage lyrics (10-foot). Hides the browse + queue
-   panels so the stage fills the width; the topbar recedes but stays reachable (hover /
-   Esc to exit). The doubled `.focus-mode` raises specificity to (0,3,1) so it beats the
-   lib+queue both-collapsed rule above (0,3,1, but earlier in source) — otherwise, with
-   both panels collapsed, the grid stayed `0 1fr 0` and the stage was forced into the
-   0-width first column, collapsing the whole lyrics view. */
-body.focus-mode .library,
-body.focus-mode .queue { display: none; }
-body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; }
-body.focus-mode .stage { grid-column: 1; }
-body.focus-mode .topbar { opacity: .5; transition: opacity var(--dur-base) var(--ease); }
-body.focus-mode .topbar:hover { opacity: 1; }
-/* Auto-hide: after a few idle seconds the playback dock fades (handled globally by
-   body.controls-hidden .playback-dock above — active in focus mode AND when "Always show
-   playback controls" is off). In focus mode ONLY, the topbar also recedes and the cursor
-   is hidden for a clean 10-foot view; any pointer/key activity brings them back (app.js). */
-body.focus-mode.controls-hidden .topbar { opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease); }
-body.focus-mode.controls-hidden { cursor: none; }
-/* Focus mode: enlarge the "up next" pill (1.75×) so it's legible from across the room. */
-body.focus-mode { --upnext-mult: 1.75; }
-/* Focus mode: with the queue panel hidden, surface the phone-remote QR. app.js's
-   positionFocusQr() overlays it on the RIGHT side of the melody guide, sized to the guide's
-   height; the top/right/size below are the FALLBACK (guide hidden) — a top-right corner. */
-.focus-qr { display: none; }
-body.focus-mode.remote-on .focus-qr:not(:empty) {
-  display: block; position: absolute; top: 96px; right: 26px; z-index: 5;
-  width: calc(104px * var(--ui-scale)); height: calc(104px * var(--ui-scale));
-  background: #fff; border-radius: 8px; padding: 6px; box-shadow: var(--elev-2);
-}
-.focus-qr svg { width: 100%; height: 100%; display: block; }
-
-/* Layout */
-.layout {
-  flex: 1; display: grid; grid-template-columns: var(--lib-w) 1fr var(--queue-w);
-  gap: 1px; background: var(--line); min-height: 0;
-}
-.library, .stage, .queue { background: var(--bg); min-height: 0; display: flex; flex-direction: column; }
-/* Pin each pane to its own column so hiding one (display:none, below) leaves an
-   EMPTY column instead of letting grid auto-placement shift the others left. */
-.library { grid-column: 1; }
-.stage   { grid-column: 2; }
-.queue   { grid-column: 3; }
-.stage { padding: 22px 26px; align-items: stretch; position: relative; overflow: hidden; }
-.queue { padding: calc(16px * var(--ui-scale)); }
 
 /* Phone-remote QR panel — hidden unless remote.enabled (JS adds .show). */
 .remote-qr { display: none; }
 .remote-qr.show {
   display: flex; flex-direction: column; align-items: center; gap: var(--s-2);
-  margin: 4px 0 var(--s-3); padding: var(--s-4);
+  margin: calc(4 / 16 * var(--u)) 0 var(--s-3); padding: var(--s-4);
   background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-lg);
   box-shadow: var(--elev-1); text-align: center;
 }
 .remote-qr-code {
-  flex: 0 0 auto; width: 116px; height: 116px;
-  background: #fff; border-radius: 8px; padding: 6px; /* white quiet-zone so it scans */
+  flex: 0 0 auto; width: calc(116 / 16 * var(--u)); height: calc(116 / 16 * var(--u));
+  background: var(--qr-bg); border-radius: calc(8 / 16 * var(--u)); padding: calc(6 / 16 * var(--u)); /* white quiet-zone so it scans */
   display: flex; align-items: center; justify-content: center;
 }
 .remote-qr-code svg { width: 100%; height: 100%; display: block; }
 .remote-qr-code:empty { display: none; } /* no QR lib yet → show just the URL, not a blank white box */
-.remote-qr-title { font-size: 13px; font-weight: 600; }
-.remote-qr-urlrow { font-size: 12px; color: var(--muted); max-width: 100%; }
+.remote-qr-title { font-size: calc(13 / 16 * var(--u)); font-weight: 600; }
+.remote-qr-urlrow { font-size: calc(12 / 16 * var(--u)); color: var(--muted); max-width: 100%; }
 .remote-qr-url {
   color: var(--accent-2); text-decoration: none;
   word-break: break-all; line-height: 1.35;
 }
 .remote-qr-url:hover { text-decoration: underline; }
-.remote-qr-room { font-size: 12px; color: var(--muted); }
-.remote-qr-room strong { color: var(--accent); font-size: 16px; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
+.remote-qr-room { font-size: calc(12 / 16 * var(--u)); color: var(--muted); }
+.remote-qr-room strong { color: var(--accent); font-size: calc(16 / 16 * var(--u)); letter-spacing: 2px; font-variant-numeric: tabular-nums; }
 
-.stage > * { position: relative; z-index: 1; }
-
-/* VIDEO karaoke: the picture fills the freed middle only in video-mode. #kva has
+/* VIDEO karaoke: the picture (#kv) fills the stage in video-mode (stage.css). #kva has
    no layout (it's just the sound). */
-.kv {
-  display: none; flex: 1; min-height: 0; width: 100%;
-  object-fit: contain; background: #000; border-radius: 12px; margin-bottom: var(--s-2);
-}
-.kva { display: none; }
-body.video-mode .kv { display: block; }
 /* MIDI-only surfaces have no meaning for a baked-in video — hide them. The
    `.video-mode.guide-on` selector out-specifies `body.guide-on .pitch-guide` (block),
    so a VIDEO song hides the pitch guide even while the guide toggle stays ON; leaving
@@ -216,14 +99,8 @@ body.video-mode .lyrics-wrap { display: none; }
 /* Key ± IS live for video now — it pitch-shifts the video's audio via the shared
    KeyShiftChain (the key-name badge stays blank; there's no detected key). */
 
-/* YOUTUBE karaoke (BYOC): the official YouTube embed fills the freed middle only in
-   youtube-mode — same footprint as the VIDEO picture. */
-.ytplayer {
-  display: none; flex: 1; min-height: 0; width: 100%; border: 0;
-  background: #000; border-radius: 12px; margin-bottom: var(--s-2);
-  pointer-events: none; /* the app drives playback — block YT's hover controls/branding clicks */
-}
-body.youtube-mode .ytplayer { display: block; }
+/* YOUTUBE karaoke (BYOC): the official YouTube embed fills the stage in youtube-mode —
+   same footprint as the VIDEO picture (stage.css). */
 /* MIDI-only surfaces are meaningless for a baked-in YouTube video — hide them (mirrors
    video-mode; the `.guide-on` selector out-specifies `body.guide-on .pitch-guide`). */
 body.youtube-mode .pitch-guide,
@@ -240,7 +117,6 @@ body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none
    hides the NOTE-derived surfaces (pitch guide / chords / channel mixer), which need MIDI
    data. #kaudio is just the sound (no layout). Mirrors the video-mode `.guide-on` override
    trick so the guide stays hidden even while its toggle is ON. */
-.kaudio { display: none; }
 body.audio-mode .pitch-guide,
 body.audio-mode.guide-on .pitch-guide,
 body.audio-mode .chords,
@@ -248,84 +124,88 @@ body.audio-mode.chords-on .chords,
 body.audio-mode .midi-mixer,
 body.audio-mode.midi-mode .midi-mixer { display: none; }
 
-/* Library */
-/* Search row + pills scale with the display-size profile (--ui-scale), like the song rows. */
-.search-row { display: flex; gap: calc(8px * var(--ui-scale)); padding: calc(12px * var(--ui-scale)); align-items: center; }
+/* Library (the Songs panel) */
+/* Search row + pills scale with --u, like the song rows. */
+.search-row { display: flex; gap: calc(8 / 16 * var(--u)); padding: calc(12 / 16 * var(--u)); align-items: center; }
 .search-box { position: relative; flex: 1; display: flex; }
 #search {
-  flex: 1; padding: calc(11px * var(--ui-scale)) calc(32px * var(--ui-scale)) calc(11px * var(--ui-scale)) calc(14px * var(--ui-scale));
+  flex: 1; padding: calc(11 / 16 * var(--u)) calc(32 / 16 * var(--u)) calc(11 / 16 * var(--u)) calc(14 / 16 * var(--u));
   border-radius: var(--r-md); border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--text); font-size: calc(14px * var(--ui-scale));
+  background: var(--surface-2); color: var(--text); font-size: calc(14 / 16 * var(--u));
 }
 #search:focus { border-color: var(--brand); }
 .search-clear {
-  position: absolute; right: calc(6px * var(--ui-scale)); top: 50%; transform: translateY(-50%);
-  width: calc(20px * var(--ui-scale)); height: calc(20px * var(--ui-scale)); border: none; border-radius: 50%;
+  position: absolute; right: calc(6 / 16 * var(--u)); top: 50%; transform: translateY(-50%);
+  width: calc(20 / 16 * var(--u)); height: calc(20 / 16 * var(--u)); border: none; border-radius: 50%;
   background: var(--panel-2); color: var(--muted); cursor: pointer;
-  font-size: calc(11px * var(--ui-scale)); line-height: 1; display: none; align-items: center; justify-content: center;
+  font-size: calc(11 / 16 * var(--u)); line-height: 1; display: none; align-items: center; justify-content: center;
 }
 .search-clear.show { display: inline-flex; }
 .search-clear:hover { color: var(--ink); background: var(--accent); }
-.pill { background: var(--panel-2); color: var(--muted); border-radius: calc(20px * var(--ui-scale)); padding: calc(4px * var(--ui-scale)) calc(10px * var(--ui-scale)); font-size: calc(12px * var(--ui-scale)); }
+.pill { background: var(--panel-2); color: var(--muted); border-radius: calc(20 / 16 * var(--u)); padding: calc(4 / 16 * var(--u)) calc(10 / 16 * var(--u)); font-size: calc(12 / 16 * var(--u)); }
 .pill-btn { border: 1px solid var(--line); cursor: pointer; }
 .pill-btn:hover { color: var(--ink); border-color: var(--accent-2); }
 .pill-btn.active { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 .pill-btn:disabled { opacity: .4; cursor: not-allowed; } /* e.g. 🌐 YouTube on a non-Chromium browser */
 /* The ★ ⟲ 🌐 filters grouped into one segmented control (redesign). Buttons keep
    their ids/handlers; the container just unifies them visually. */
-.seg-filter { display: inline-flex; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: calc(3px * var(--ui-scale)); gap: 2px; flex: none; }
+.seg-filter { display: inline-flex; align-items: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: calc(3 / 16 * var(--u)); gap: 2px; flex: none; }
 .seg-filter .pill-btn { border: 0; background: none; }
 .seg-filter .pill-btn:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
 .seg-filter .pill-btn.active { background: var(--accent-2); color: #04231f; }
 /* text input in the ⚙ panel (e.g. YouTube append-keyword) */
 .set-text {
-  width: 130px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: 13px;
+  width: calc(130 / 16 * var(--u)); padding: calc(5 / 16 * var(--u)) calc(8 / 16 * var(--u)); border-radius: calc(8 / 16 * var(--u)); border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: calc(13 / 16 * var(--u));
 }
 .set-text:focus { border-color: var(--accent); }
 /* icon-only pills (★ favorites · ⟲ recent): square, centered glyph */
-.pill-btn.icon { padding: calc(4px * var(--ui-scale)); width: calc(30px * var(--ui-scale)); height: calc(28px * var(--ui-scale)); display: inline-flex; align-items: center; justify-content: center; font-size: calc(15px * var(--ui-scale)); line-height: 1; }
+.pill-btn.icon { padding: calc(4 / 16 * var(--u)); width: calc(30 / 16 * var(--u)); height: calc(28 / 16 * var(--u)); display: inline-flex; align-items: center; justify-content: center; font-size: calc(15 / 16 * var(--u)); line-height: 1; }
 
-.song-list, .queue-list { list-style: none; margin: 0; padding: 0 8px 12px; overflow-y: auto; }
+.song-list, .queue-list { list-style: none; margin: 0; padding: 0 calc(8 / 16 * var(--u)) calc(12 / 16 * var(--u)); overflow-y: auto; }
 .song-list { position: relative; }               /* virtualized: rows are absolute */
 /* Full scroll height without a spacer element (keeps the ul's children pure <li>): an in-flow
    pseudo-element sized to the total list height (--vlist-h, set by library-ui.js). */
 #song-list::after { content: ""; display: block; height: var(--vlist-h, 0); }
 .song {
-  /* Rows are abs-positioned against the ul's PADDING box (the ul's own 8px padding doesn't inset
-     them), so use 16px here to keep the intended gutter and clear the scrollbar on the right. */
-  position: absolute; left: 16px; right: 16px; height: var(--row-h); /* library-ui reads --row-h too */
-  /* Chrome scales with the display-size profile (--ui-scale) so the highlight box, gaps, icon column
-     and controls stay proportional to the scaled text — otherwise big TV text crams a tiny box.
-     --song-lead = the kind-icon column + the fixed number column (the phone rule narrows it). */
-  --song-lead: calc(30px * var(--ui-scale)) calc(56px * var(--ui-scale));
+  /* Rows are abs-positioned against the ul's PADDING box (the ul's own padding doesn't inset
+     them), so the gutter is set here: at least 16px (clears the scrollbar, CLAUDE.md §5.19),
+     growing with --u on big screens. */
+  position: absolute; left: max(16px, calc(16 / 16 * var(--u))); right: max(16px, calc(16 / 16 * var(--u)));
+  height: var(--row-h); /* library-ui measures a rendered row, so this is the one source */
+  /* Chrome scales with --u so the highlight box, gaps, icon column and controls stay
+     proportional to the scaled text — otherwise big TV text crams a tiny box.
+     --song-lead = the kind-icon column + the fixed number column (code over the songbook chip). */
+  --song-lead: calc(30 / 16 * var(--u)) calc(56 / 16 * var(--u));
   display: grid; grid-template-columns: var(--song-lead) 1fr auto auto;
-  align-items: center; gap: calc(8px * var(--ui-scale));
-  padding: calc(7px * var(--ui-scale)) calc(12px * var(--ui-scale));
+  align-items: center; gap: calc(8 / 16 * var(--u));
+  padding: calc(7 / 16 * var(--u)) calc(12 / 16 * var(--u));
   border-radius: var(--r-md); cursor: pointer;
-  border: max(1px, calc(1px * var(--ui-scale))) solid transparent;
+  border: max(1px, calc(1 / 16 * var(--u))) solid transparent;
 }
 .song.playing { border-color: var(--accent); background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .song:hover { background: var(--surface-1); }
 .song.selected { background: var(--surface-2); border-color: var(--accent); }
-.song .kind { font-size: calc(18px * var(--ui-scale)); }
+.song .kind { font-size: calc(18 / 16 * var(--u)); }
 .song .meta { display: flex; flex-direction: column; min-width: 0; }
-.song .title { font-size: calc(14px * var(--ui-scale)); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.song .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .title { font-size: calc(14 / 16 * var(--u)); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.song .artist { color: var(--muted); font-size: calc(12 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Number column: the dial number in tabular figures (so titles line up down the list), with the
-   songbook chip under it. A close-match row gets one more track, for its "≈" before the ★. */
+   songbook chip under it. A close-match row gets one more track, for its "≈" before the ★.
+   The chip sits UNDER the number inside the fixed lead column, so it costs the title no width;
+   it stays visible at every size (the panel is full width on a phone, wider than the old column). */
 .song.close-match { grid-template-columns: var(--song-lead) 1fr auto auto auto; }
 .song .num { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-width: 0; line-height: 1.2; }
 .song .code { color: var(--muted); font-size: var(--t-label); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .song .src-chip {
   color: var(--muted); font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em; white-space: nowrap;
-  padding: 0 calc(var(--s-1) * var(--ui-scale)); border: 1px solid var(--border); border-radius: var(--r-pill);
+  padding: 0 var(--s-1); border: 1px solid var(--border); border-radius: var(--r-pill);
 }
 .song .close-mark { color: var(--muted); font-size: var(--t-body); font-weight: 700; line-height: 1; }
 button.add {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
-  width: calc(28px * var(--ui-scale)); height: calc(28px * var(--ui-scale));
-  border-radius: var(--r-sm); cursor: pointer; font-size: calc(14px * var(--ui-scale)); line-height: 1;
+  width: calc(28 / 16 * var(--u)); height: calc(28 / 16 * var(--u));
+  border-radius: var(--r-sm); cursor: pointer; font-size: calc(14 / 16 * var(--u)); line-height: 1;
 }
 button.add:hover { background: var(--brand); border-color: transparent; color: var(--brand-ink); }
 
@@ -333,83 +213,39 @@ button.add:hover { background: var(--brand); border-color: transparent; color: v
    when starred; the star stays legible on hover without shouting like ＋. */
 button.fav {
   background: none; border: none; cursor: pointer; padding: 0;
-  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
-  border-radius: calc(8px * var(--ui-scale)); line-height: 1;
-  font-size: calc(16px * var(--ui-scale)); color: var(--muted); transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+  width: calc(26 / 16 * var(--u)); height: calc(26 / 16 * var(--u));
+  border-radius: calc(8 / 16 * var(--u)); line-height: 1;
+  font-size: calc(16 / 16 * var(--u)); color: var(--muted); transition: color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 button.fav:hover { color: var(--gold); }
 button.fav:active { transform: scale(.85); }
 button.fav.on { color: var(--gold); }
-
-/* Stage / now playing */
-/* The badges (key · lyric state · queue count) are `flex: none`, so on a narrow stage — the
-   settings drawer open on a laptop is enough — they took the whole row and squeezed .np-meta
-   to ZERO width: the song title disappeared entirely and the bar overflowed. Let the row wrap
-   and give the title a floor to claim, so the badges drop to a second line instead of evicting
-   the one piece of information the bar exists to show. */
-.now-playing { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
-.now-playing .np-meta { flex: 1 1 min(220px, 100%); }
-
-/* Singer badge — sits in the now-playing header (was a separate banner row). */
-.now-singer {
-  font-weight: 700; font-size: calc(12.5px * var(--ui-scale)); line-height: 1;
-  color: var(--brand-ink); background: var(--brand); border-radius: var(--r-pill);
-  padding: 6px 11px; white-space: nowrap; flex: none;
+/* Touch: the ★ / ＋ / ✕ glyph boxes stay small, but each hit area reaches most of the row
+   height (an invisible pseudo-element). Replaces the old phone-only "roomier targets"
+   breakpoint, without one: the extension stays inside the row's padding and the ★–＋ gap. */
+.song button.fav, .song button.add, .queue-list button.add { position: relative; }
+.song button.fav::after, .song button.add::after, .queue-list button.add::after {
+  content: ""; position: absolute; inset: calc(-0.5 * var(--u)) calc(-0.25 * var(--u));
 }
-.now-singer:empty { display: none; }
-/* "Up next" — a slim hint under the header; collapses when empty. */
-/* "Up next" — a teal-bordered PILL (matches the mockup): a mono eyebrow + the song.
-   OVERLAID (absolute) so appearing/vanishing in the last ~20 s never reflows the lyrics.
-   Floats top-right, just under the now-playing divider (the title stays clear on the left). */
-/* --upnext-mult scales the whole pill (font + padding + gap); 1 normally, 2 in focus mode
-   (body.focus-mode below) so the "up next" reads from across the room on a 10-foot display. */
-.up-next {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 4;
-  display: inline-flex; align-items: center; gap: calc(10px * var(--upnext-mult, 1));
-  width: max-content; max-width: 100%;
-  padding: calc(8px * var(--upnext-mult, 1)) calc(14px * var(--upnext-mult, 1));
-  background: var(--surface-1); border: 1px solid color-mix(in srgb, var(--brand-2) 40%, transparent);
-  border-radius: var(--r-pill); box-shadow: var(--elev-1); white-space: nowrap; overflow: hidden;
-}
-.up-next:empty { display: none; }
-.up-next .up-lb { flex: none; font: 700 calc(10px * var(--ui-scale) * var(--upnext-mult, 1))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
-.up-next .up-song { min-width: 0; font-size: calc(13px * var(--ui-scale) * var(--upnext-mult, 1)); color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-/* the queued next singer — brand pink, tying it to the singer identity */
-.up-next .up-by { flex: none; font-size: calc(12.5px * var(--ui-scale) * var(--upnext-mult, 1)); font-weight: 600; color: var(--brand); }
-/* Slide in from the right when it appears (last ~20 s). Token duration → auto-disabled
-   under prefers-reduced-motion. Plays once each time the pill gains content. */
-.up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }
-@keyframes upNextIn { from { opacity: 0; transform: translate(calc(-50% + 22px), -50%); } to { opacity: 1; transform: translate(-50%, -50%); } }
 
-/* Fullscreen top-bar button active state (it lives outside .toggles). */
+/* Stage / now playing: the queue bar (#queue-bar.now-playing) and its children live in
+   stage.css. The generic pill and the full-screen button's active state stay here. */
+/* Full-screen button active state (the button now sits in the control bar). */
 .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
-.np-code { font-size: calc(26px * var(--ui-scale)); line-height: 1; user-select: none; } /* source-kind icon */
-.np-code:empty { display: none; }
-.np-meta { flex: 1; min-width: 0; }
-.np-title { font-size: calc(21px * var(--ui-scale)); font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.np-artist { color: var(--muted); font-size: calc(14px * var(--ui-scale)); }
-.badge { font-size: calc(11px * var(--ui-scale)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: 3px 8px; border-radius: 20px; }
+.badge { font-size: calc(11 / 16 * var(--u)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: calc(3 / 16 * var(--u)) calc(8 / 16 * var(--u)); border-radius: calc(20 / 16 * var(--u)); }
 .badge:empty { display: none; }
-/* Queued-song count: same pill as .badge, teal fill to tie it to the queue / "up next". */
-.queue-count { flex: none; background: var(--brand-2); font-weight: 700; letter-spacing: .3px; }
 
 /* Source icon on each song row (and queue item): 🎤 MIDI · 🎞️ video. */
 .kind {
-  font-size: 15px; line-height: 1; text-align: center; user-select: none;
+  font-size: calc(15 / 16 * var(--u)); line-height: 1; text-align: center; user-select: none;
 }
-.np-key {
-  font-size: calc(12px * var(--ui-scale)); color: var(--accent-2); background: var(--panel-2);
-  border: 1px solid var(--line); padding: 4px 11px; border-radius: 20px;
-  white-space: nowrap; font-variant-numeric: tabular-nums;
-}
-.np-key:empty { display: none; }
-.np-key.uncertain { color: var(--muted); }
 .ctl label em { color: var(--accent-2); font-style: normal; }
 
-/* Pitch guide (scrolling piano-roll) */
+/* Pitch guide (scrolling piano-roll). Height = ⚙ Band height in 16ths of --u: app.js writes
+   --guide-height; the fallback is the 150 default in the same units. */
 .pitch-guide {
-  display: none; width: 100%; height: var(--guide-height, 150px);
-  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent);
+  display: none; width: 100%; height: var(--guide-height, calc(150 / 16 * var(--u)));
+  border-radius: calc(12 / 16 * var(--u)); background: color-mix(in srgb, var(--surface-1) 68%, transparent);
   border: 1px solid var(--line); margin-bottom: var(--s-2); flex: 0 1 auto; min-height: 0;
 }
 body.guide-on .pitch-guide { display: block; }
@@ -420,7 +256,7 @@ body.guide-on .pitch-guide { display: block; }
 body.chords-on .chords { display: block; }
 .chord-view {
   position: relative; width: 100%; overflow: hidden; height: 2.2em;
-  font-size: calc(clamp(15px, 2vw, 22px) * var(--ui-scale));
+  font-size: calc(1.15 * var(--u));
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
           mask-image: linear-gradient(90deg, transparent 0, #000 12%, #000 88%, transparent 100%);
 }
@@ -432,7 +268,7 @@ body.chords-on .chords { display: block; }
 }
 .chord-chip {
   flex: 0 0 auto; font-weight: 800; letter-spacing: .3px;
-  padding: 2px 12px; border-radius: 999px; border: 1px solid var(--line);
+  padding: 2px calc(12 / 16 * var(--u)); border-radius: 999px; border: 1px solid var(--line);
   color: var(--muted); background: var(--panel-2);
   transition: color var(--dur-base) var(--ease), background var(--dur-base) var(--ease), transform var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease);
 }
@@ -445,50 +281,28 @@ body.chords-on .chords { display: block; }
 }
 .chord-chip.placeholder { color: var(--muted); background: none; border: 0; font-weight: 600; }
 
-/* MIDI mode — per-channel mixer band (built in midi-mixer.js). Sits between the
-   lyrics and the transport; a fixed, scrollable band like the pitch guide. */
+/* MIDI mode — per-channel mixer (built in midi-mixer.js). It is the body of the Mixer panel
+   (#ov-mixer, overlays.css): a scrollable column of channel rows filling the panel below its
+   header. No card of its own — the panel is the surface. */
 .midi-mixer {
-  display: none; flex: 0 0 auto; width: 100%;
-  max-height: 190px; overflow-y: auto;
-  padding: 8px 10px; margin-bottom: var(--s-2);
-  border-radius: 12px; background: color-mix(in srgb, var(--surface-1) 68%, transparent); border: 1px solid var(--line);
-  grid-template-columns: 1fr; gap: 4px;
+  display: none; flex: 1 1 auto; min-height: 0; width: 100%;
+  overflow-y: auto; overflow-x: hidden;
+  padding: calc(8 / 16 * var(--u)) var(--pad) var(--pad);
+  grid-template-columns: 1fr; gap: calc(4 / 16 * var(--u)); align-content: start;
 }
 body.midi-mode .midi-mixer { display: grid; }
-/* On a wide desktop the mixer docks as a right RAIL that reflows the stage — never
-   covering the lyrics (the same "make room" pattern as the settings drawer). Below this
-   width it stays the inline band (there isn't room for a rail). */
-@media (min-width: 1100px) {
-  body.midi-mode .midi-mixer {
-    position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
-    width: min(300px, 32vw); max-height: none; margin: 0;
-    border: 0; border-left: 1px solid var(--line); border-radius: 0;
-    background: var(--surface-1); padding: 16px 12px;
-    overflow-x: hidden; /* never scroll sideways — rows stack to fit the rail (below) */
-  }
-  /* Stack each channel row to fit the narrow rail: [label · M · S] / [volume] / [VU]. */
-  body.midi-mode .mx-row { grid-template-columns: 1fr 26px 26px; gap: 5px 6px; }
-  body.midi-mode .mx-vol { grid-column: 1 / -1; grid-row: 2; }
-  body.midi-mode .mx-vu  { grid-column: 1 / -1; grid-row: 3; }
-  body.midi-mode .layout,
-  body.midi-mode .topbar { margin-right: min(300px, 32vw); }
-  /* both rails open (mixer + settings): sum the widths, dock the mixer left of the drawer */
-  body.midi-mode.settings-open .layout,
-  body.midi-mode.settings-open .topbar { margin-right: calc(min(300px, 32vw) + min(360px, 40vw)); }
-  body.midi-mode.settings-open .midi-mixer { right: min(360px, 40vw); }
-}
 .mx-row {
-  display: grid; align-items: center; gap: 10px;
-  grid-template-columns: 92px 150px 24px 24px 1fr;
-  font-size: 12px; color: var(--muted);
+  display: grid; align-items: center; gap: calc(10 / 16 * var(--u));
+  grid-template-columns: calc(92 / 16 * var(--u)) calc(150 / 16 * var(--u)) calc(24 / 16 * var(--u)) calc(24 / 16 * var(--u)) 1fr;
+  font-size: calc(12 / 16 * var(--u)); color: var(--muted);
 }
 .mx-row.inactive { opacity: .4; } /* channels with no notes in this song */
 .mx-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .mx-row .mx-vol { width: 100%; margin: 0; }
 .mx-btn {
-  width: 24px; height: 22px; padding: 0; border-radius: 6px;
+  width: calc(24 / 16 * var(--u)); height: calc(22 / 16 * var(--u)); padding: 0; border-radius: calc(6 / 16 * var(--u));
   border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-  font-size: 11px; font-weight: 700; cursor: pointer; line-height: 1;
+  font-size: calc(11 / 16 * var(--u)); font-weight: 700; cursor: pointer; line-height: 1;
 }
 .mx-btn:hover { border-color: var(--accent-2); }
 .mx-mute.on { background: var(--accent); border-color: var(--accent); color: #05060a; }
@@ -497,7 +311,7 @@ body.midi-mode .midi-mixer { display: grid; }
    an over-mask hides the unlit right portion, its width set each frame in JS
    (level 0 → mask 100% = dark; level high → mask small = more of the gradient shows). */
 .mx-vu {
-  position: relative; height: 14px; width: 100%; border-radius: 5px; overflow: hidden;
+  position: relative; height: calc(14 / 16 * var(--u)); width: 100%; border-radius: calc(5 / 16 * var(--u)); overflow: hidden;
   background: linear-gradient(90deg, #35d07f 0%, #7ed957 42%, #ffd23f 70%, #ff5a5f 100%);
 }
 .mx-vu-mask {
@@ -509,11 +323,13 @@ body.midi-mode .midi-mixer { display: grid; }
 /* Lyrics — a smooth-scrolling column of lines inside a masked viewport */
 .lyrics {
   flex: 1 1 auto; display: flex; align-items: center; justify-content: center;
-  /* Guaranteed floor so the guide / chords / mixer can never crush the lyrics —
+  /* Guaranteed floor so the guide / chords can never crush the lyrics —
      those lanes yield their space first (flex-shrink below). */
-  min-height: clamp(120px, 22vh, 280px);
-  padding: 12px 20px; width: 100%;
-  font-size: calc(clamp(20px, 3.1vw, 38px) * var(--font-scale) * var(--ui-scale));
+  min-height: clamp(calc(120 / 16 * var(--u)), 22vh, calc(280 / 16 * var(--u)));
+  padding: calc(12 / 16 * var(--u)) calc(20 / 16 * var(--u)); width: 100%;
+  /* Scroll-style lyric size: no px cap any more (38px was tiny on a 4K TV); the Lyrics
+     size slider multiplies on top. The stage style sizes itself from this box (§5.31). */
+  font-size: calc(2.4 * var(--u) * var(--font-scale));
 }
 .lyric-view {
   position: relative; width: 100%; overflow: hidden;
@@ -565,74 +381,74 @@ body.midi-mode .midi-mixer { display: grid; }
 
 /* Seek + time */
 /* Seek bar with the current/total time inline on either side */
-.seek-row { display: flex; align-items: center; gap: 10px; margin: 6px 2px 14px; }
+.seek-row { display: flex; align-items: center; gap: calc(10 / 16 * var(--u)); margin: calc(6 / 16 * var(--u)) 2px calc(14 / 16 * var(--u)); }
 .seek-row .seek-track { flex: 1; }
-.t-time { color: var(--muted); font-size: calc(12px * var(--ui-scale)); font-variant-numeric: tabular-nums; flex: none; }
-.seek-track { height: 8px; background: var(--panel-2); border-radius: 20px; overflow: hidden; cursor: pointer; }
+.t-time { color: var(--muted); font-size: calc(12 / 16 * var(--u)); font-variant-numeric: tabular-nums; flex: none; }
+.seek-track { height: calc(8 / 16 * var(--u)); background: var(--panel-2); border-radius: calc(20 / 16 * var(--u)); overflow: hidden; cursor: pointer; }
 .seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 
-/* Playback bar — transport ▏ Key ▏ Tempo ▏ Volume spread evenly across the full width.
+/* Playback bar — transport ▏ Key ▏ Tempo ▏ Volume ▏ panel buttons spread across the full width.
    .controls is display:contents (below) so its .ctl children participate directly in this
-   space-between distribution; it regroups into a centered row on phones. */
-.playbar { display: flex; align-items: center; justify-content: space-between; gap: 16px 28px; flex-wrap: wrap; }
+   space-between distribution; the bar wraps when it runs out of width (portrait regroups
+   it into centred rows — overlays.css). */
+.playbar { display: flex; align-items: center; justify-content: space-between; gap: calc(16 / 16 * var(--u)) calc(28 / 16 * var(--u)); flex-wrap: wrap; }
 
 /* Transport */
-.transport { display: flex; gap: 12px; align-items: center; flex: none; }
+.transport { display: flex; gap: calc(12 / 16 * var(--u)); align-items: center; flex: none; }
 .transport button {
-  width: calc(52px * var(--ui-scale)); height: calc(52px * var(--ui-scale)); border-radius: 50%; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: calc(18px * var(--ui-scale)); cursor: pointer;
+  width: calc(52 / 16 * var(--u)); height: calc(52 / 16 * var(--u)); border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: calc(18 / 16 * var(--u)); cursor: pointer;
 }
 .transport button:hover { border-color: var(--accent-2); }
-.transport .primary { width: calc(66px * var(--ui-scale)); height: calc(66px * var(--ui-scale)); font-size: calc(22px * var(--ui-scale)); background: var(--accent); border: none; }
+.transport .primary { width: calc(66 / 16 * var(--u)); height: calc(66 / 16 * var(--u)); font-size: calc(22 / 16 * var(--u)); background: var(--accent); border: none; }
 .transport .primary:hover { filter: brightness(1.1); }
 
-/* Controls — dissolve the wrapper so its .ctl children spread within .playbar (regrouped on phones). */
+/* Controls — dissolve the wrapper so its .ctl children spread within .playbar. */
 .controls { display: contents; }
-.ctl { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-.ctl label { color: var(--text-muted); font: 600 calc(11px * var(--ui-scale))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .14em; }
-.stepper { display: flex; align-items: center; gap: 10px; }
-.stepper button { width: calc(30px * var(--ui-scale)); height: calc(30px * var(--ui-scale)); border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-size: calc(15px * var(--ui-scale)); }
+.ctl { display: flex; flex-direction: column; gap: calc(6 / 16 * var(--u)); align-items: center; }
+.ctl label { color: var(--text-muted); font: 600 calc(11 / 16 * var(--u))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .14em; }
+.stepper { display: flex; align-items: center; gap: calc(10 / 16 * var(--u)); }
+.stepper button { width: calc(30 / 16 * var(--u)); height: calc(30 / 16 * var(--u)); border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-size: calc(15 / 16 * var(--u)); }
 .stepper button:hover { border-color: var(--brand-2); }
-.stepper span { min-width: 28px; text-align: center; font-weight: 700; font-size: calc(14px * var(--ui-scale)); font-variant-numeric: tabular-nums; }
-input[type=range] { width: 160px; accent-color: var(--accent); }
+.stepper span { min-width: calc(28 / 16 * var(--u)); text-align: center; font-weight: 700; font-size: calc(14 / 16 * var(--u)); font-variant-numeric: tabular-nums; }
+input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent); }
 
-/* Queue */
-.queue h3 { margin: 4px 4px 14px; font: 700 calc(12px * var(--ui-scale))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); }
+/* Queue (the Queue panel; its title is the panel's .ov-head) */
 .muted { color: var(--muted); font-weight: 400; }
 /* Queue rows mirror the search-list .song layout (icon · title/artist · remove) and scale the same way. */
-.queue-list li { display: grid; grid-template-columns: calc(30px * var(--ui-scale)) 1fr auto; align-items: center; gap: calc(8px * var(--ui-scale));
-  padding: calc(7px * var(--ui-scale)) calc(12px * var(--ui-scale)); border-radius: var(--r-md); background: var(--surface-1); margin-bottom: calc(6px * var(--ui-scale)); border: 1px solid transparent; }
+.queue-list li { display: grid; grid-template-columns: calc(30 / 16 * var(--u)) 1fr auto; align-items: center; gap: calc(8 / 16 * var(--u));
+  padding: calc(7 / 16 * var(--u)) calc(12 / 16 * var(--u)); border-radius: var(--r-md); background: var(--surface-1); margin-bottom: calc(6 / 16 * var(--u)); border: 1px solid transparent; }
 .queue-list li:hover { border-color: var(--border); }
-.qsong .kind { font-size: calc(18px * var(--ui-scale)); }
+.qsong .kind { font-size: calc(18 / 16 * var(--u)); }
 .qsong .meta { display: flex; flex-direction: column; min-width: 0; }
-.qsong .title { font-size: calc(14px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.qsong .artist { color: var(--muted); font-size: calc(12px * var(--ui-scale)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .title { font-size: calc(14 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qsong .artist { color: var(--muted); font-size: calc(12 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist .by { color: var(--accent-2); }
 .queue-list .code { color: var(--accent-2); font-weight: 700; }
-.queue-list .qt { flex: 1; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
-.queue .hint { font-size: calc(12px * var(--ui-scale)); } /* queue hint scales with the profile */
+.queue-list .qt { flex: 1; font-size: calc(13 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint { color: var(--muted); font-size: calc(12 / 16 * var(--u)); margin-top: calc(14 / 16 * var(--u)); }
 
-/* Overlay */
-.overlay { position: fixed; inset: 0; background: rgba(6,8,14,.82); display: flex; align-items: center; justify-content: center; z-index: 50; }
+/* Boot veil (#overlay: soundfont progress) — last child of <body>, above every overlay. */
+.overlay { position: fixed; inset: 0; background: rgba(6,8,14,.82); display: flex; align-items: center; justify-content: center; z-index: 90; }
 .overlay.hidden { display: none; }
-.overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 30px 40px; text-align: center; width: min(420px, 90vw); }
-.overlay-track { height: 6px; background: var(--panel-2); border-radius: 20px; margin-top: 16px; overflow: hidden; }
+.overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: calc(16 / 16 * var(--u)); padding: calc(30 / 16 * var(--u)) calc(40 / 16 * var(--u)); text-align: center; width: min(calc(420 / 16 * var(--u)), 90vw); }
+.overlay-track { height: calc(6 / 16 * var(--u)); background: var(--panel-2); border-radius: calc(20 / 16 * var(--u)); margin-top: calc(16 / 16 * var(--u)); overflow: hidden; }
 .overlay-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
-.spinner { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto 16px; animation: spin 1s linear infinite; }
+.spinner { width: calc(34 / 16 * var(--u)); height: calc(34 / 16 * var(--u)); border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto calc(16 / 16 * var(--u)); animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Title card — song title/artist/key over the LYRICS AREA, then fades to the lyrics */
 .lyrics-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
-/* ~50% of the screen height, centered on the stage column (overflows the shorter
-   lyrics-wrap). Stays in-column so it never covers the song list / queue. The TITLE is
-   auto-sized by JS (fitTitleCard) to the largest font that fills this fixed height without
-   truncating — so a short title is huge and a long one shrinks to fit, using the space. */
+/* ~50% of the screen height, centered on the lyric area (overflows the shorter lyrics-wrap).
+   Stays inside the stage flow, so it reflows beside an open panel instead of under it. The
+   TITLE is auto-sized by JS (fitTitleCard) to the largest font that fills this fixed height
+   without truncating — so a short title is huge and a long one shrinks to fit, using the space.
+   Font clamps: the px bounds became --u bounds and the vw middle keeps the Font-size multiplier. */
 .title-card {
   position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
-  overflow: hidden; z-index: 3; border-radius: 12px;
+  overflow: hidden; z-index: 3; border-radius: calc(12 / 16 * var(--u));
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; text-align: center; padding: 24px;
+  gap: calc(10 / 16 * var(--u)); text-align: center; padding: calc(24 / 16 * var(--u));
   /* Brand-tinted rather than a fixed dark rgba: this is the moment the room looks up,
      and it should look like THIS app in either theme, not like a generic scrim. */
   background:
@@ -643,10 +459,10 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 }
 .title-card.show { opacity: 1; }
 /* font-size here is only a pre-JS fallback; fitTitleCard() overrides it inline to fill the card. */
-.tc-title { font-size: calc(clamp(32px, 6vw, 64px) * var(--ui-scale)); font-weight: 800; line-height: 1.08; max-width: 96%; }
-.tc-artist { font-size: calc(clamp(20px, 3.4vw, 36px) * var(--ui-scale)); color: var(--muted); }
-.tc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(18px, 2.6vw, 28px) * var(--ui-scale)); }
-.tc-key { margin-top: 8px; color: var(--accent-2); font-size: calc(18px * var(--ui-scale)); }
+.tc-title { font-size: clamp(calc(32 / 16 * var(--u)), calc(6vw * var(--scale)), calc(64 / 16 * var(--u))); font-weight: 800; line-height: 1.08; max-width: 96%; }
+.tc-artist { font-size: clamp(calc(20 / 16 * var(--u)), calc(3.4vw * var(--scale)), calc(36 / 16 * var(--u))); color: var(--muted); }
+.tc-singer { margin-top: calc(6 / 16 * var(--u)); color: var(--accent); font-weight: 700; font-size: clamp(calc(18 / 16 * var(--u)), calc(2.6vw * var(--scale)), calc(28 / 16 * var(--u))); }
+.tc-key { margin-top: calc(8 / 16 * var(--u)); color: var(--accent-2); font-size: calc(18 / 16 * var(--u)); }
 .tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
 /* ---------------------------------------------------------------------------
@@ -657,23 +473,23 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
    --------------------------------------------------------------------------- */
 .score-card {
   position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
-  overflow: hidden; z-index: 4; border-radius: 12px;
+  overflow: hidden; z-index: 4; border-radius: calc(12 / 16 * var(--u));
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; text-align: center; padding: 24px;
+  gap: calc(4 / 16 * var(--u)); text-align: center; padding: calc(24 / 16 * var(--u));
   background: color-mix(in srgb, var(--brand) 12%, var(--surface-0)); backdrop-filter: blur(4px);
   opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
 }
 .score-card.show { opacity: 1; }
-.sc-song { font-size: calc(clamp(14px, 1.8vw, 22px) * var(--ui-scale)); color: var(--text-muted); }
+.sc-song { font-size: clamp(calc(14 / 16 * var(--u)), calc(1.8vw * var(--scale)), calc(22 / 16 * var(--u))); color: var(--text-muted); }
 .sc-score {
-  font-size: calc(clamp(72px, 18vw, 220px) * var(--ui-scale)); font-weight: 800; line-height: 1;
+  font-size: clamp(calc(72 / 16 * var(--u)), calc(18vw * var(--scale)), calc(220 / 16 * var(--u))); font-weight: 800; line-height: 1;
   font-variant-numeric: tabular-nums; letter-spacing: -.03em; color: var(--brand);
 }
-.sc-band { font-size: calc(clamp(20px, 3.4vw, 40px) * var(--ui-scale)); font-weight: 700; }
+.sc-band { font-size: clamp(calc(20 / 16 * var(--u)), calc(3.4vw * var(--scale)), calc(40 / 16 * var(--u))); font-weight: 700; }
 .sc-band.excellent { color: var(--gold); }
 .sc-band.good { color: var(--brand-2); }
-.sc-singer { margin-top: 6px; color: var(--accent); font-weight: 700; font-size: calc(clamp(16px, 2.2vw, 26px) * var(--ui-scale)); }
-.sc-best { margin-top: 4px; color: var(--gold); font-weight: 700; font-size: calc(clamp(13px, 1.6vw, 18px) * var(--ui-scale)); }
+.sc-singer { margin-top: calc(6 / 16 * var(--u)); color: var(--accent); font-weight: 700; font-size: clamp(calc(16 / 16 * var(--u)), calc(2.2vw * var(--scale)), calc(26 / 16 * var(--u))); }
+.sc-best { margin-top: calc(4 / 16 * var(--u)); color: var(--gold); font-weight: 700; font-size: clamp(calc(13 / 16 * var(--u)), calc(1.6vw * var(--scale)), calc(18 / 16 * var(--u))); }
 .sc-song:empty, .sc-singer:empty, .sc-best:empty { display: none; }
 /* The score pops in rather than fading — it should land like a verdict. */
 @media (prefers-reduced-motion: no-preference) {
@@ -683,9 +499,9 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
 
 /* Per-line bonus chip — brief feedback between the start and the final number. */
 .line-bonus {
-  position: absolute; z-index: 3; left: 50%; top: 12px; transform: translateX(-50%);
-  padding: 4px calc(12px * var(--ui-scale)); border-radius: var(--r-pill);
-  font-size: calc(14px * var(--ui-scale)); font-weight: 700; letter-spacing: .02em;
+  position: absolute; z-index: 3; left: 50%; top: calc(12 / 16 * var(--u)); transform: translateX(-50%);
+  padding: calc(4 / 16 * var(--u)) calc(12 / 16 * var(--u)); border-radius: var(--r-pill);
+  font-size: calc(14 / 16 * var(--u)); font-weight: 700; letter-spacing: .02em;
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
   opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease);
 }
@@ -701,12 +517,12 @@ input[type=range] { width: 160px; accent-color: var(--accent); }
    --------------------------------------------------------------------------- */
 .reaction {
   position: absolute; bottom: 12%; z-index: 5; pointer-events: none;
-  font-size: calc(34px * var(--ui-scale)); line-height: 1;
+  font-size: calc(34 / 16 * var(--u)); line-height: 1;
   animation: react-float 2600ms var(--ease) both;
   will-change: transform, opacity;
 }
 @keyframes react-float {
-  0%   { transform: translate(0, 20px) scale(.6); opacity: 0; }
+  0%   { transform: translate(0, calc(20 / 16 * var(--u))) scale(.6); opacity: 0; }
   12%  { transform: translate(0, 0) scale(1.15); opacity: 1; }
   100% { transform: translate(var(--drift, 0), -46vh) scale(1); opacity: 0; }
 }
@@ -729,65 +545,49 @@ body.audio-mode .transport .melody-toggle { opacity: .4; pointer-events: none; }
 /* Bluetooth mode dims the mic controls */
 body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 
-/* Offset toast */
-.offset-toast {
-  position: absolute; top: 14px; left: 50%; transform: translateX(-50%) translateY(-8px);
-  background: color-mix(in srgb, var(--surface-0) 92%, transparent); border: 1px solid var(--accent-2); color: var(--ink);
-  padding: 8px 16px; border-radius: 20px; font-size: 13px; font-variant-numeric: tabular-nums;
-  opacity: 0; pointer-events: none; transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); z-index: 5;
-}
-.offset-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* Adjust toast: the visible toast is #ov-adjust (.ov-toast, overlays.css); #offset-toast stays
+   in the stage as an empty kept element. */
 
-/* Settings drawer */
-.settings-panel {
-  position: fixed; top: 0; right: 0; height: 100%; width: min(360px, 92vw);
-  background: var(--surface-1); border-left: 1px solid var(--border); z-index: 60;
-  display: flex; flex-direction: column; box-shadow: var(--elev-2);
-  transition: transform var(--dur-base) var(--ease);
-}
-.settings-panel.hidden { transform: translateX(102%); }
-/* Make room, don't cover: on a wide desktop the stage + topbar reflow beside the open
-   drawer so the lyrics are never covered. Below this width there isn't room, so the
-   drawer overlays as before (you're configuring, not performing). */
-@media (min-width: 1100px) {
-  .topbar { transition: margin-right var(--dur-base) var(--ease); } /* .layout owns its own transition (collapse section) */
-  body.settings-open .layout,
-  body.settings-open .topbar { margin-right: min(360px, 40vw); }
-}
+/* Settings drawer — the Settings panel (#settings-panel.ov-panel: geometry, surface and motion
+   in overlays.css, like every panel). Its own header and scrolling body: */
+.settings-panel { display: flex; flex-direction: column; }
 .settings-head { display: flex; align-items: center; justify-content: space-between; padding: var(--s-4) var(--s-5); border-bottom: 1px solid var(--border-soft); }
-.settings-head h3 { margin: 0; font: 800 12px/1 var(--font-mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text); }
-.settings-body { padding: var(--s-4) var(--s-5); overflow-y: auto; }
+.settings-head h3 { margin: 0; font: 800 calc(12 / 16 * var(--u))/1 var(--font-mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text); }
+.settings-body { padding: var(--s-4) var(--s-5); overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 .settings-body section { margin-bottom: var(--s-6); }
-.settings-body h4 { margin: 0 0 var(--s-3); font: 700 11px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--brand-2); }
-.settings-body .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: var(--s-3); font-size: 13px; }
+.settings-body h4 { margin: 0 0 var(--s-3); font: 700 calc(11 / 16 * var(--u))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--brand-2); }
+.settings-body .row { display: flex; flex-direction: column; gap: calc(6 / 16 * var(--u)); margin-bottom: var(--s-3); font-size: calc(13 / 16 * var(--u)); }
 .settings-body .row span { display: flex; justify-content: space-between; align-items: center; color: var(--text); }
 .settings-body .row em { color: var(--text-muted); font-style: normal; font-variant-numeric: tabular-nums; }
 .settings-body .row input[type=range] { width: 100%; accent-color: var(--brand); }
 .settings-body .row.toggle { flex-direction: row; align-items: center; justify-content: space-between; }
-/* Native checkboxes → the gallery toggle switch (cheap, token-driven). */
+/* Native checkboxes → the gallery toggle switch (cheap, token-driven). The knob's inset is
+   3/16u − 1px (= the old 2px at 16px/u), so it stays centred at every scale while the 1px
+   border does not scale; the travel is then exactly 18/16u. */
 .settings-body input[type=checkbox] {
   appearance: none; -webkit-appearance: none; margin: 0; cursor: pointer; flex: none;
-  width: 42px; height: 24px; border-radius: var(--r-pill); position: relative;
+  width: calc(42 / 16 * var(--u)); height: calc(24 / 16 * var(--u)); border-radius: var(--r-pill); position: relative;
   background: var(--surface-2); border: 1px solid var(--border);
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 .settings-body input[type=checkbox]::after {
-  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+  content: ""; position: absolute; top: calc(3 / 16 * var(--u) - 1px); left: calc(3 / 16 * var(--u) - 1px);
+  width: calc(18 / 16 * var(--u)); height: calc(18 / 16 * var(--u));
   border-radius: 50%; background: var(--text-muted);
   transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 .settings-body input[type=checkbox]:checked { background: color-mix(in srgb, var(--brand-2) 26%, transparent); border-color: var(--brand-2); }
-.settings-body input[type=checkbox]:checked::after { transform: translateX(18px); background: var(--brand-2); }
+.settings-body input[type=checkbox]:checked::after { transform: translateX(calc(18 / 16 * var(--u))); background: var(--brand-2); }
 .settings-body select {
   background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 6px 10px; font-size: 13px; cursor: pointer; min-width: 120px;
+  border-radius: var(--r-sm); padding: calc(6 / 16 * var(--u)) calc(10 / 16 * var(--u)); font-size: calc(13 / 16 * var(--u)); cursor: pointer; min-width: calc(120 / 16 * var(--u));
 }
 .settings-body select:focus { border-color: var(--brand-2); }
-.hint.sub { margin: -6px 0 var(--s-3); font-size: 11px; }
-#rebuild-status { margin: 8px 0 0; } /* sits below the rebuild button, not crammed against it */
+.hint.sub { margin: calc(-6 / 16 * var(--u)) 0 var(--s-3); font-size: calc(11 / 16 * var(--u)); }
+#rebuild-status { margin: calc(8 / 16 * var(--u)) 0 0; } /* sits below the rebuild button, not crammed against it */
 #rebuild-status:empty { margin: 0; }
-.hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 11px; }
-.reset-btn { width: 100%; padding: 11px; border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 13px/1 var(--font-sans); }
+.hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: calc(4 / 16 * var(--u)); padding: 0 calc(5 / 16 * var(--u)); font-size: calc(11 / 16 * var(--u)); }
+.reset-btn { width: 100%; padding: calc(11 / 16 * var(--u)); border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 calc(13 / 16 * var(--u))/1 var(--font-sans); }
 .reset-btn:hover { background: var(--brand); color: var(--brand-ink); }
 /* Reset-offset sits inline in the Lyrics section; give it the row's bottom rhythm so it
    isn't flush against the next control (the hint above already provides the top gap). */
@@ -798,36 +598,37 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .reset-btn.danger { border-color: var(--bad); color: var(--bad); }
 .reset-btn.danger:hover { background: var(--bad); color: #fff; }
 .reset-btn.danger.armed { background: var(--bad); color: #fff; font-weight: 700; } /* second-click confirm state */
-.sub-h { font: 700 10px/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); margin: 6px 0 10px; border-top: 1px solid var(--border-soft); padding-top: var(--s-3); }
-.mic-btn { border-color: var(--brand-2); color: var(--brand-2); margin-bottom: 8px; }
+.sub-h { font: 700 calc(10 / 16 * var(--u))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--text-muted); margin: calc(6 / 16 * var(--u)) 0 calc(10 / 16 * var(--u)); border-top: 1px solid var(--border-soft); padding-top: var(--s-3); }
+.mic-btn { border-color: var(--brand-2); color: var(--brand-2); margin-bottom: calc(8 / 16 * var(--u)); }
 
-/* ⚙ settings: search box + collapsible categories */
-.set-search { position: sticky; top: -16px; z-index: 2; display: flex; align-items: center; gap: 6px;
-  background: var(--panel); padding: 4px 0 12px; margin: -4px 0 6px; }
+/* ⚙ settings: search box + collapsible categories. The sticky search bar wears the panel's
+   own surface so the rows scroll under it seamlessly. */
+.set-search { position: sticky; top: calc(-16 / 16 * var(--u)); z-index: 2; display: flex; align-items: center; gap: calc(6 / 16 * var(--u));
+  background: var(--overlay-bg); padding: calc(4 / 16 * var(--u)) 0 calc(12 / 16 * var(--u)); margin: calc(-4 / 16 * var(--u)) 0 calc(6 / 16 * var(--u)); }
 .set-search input {
   flex: 1; background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
-  border-radius: 10px; padding: 9px 12px; font-size: 13px; -webkit-appearance: none; appearance: none;
+  border-radius: calc(10 / 16 * var(--u)); padding: calc(9 / 16 * var(--u)) calc(12 / 16 * var(--u)); font-size: calc(13 / 16 * var(--u)); -webkit-appearance: none; appearance: none;
 }
 .set-search input::-webkit-search-cancel-button { display: none; }
 .set-search input:focus { border-color: var(--accent-2); }
 .set-search-x {
-  flex: none; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
-  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: 12px;
+  flex: none; width: calc(30 / 16 * var(--u)); height: calc(30 / 16 * var(--u)); border-radius: calc(8 / 16 * var(--u)); cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); font-size: calc(12 / 16 * var(--u));
 }
 .set-search-x:hover { color: var(--ink); border-color: var(--accent-2); }
 .set-search-x.hidden { display: none; }
-.set-no-results { color: var(--accent-2); margin: 2px 0 12px; }
+.set-no-results { color: var(--accent-2); margin: 2px 0 calc(12 / 16 * var(--u)); }
 .set-no-results.hidden { display: none; }
 
 .set-cat { border-top: 1px solid var(--line); }
 .set-cat > summary {
   list-style: none; cursor: pointer; user-select: none;
-  display: flex; align-items: center; gap: 8px;
-  padding: 13px 2px; font-size: 13px; font-weight: 600; letter-spacing: .4px; color: var(--ink);
+  display: flex; align-items: center; gap: calc(8 / 16 * var(--u));
+  padding: calc(13 / 16 * var(--u)) 2px; font-size: calc(13 / 16 * var(--u)); font-weight: 600; letter-spacing: .4px; color: var(--ink);
 }
 .set-cat > summary::-webkit-details-marker { display: none; }
 .set-cat > summary::after {
-  content: "▸"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform var(--dur-base) var(--ease);
+  content: "▸"; margin-left: auto; color: var(--muted); font-size: calc(12 / 16 * var(--u)); transition: transform var(--dur-base) var(--ease);
 }
 .set-cat[open] > summary::after { transform: rotate(90deg); }
 .set-cat > summary:hover { color: var(--accent-2); }
@@ -837,146 +638,52 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .settings-body .filtered-out { display: none; }
 .mic-btn:hover { background: var(--accent-2); color: #05060a; }
 .mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
-code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
-
-/* Responsive — "compact" (mobile) layout: single column, mutually-exclusive list/queue.
-   Applies to phones/small screens (≤900px, any orientation) AND to tablets in PORTRAIT up
-   to 1024px (iPads incl. the 12.9″). A tablet in LANDSCAPE is >1024 or landscape-oriented,
-   so it stays on the desktop 3-column layout — orientation is what separates the two. */
-@media (max-width: 900px), (max-width: 1024px) and (orientation: portrait) {
-  /* Short list on top, generous stage below — the stage (lyrics/guide) is the star
-     on mobile; the list stays scrollable (virtualized) so nothing is lost.
-     NOTE: the desktop lib/queue-collapsed rules set grid-template-columns at higher
-     specificity (0,3,1) — re-declare every collapse combo here (same selectors, later
-     source) so the single-column compact layout always wins regardless of saved desktop
-     collapse state. Otherwise a both-collapsed profile leaves the grid at `0 1fr 0`
-     and squishes the stage into a 0-width column. */
-  .layout,
-  body.lib-collapsed .layout,
-  body.queue-collapsed .layout,
-  body.lib-collapsed.queue-collapsed .layout {
-    grid-template-columns: 1fr; grid-template-rows: minmax(0, 42vh) minmax(0, 1fr);
-  }
-  /* single column: pin the song list AND the queue into the SAME top slot (row 1,
-     stacked) and the stage into row 2, so only the open panel occupies the top. */
-  .library, .queue { grid-column: 1; grid-row: 1; min-height: 0; }
-  .stage { grid-column: 1; grid-row: 2; }
-
-  /* Mobile: the song list (🔍) and the queue (▦) are MUTUALLY EXCLUSIVE — screen space is
-     tight, so at most ONE is open at a time. app.js drives body.mobile-lib / body.mobile-queue
-     from the two top-bar toggles (opening one closes the other; tapping the open one closes it
-     for a full-screen lyrics view). The desktop lib/queue-collapsed classes are ignored here. */
-  .library, .queue { display: none; }
-  /* Show the active panel. `opacity: 1; pointer-events: auto` re-assert over the desktop
-     `body.lib/queue-collapsed .library/.queue { opacity: 0 }` rules, which otherwise leak in
-     and render the shown mobile panel invisible when a collapse pref is saved from desktop. */
-  body.mobile-lib   .library { display: flex; opacity: 1; pointer-events: auto; }
-  body.mobile-queue .queue   { display: flex; opacity: 1; pointer-events: auto; }
-  /* Neither open (or focus mode) → collapse the top slot so the stage fills the screen.
-     (Doubled .focus-mode reaches 0,4,1 so it beats the both-collapsed columns rule above at 0,3,1;
-     the :not():not() none-rule is 0,3,1 and wins over both-collapsed by later source order.) */
-  body:not(.mobile-lib):not(.mobile-queue) .layout { grid-template-columns: 1fr; grid-template-rows: 0 minmax(0, 1fr); }
-  body.focus-mode.focus-mode .layout { grid-template-columns: 1fr; grid-template-rows: 0 minmax(0, 1fr); }
-  body.focus-mode .library, body.focus-mode .queue { display: none; } /* focus wins over mobile-lib/queue */
-  /* The phone-remote QR lives on the queue panel — pointless on a phone (you're already on the
-     device you'd scan with), so hide it on mobile even when the queue is open. */
-  .remote-qr, .remote-qr.show { display: none; }
-  /* Focus mode + full-screen are 10-foot / TV features — hide their toggles on mobile. */
-  #btn-focus, #btn-fullscreen { display: none; }
-  .stage { padding: 14px; }
-  .playback-dock { padding: 8px 14px 12px; } /* keep the overlay aligned with the tighter stage pad */
-  .playbar { gap: 14px 20px; } /* full-width single-column stage still spreads, just tighter */
-  .status { font-size: 12px; }
-  .settings-panel { width: min(380px, 96vw); }
-}
-
-/* Responsive — phone */
-@media (max-width: 560px) {
-  .topbar { padding: 10px 14px; gap: 10px; }
-  .brand { font-size: 17px; letter-spacing: 1px; }
-  /* Now-playing info already lives in the stage header — drop the status text so
-     the topbar is a clean brand ↔ (🔍 ▦ ⚙) row instead of cramming four things. With
-     the flex:1 status gone, push the controls to the right (else space-between
-     floats the toggles into the middle). */
-  .status { display: none; }
-  .toggles { margin-left: auto; }
-  /* Shorter open-panel slot, bigger stage — lyrics get the room by default. */
-  .layout { grid-template-rows: minmax(0, 34vh) minmax(0, 1fr); }
-  .stage { padding: 10px; }
-  .playback-dock { padding: 6px 10px 10px; }
-
-  /* Roomier touch targets */
-  .search-row { padding: 10px 8px; gap: 8px; }
-  #search { padding: 12px 34px 12px 12px; font-size: 15px; }
-  .search-clear { width: 24px; height: 24px; font-size: 12px; right: 8px; }
-  .search-row .pill-btn { padding: 9px 14px; }
-  button.add { width: 34px; height: 34px; font-size: 17px; }
-  .song { --song-lead: 32px calc(48px * var(--ui-scale)); }   /* number only: the chip is hidden here */
-  .song .src-chip { display: none; }   /* a phone row has no room for it beside ≈ ★ ＋ */
-  button.fav { width: 34px; height: 34px; font-size: 19px; }
-
-  .now-playing { gap: 10px; }
-  .np-code { font-size: 20px; }
-  .np-title { font-size: 17px; }
-  .np-key { padding: 3px 8px; }
-  /* Stack: transport centered over a centered, wrapping Key/Tempo/Volume group. */
-  .playbar { flex-direction: column; align-items: center; gap: 12px; }
-  .transport { gap: 12px; }
-  .transport button { width: 48px; height: 48px; font-size: 16px; }
-  .transport .primary { width: 60px; height: 60px; font-size: 20px; }
-  .controls { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px 20px; }
-  .ctl input[type=range] { width: 108px; }
-  input[type=range] { width: 128px; }
-  .settings-panel { width: 100vw; }
-  .pitch-guide { height: min(var(--guide-height, 150px), 22vh); }
-  .midi-mixer { max-height: 26vh; }
-  /* (the "neither panel open → full-screen stage" collapse is inherited from the ≤900 block) */
-}
+code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-radius: calc(4 / 16 * var(--u)); font-size: calc(12 / 16 * var(--u)); }
 
 /* ---------------------------------------------------------------------------
-   Tonight's recap (⚙ → Library). A modal over the whole app, not a stage
-   overlay: it's read between songs, not during one.
+   Tonight's recap (⚙ → Library, or the home tile). The #recap element is the
+   `recap` dialog (.ov-dialog, overlays.css), which supplies the position, the
+   tinted scrim behind it and the fade. The visual card is .recap-card, so the
+   dialog box itself stays bare here (no card inside a card).
    --------------------------------------------------------------------------- */
-.recap {
-  position: fixed; inset: 0; z-index: 60;
-  display: flex; align-items: center; justify-content: center; padding: 24px;
-  background: var(--scrim); backdrop-filter: blur(3px);
+.ov-dialog.recap {
+  width: min(92vw, calc(640 / 16 * var(--u)));
+  padding: 0; background: none; border: 0; box-shadow: none; overflow: visible;
 }
-.recap.hidden { display: none; }
 .recap-card {
-  width: min(640px, 100%); max-height: 82vh; display: flex; flex-direction: column;
+  width: min(calc(640 / 16 * var(--u)), 100%); max-height: 82vh; display: flex; flex-direction: column;
   background: var(--surface-0); border: 1px solid var(--border);
   border-radius: var(--r-lg); box-shadow: var(--elev-2); overflow: hidden;
 }
 .recap-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 20px; border-bottom: 1px solid var(--border-soft);
+  padding: calc(16 / 16 * var(--u)) calc(20 / 16 * var(--u)); border-bottom: 1px solid var(--border-soft);
 }
-.recap-head h3 { margin: 0; font-size: calc(18px * var(--ui-scale)); }
-.recap-body { padding: 18px 20px 22px; overflow-y: auto; }
+.recap-head h3 { margin: 0; font-size: calc(18 / 16 * var(--u)); }
+.recap-body { padding: calc(18 / 16 * var(--u)) calc(20 / 16 * var(--u)) calc(22 / 16 * var(--u)); overflow-y: auto; }
 
-.recap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+.recap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(10 / 16 * var(--u)); margin-bottom: calc(18 / 16 * var(--u)); }
 .recap-stat {
   background: var(--surface-2); border: 1px solid var(--border-soft);
-  border-radius: var(--r-md); padding: 12px; text-align: center;
+  border-radius: var(--r-md); padding: calc(12 / 16 * var(--u)); text-align: center;
 }
 .recap-stat b {
-  display: block; font-size: calc(26px * var(--ui-scale)); font-weight: 800;
+  display: block; font-size: calc(26 / 16 * var(--u)); font-weight: 800;
   font-variant-numeric: tabular-nums; color: var(--brand); line-height: 1.1;
 }
-.recap-stat span { font-size: calc(11px * var(--ui-scale)); color: var(--text-muted); }
+.recap-stat span { font-size: calc(11 / 16 * var(--u)); color: var(--text-muted); }
 
 .recap-list { list-style: none; margin: 0; padding: 0; }
 .recap-list li {
-  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px;
-  padding: 10px 2px; border-bottom: 1px solid var(--border-soft);
+  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px calc(12 / 16 * var(--u));
+  padding: calc(10 / 16 * var(--u)) 2px; border-bottom: 1px solid var(--border-soft);
 }
 .recap-list li:last-child { border-bottom: 0; }
 .rc-title { font-weight: 600; }
-.rc-meta { grid-column: 1; font-size: calc(12px * var(--ui-scale)); color: var(--text-muted); }
+.rc-meta { grid-column: 1; font-size: calc(12 / 16 * var(--u)); color: var(--text-muted); }
 .rc-score {
   grid-row: 1 / span 2; align-self: center;
-  font-size: calc(22px * var(--ui-scale)); font-weight: 800;
+  font-size: calc(22 / 16 * var(--u)); font-weight: 800;
   font-variant-numeric: tabular-nums; color: var(--brand-2);
 }
 .rc-score:empty { display: none; }
@@ -997,7 +704,7 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
   .title-card.show .tc-singer { animation: tc-in 420ms var(--ease) 140ms both; }
   .title-card.show .tc-key    { animation: tc-in 420ms var(--ease) 210ms both; }
 }
-@keyframes tc-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes tc-in { from { opacity: 0; transform: translateY(calc(14 / 16 * var(--u))); } to { opacity: 1; transform: none; } }
 
 /* ---------------------------------------------------------------------------
    Empty states. An empty <ul> used to be bare whitespace — the same picture for
@@ -1005,38 +712,19 @@ code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-si
    to load". Each now says which it is, and the first-run one says what to do.
    --------------------------------------------------------------------------- */
 .empty-state {
-  list-style: none; padding: calc(36px * var(--ui-scale)) 20px;
+  list-style: none; padding: calc(36 / 16 * var(--u)) calc(20 / 16 * var(--u));
   text-align: center; color: var(--text-muted);
 }
-.es-title { font-size: calc(15px * var(--ui-scale)); font-weight: 600; color: var(--text); }
-.es-hint { margin-top: 6px; font-size: calc(12.5px * var(--ui-scale)); line-height: 1.5; }
+.es-title { font-size: calc(15 / 16 * var(--u)); font-weight: 600; color: var(--text); }
+.es-hint { margin-top: calc(6 / 16 * var(--u)); font-size: calc(12.5 / 16 * var(--u)); line-height: 1.5; }
 
-/* ---------------------------------------------------------------------------
-   Boot indicator. Catalog load + (on the first song) a 32 MB soundfont mean
-   several seconds where the only feedback was the word "Loading…". A hairline
-   sweep under the topbar costs nothing and makes the wait feel intentional.
-   --------------------------------------------------------------------------- */
-.boot-bar {
-  position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
-  overflow: hidden; opacity: 0; transition: opacity var(--dur-base) var(--ease);
-  pointer-events: none;
-}
-body.booting .boot-bar { opacity: 1; }
-.boot-bar::after {
-  content: ""; position: absolute; inset: 0; width: 38%;
-  background: linear-gradient(90deg, transparent, var(--brand), var(--brand-2), transparent);
-  animation: boot-sweep 1.15s var(--ease) infinite;
-}
-@keyframes boot-sweep { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
-@media (prefers-reduced-motion: reduce) {
-  .boot-bar::after { animation: none; width: 100%; opacity: .5; }
-}
+/* Boot indicator (.boot-bar): a hairline sweep at the top of the stage — stage.css. */
 
 /* ---------------------------------------------------------------------------
    Icon primitive (the inline <symbol> sprite in index.html).
    Sized in `em` so each icon follows its own control's font-size — and therefore
-   --ui-scale — with no per-icon tuning. Painted with currentColor, so every
-   existing state rule (.on, :disabled, :hover, the dimmed .toggles) applies to
+   --u — with no per-icon tuning. Painted with currentColor, so every
+   existing state rule (.on, :disabled, :hover) applies to
    the icon for free, which raw emoji never did.
    --------------------------------------------------------------------------- */
 .icon {
@@ -1060,7 +748,7 @@ body.booting .boot-bar { opacity: 1; }
    --------------------------------------------------------------------------- */
 .song .kind, .queue-list .kind {
   display: inline-flex; align-items: center; justify-content: center;
-  width: calc(26px * var(--ui-scale)); height: calc(26px * var(--ui-scale));
+  width: calc(26 / 16 * var(--u)); height: calc(26 / 16 * var(--u));
   border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text-muted) 14%, transparent);
 }

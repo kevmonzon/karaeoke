@@ -1,11 +1,11 @@
 /*
- * library-ui.js — the left (song list) and right (queue) panes.
+ * library-ui.js — the song list (Songs panel) and the queue list (Queue panel).
  *
  * The song list is VIRTUALIZED: only the rows in (and just around) the viewport
  * are in the DOM, absolutely positioned inside the scroll container; the full scroll
  * height comes from a `#song-list::after` pseudo (var --vlist-h), so the <ul>'s only
- * children are the <li> rows (valid list a11y). Row height is the --row-h CSS var
- * (read via rowH()) so scroll math stays exact across display-size profiles.
+ * children are the <li> rows (valid list a11y). Row height is MEASURED from a rendered
+ * probe row (measureRow) so the scroll maths match whatever the CSS makes a row.
  *
  * Pure UI: it renders song/queue data and calls back into the player for
  * play/queue actions. Local state is only the selected + now-playing song.
@@ -13,16 +13,42 @@
  */
 
 const $ = (id) => document.getElementById(id);
-// Row height comes from the `--row-h` CSS var (set per display-size profile in style.css), so the
-// list scales with the screen (phone → TV). Read once per render; falls back to 46 if unset.
-// getComputedStyle forces a style recalc, and this used to run on EVERY scroll event of a
-// 65k-row virtual list (dozens a second on a trackpad fling) for a value that only changes
-// when the ⚙ font size does. Measured once, re-measured only when something can actually
-// change it: refresh() (the font-size path already calls it) and a resize.
-let _rowH = 0;
-const measureRowH = () =>
-  (_rowH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--row-h")) || 46);
-const rowH = () => _rowH || measureRowH();
+// Row height. `--row-h` is now an expression over the viewport-driven scale unit
+// (`max(44px, calc(3 * var(--u)))`), which getPropertyValue cannot turn into a number, so a
+// real row is measured instead. Measuring forces layout, and this runs on EVERY scroll frame of
+// a 120k-row virtual list, so the value is cached — but ONLY when it is real: the list lives in
+// a panel that is display:none until opened, where every row measures 0. Caching that 0 (or the
+// fallback) would lay the first open out on the wrong grid, so a zero measurement returns the
+// fallback and stays uncached; the next call measures again. refresh() and a resize clear the
+// cache (the font size and the viewport both change the unit).
+const FALLBACK_ROW_H = 48;
+let _rowH = 0;           // cached non-zero measurement (0 = measure on next use)
+const clearRowCache = () => { _rowH = 0; };
+
+/**
+ * The height of one song row in `listEl` (the <ul>), measured from a hidden probe row.
+ * Returns the cached value when there is one; a zero measurement returns 48 and is not cached.
+ * @param {HTMLElement} listEl
+ * @returns {number}
+ */
+export function measureRow(listEl) {
+  if (_rowH) return _rowH;
+  if (!listEl || typeof listEl.appendChild !== "function") return FALLBACK_ROW_H;
+  const doc = listEl.ownerDocument || document;
+  const probe = doc.createElement("li");
+  probe.className = "song";
+  probe.setAttribute("aria-hidden", "true");
+  probe.setAttribute("style", "visibility:hidden");
+  // The same two-line body a real row has, in case the CSS sizes a row by its content.
+  probe.innerHTML = `<span class="meta"><span class="title">Ag</span><span class="artist">Ag</span></span>`;
+  listEl.appendChild(probe);
+  let h = 0;
+  try { h = probe.getBoundingClientRect().height || 0; } finally { probe.remove(); }
+  if (!(h > 0)) return FALLBACK_ROW_H;
+  _rowH = h;
+  return h;
+}
+
 const OVERSCAN = 5;      // extra rows above/below the viewport
 
 // Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube · 🎵 audio.
@@ -48,10 +74,14 @@ const hasCode = (s) => s.code !== "" && s.code != null;
  * @param {(song)=>void}  cb.onToggleFavorite   star / un-star a song (★)
  * @param {(song)=>boolean} cb.isFavorite       is this song currently starred?
  * @param {()=>boolean}   [cb.showSource]       LIVE: show the songbook chip (library.showSource)
+ * @param {(song, rowEl)=>void} [cb.onActivate]  optional: a click or Enter on a row body calls this
+ *        instead of today's select / play (and double-click no longer plays). Not passed yet:
+ *        without it rows behave as they always have (click selects, double-click and Enter play).
  * @returns {{ renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
+  const rowH = () => measureRow(viewport);
   // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
   // by the `--vlist-h` CSS var (set in renderList). That keeps the <ul>'s only real children the
   // <li> rows — valid list semantics (a spacer <div> child would break ul→li structure for a11y).
@@ -80,7 +110,9 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     requestAnimationFrame(() => { framePending = false; renderWindow(); });
   };
   viewport.addEventListener("scroll", onScroll, { passive: true });
-  window.addEventListener("resize", () => { measureRowH(); renderWindow(); });
+  // The scale unit follows the viewport, so a resize can change the row height: re-measure,
+  // and re-size the scroll extent with it (not only the window of rows).
+  window.addEventListener("resize", () => { clearRowCache(); setScrollHeight(); renderWindow(); });
 
   // A row: kind icon · number (the songbook chip under it) · title / artist · [≈] · ★ · ＋.
   // The number column is a fixed width so titles line up; the chip shares it, costing no width.
@@ -131,8 +163,12 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     addBtn.title = "Add to queue";
     addBtn.onclick = (ev) => { ev.stopPropagation(); onQueue(s); };
     li.appendChild(addBtn);
-    li.ondblclick = () => onPlay(s);
-    li.onclick = () => { focusIndex = i; selectRow(s); };
+    if (onActivate) {
+      li.onclick = () => { focusIndex = i; onActivate(s, li); };
+    } else {
+      li.ondblclick = () => onPlay(s);
+      li.onclick = () => { focusIndex = i; selectRow(s); };
+    }
     return li;
   }
 
@@ -211,7 +247,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       case "Home": e.preventDefault(); moveFocus(0); break;
       case "End": e.preventDefault(); moveFocus(songs.length - 1); break;
       case "Enter":
-        if (row) { e.preventDefault(); onPlay(songs[i]); }
+        if (row) { e.preventDefault(); onActivate ? onActivate(songs[i], row) : onPlay(songs[i]); }
         break;
       case " ":
         // Space selects the row (the transport's global Space-to-play only applies when
@@ -226,8 +262,8 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   });
 
   // Set the ::after scroll-height var from the CURRENT row height. Must run whenever
-  // --row-h changes (display-size profile switch) as well as when the list changes,
-  // or the scroll extent desyncs from the absolutely-positioned rows.
+  // the row height changes (font size, viewport, the panel opening) as well as when the list
+  // changes, or the scroll extent desyncs from the absolutely-positioned rows.
   function setScrollHeight() {
     viewport.style.setProperty("--vlist-h", `${songs.length * rowH()}px`);
   }
@@ -249,10 +285,11 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     if (lc) lc.textContent = songs.length.toLocaleString();
   }
 
-  // Re-measure the row height and repaint — for un-collapsing and, crucially, after a
-  // display-size profile switch changes --row-h (else --vlist-h stays at the old height).
+  // Re-measure the row height and repaint — when the Songs panel opens (it was display:none,
+  // so nothing could be measured) and after a font-size change (else --vlist-h stays at the
+  // old height).
   function refresh() {
-    measureRowH();   // the ⚙ font size changes --row-h; this is the one path that knows
+    clearRowCache();   // the next rowH() measures a real row again
     setScrollHeight();
     renderWindow();
   }
@@ -321,6 +358,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     getSelectedSong: () => selectedSong,
     getList: () => songs, // the currently-rendered list (used to skip to the next result)
     setNowPlaying,
-    refresh, // re-measure --vlist-h + re-render (un-collapse / profile switch)
+    refresh, // re-measure the row + --vlist-h and re-render (panel opened / font size / resize)
   };
 }
