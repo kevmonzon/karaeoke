@@ -159,18 +159,35 @@ function buildTickToSeconds(tempoMap, ppqn, isSmpte) {
 // KAR conventions: '/' = new line, '\' = new paragraph, '@' lines = metadata.
 // ----------------------------------------------------------------------------
 
-export function buildLines(lyricEvents, tickToSeconds) {
+// Singer tags (a duet convention): "@m" / "@w" / "@c" events, or a "M:" / "F:" / "B:" / "D:"
+// prefix on a syllable. The letter must be followed by whitespace or nothing, so a KAR
+// metadata tag such as "@TTitle" or "@LENG" can never be mistaken for one.
+const SINGER_TAG = /^\s*@([mwc])(?:\s+([\s\S]*))?$/i;
+const SINGER_PREFIX = /^\s*([MFBD]):\s*([\s\S]*)$/;
+const PREFIX_SINGER = { M: "m", F: "w", B: "c", D: "c" };
+
+/**
+ * Lines plus the count-in CUES some files carry. MegaOke-style files mark a
+ * count-in with one-character "#" lyric events (usually five, a beat apart) just before the
+ * line they introduce. They are a timing signal, never text: shown, they read "#####Barcelona"
+ * and drag the line's start five beats early. Returned as `cues` (seconds) for the stage view's
+ * 4-3-2-1 count-in; every other caller only wants `lines` (see buildLines).
+ * Each line also carries `singer` ("m" | "w" | "c" | "").
+ */
+export function buildLyrics(lyricEvents, tickToSeconds) {
   const has05 = lyricEvents.some((e) => e.type === 0x05);
   const src = lyricEvents.filter((e) => (has05 ? e.type === 0x05 : e.type === 0x01));
 
   const lines = [];
+  const cues = [];
   let cur = null;
+  let singer = "";
   const pushLine = () => { if (cur && cur.syllables.length) lines.push(cur); cur = null; };
-  const ensureLine = (time) => { if (!cur) cur = { start: time, end: time, syllables: [] }; };
+  const ensureLine = (time) => { if (!cur) cur = { start: time, end: time, syllables: [], singer }; };
 
   for (const ev of src) {
     let text = ev.text;
-    if (text == null || text[0] === "@") continue;
+    if (text == null) continue;
     const time = tickToSeconds(ev.tick);
     text = text.replace(/\r\n|\r|\n/g, "/");
     // Strip stray '^' markers some KAR files embed in the syllable text (a caret
@@ -178,9 +195,34 @@ export function buildLines(lyricEvents, tickToSeconds) {
     // '/' line-break can't hide the break. Empty leftovers are dropped below.
     text = text.replace(/\^/g, "");
 
+    // Leading breaks first: a tag usually rides the break that starts its line ("/F: She").
     let breakBefore = false;
     while (text[0] === "/" || text[0] === "\\") { breakBefore = true; text = text.slice(1); }
     if (breakBefore) pushLine();
+
+    // Count-in cue: a timing mark, not a syllable. A break riding after it still breaks.
+    if (/^\s*#/.test(text)) {
+      cues.push(time);
+      if (/[/\\]/.test(text)) pushLine();
+      continue;
+    }
+
+    const tag = SINGER_TAG.exec(text);
+    if (tag) {
+      singer = tag[1].toLowerCase();
+      if (cur) cur.singer = singer;  // a tag inside an open line re-labels that line
+      text = tag[2] || "";
+      if (!text.trim()) continue;
+    } else if (text[0] === "@") {
+      continue;                      // KAR metadata (@T title, @L language, …)
+    } else {
+      const pre = SINGER_PREFIX.exec(text);
+      if (pre) {
+        singer = PREFIX_SINGER[pre[1]];
+        if (cur) cur.singer = singer;
+        text = pre[2];
+      }
+    }
     if (text.length === 0) continue;
 
     ensureLine(time);
@@ -189,7 +231,12 @@ export function buildLines(lyricEvents, tickToSeconds) {
   }
   pushLine();
   lines.sort((a, b) => a.start - b.start);
-  return lines;
+  return { lines, cues };
+}
+
+/** The timed lines only — the shape every caller had before count-in cues existed. */
+export function buildLines(lyricEvents, tickToSeconds) {
+  return buildLyrics(lyricEvents, tickToSeconds).lines;
 }
 
 // Merge every `n` consecutive source lines into one display line.
