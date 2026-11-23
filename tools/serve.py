@@ -31,10 +31,14 @@ from __future__ import annotations
 
 import argparse
 import functools
+import gzip
+import hashlib
 import http.server
+import itertools
 import json
 import os
 import re
+import select
 import subprocess
 import socket
 import socketserver
@@ -410,15 +414,39 @@ def _youtube_search(query: str, max_results: int = 20):
 _rebuild_lock = threading.Lock()
 
 _remote_lock = threading.Lock()
-_rooms: dict = {}             # roomCode(upper) -> {rev, ts, now, queue, settings, commands:[], seq}
+# The push channel's wake-up. It wraps _remote_lock itself, so `with _remote_lock:` and
+# `with _remote_cond:` are the same critical section; every write to a room (host sync,
+# command add, song put) calls notify_all() while still holding it.
+_remote_cond = threading.Condition(_remote_lock)
+_rooms: dict = {}             # roomCode(upper) -> {rev, ts, mts, now, queue, settings, songRev,
+                              #                     notice, song, commands:[], seq, epoch}
 REMOTE_CMD_TYPES = frozenset((
     "enqueue", "remove", "reorder", "play", "pause", "next", "seek", "volume", "setting",
     "react",   # an emoji (+ applause) sent to the host screen; the host allowlists the emoji
+    # relay v2: the host decides whether each is allowed; the server only routes them
+    "playnow", "priority", "digit", "digit_delete", "digit_clear", "digit_commit",
+    "restart", "bg",
 ))
 REMOTE_CMD_MAX = 200          # per-room inbox cap (host-less safety)
 ROOM_TTL = 90                 # secs; a room whose host hasn't pushed in this long is dropped
 ROOM_MAX = 200                # sanity cap on concurrent rooms
 _ROOM_RE = re.compile(r"^[A-Z0-9]{4,12}$")
+NOTICE_MAX = 200              # chars of the host's one-line notice kept per room
+
+# Server-Sent Events (GET /api/remote/events). One thread per open stream — the server's
+# model already — so streams are capped, and each one ends after SSE_MAX_AGE (the browser's
+# EventSource reconnects after the `retry:` delay). All SSE timing reads time.monotonic():
+# the tests replace time.time with a fake clock to drive the room TTL.
+SSE_HEARTBEAT = 15            # secs of silence before a named `hb` event
+SSE_MAX_AGE = 300             # secs; the handler ends the stream, the client reconnects
+SSE_PEER_CHECK = 1.0          # secs; a parked stream wakes this often to see if its client left
+SSE_MAX_PER_ROOM = 40         # open streams per room (guests + host)
+SSE_MAX_TOTAL = 200           # open streams on this server
+SONG_DOC_MAX = 400_000        # bytes of a POST /api/remote/song body
+_CID_RE = re.compile(r"^[A-Za-z0-9_-]{8,32}$")
+_SSE_ROLES = ("guest", "host")
+_sse_slots: dict = {}         # (room, role, cid) -> _SseSlot, guarded by _remote_lock
+_room_epochs = itertools.count(1)   # tells a re-created room apart from its predecessor
 
 
 def _norm_room(code) -> str:
@@ -465,6 +493,7 @@ def _room_add_command(room, cmd) -> int:
         r["commands"].append(cmd)
         if len(r["commands"]) > REMOTE_CMD_MAX:
             del r["commands"][:-REMOTE_CMD_MAX]
+        _remote_cond.notify_all()   # wake the host's event stream
         return r["seq"]
 
 
@@ -479,6 +508,14 @@ def _room_host_sync(snapshot) -> dict:
         ack = int(snapshot.get("ackSeq") or 0)
     except (TypeError, ValueError):
         ack = 0
+    # Relay v2 additions, both optional: the revision of the song document the host has
+    # published (POST /api/remote/song), and a one-line message for the guests.
+    try:
+        song_rev = max(0, int(snapshot.get("songRev") or 0))
+    except (TypeError, ValueError):
+        song_rev = 0
+    notice = snapshot.get("notice")
+    notice = notice[:NOTICE_MAX] if isinstance(notice, str) else ""
     now = int(time.time())
     with _remote_lock:
         _gc_rooms_locked()
@@ -486,7 +523,8 @@ def _room_host_sync(snapshot) -> dict:
         if r is None:
             if len(_rooms) >= ROOM_MAX:
                 return {"ok": False, "error": "full"}
-            r = _rooms[room] = {"rev": 0, "ts": now, "commands": [], "seq": 0}
+            r = _rooms[room] = {"rev": 0, "ts": now, "commands": [], "seq": 0,
+                                "epoch": next(_room_epochs)}
         r["rev"] += 1
         r["ts"] = now
         # Sub-second twin of ts: guests subtract it to learn how STALE the snapshot they
@@ -496,7 +534,10 @@ def _room_host_sync(snapshot) -> dict:
         r["now"] = snapshot.get("now")
         r["queue"] = snapshot.get("queue") or []
         r["settings"] = snapshot.get("settings") or {}
+        r["songRev"] = song_rev
+        r["notice"] = notice
         r["commands"] = [c for c in r["commands"] if c["seq"] > ack]
+        _remote_cond.notify_all()   # wake the guests' event streams
         return {"ok": True, "rev": r["rev"], "commands": list(r["commands"])}
 
 
@@ -514,11 +555,365 @@ def _room_state(code, since) -> dict:
         rev = r["rev"]
         if since is not None and str(since).isdigit() and int(since) == rev:
             return {"ok": True, "rev": rev, "unchanged": True}
-        return {"ok": True, "rev": rev, "ts": r["ts"], "now": r.get("now"),
-                # seconds since the host's push landed here — lets a guest correct for its
-                # own poll phase before extrapolating the playback position (lyric sync)
-                "age": round(max(0.0, time.time() - r.get("mts", r["ts"])), 3),
-                "queue": r.get("queue", []), "settings": r.get("settings", {})}
+        return _room_view_locked(r)
+
+
+def _room_age_locked(r) -> float:
+    """Seconds since the host's push landed here — lets a guest correct for its own poll
+    phase before extrapolating the playback position (lyric sync, CLAUDE.md §5.21)."""
+    return round(max(0.0, time.time() - r.get("mts", r["ts"])), 3)
+
+
+def _room_view_locked(r) -> dict:
+    """The full snapshot a guest reads: the body of GET /api/remote/state and of the SSE
+    `state` event. Call while holding _remote_lock."""
+    return {"ok": True, "rev": r["rev"], "ts": r["ts"], "now": r.get("now"),
+            "age": _room_age_locked(r),
+            "queue": r.get("queue", []), "settings": r.get("settings", {}),
+            "songRev": r.get("songRev", 0), "notice": r.get("notice", "")}
+
+
+# ---------------------------------------------------------------------------
+# Relay v2 — server push (SSE), the published song document, the compact catalogue.
+# ---------------------------------------------------------------------------
+# The polling endpoints above stay exactly as they were; everything here is additive.
+# A guest stream gets `state` when the HEAVY part of the snapshot changed (what is playing,
+# the queue, the mirrored settings, songRev, notice) and a small `tick` when only the clock
+# moved, so a phone is not re-sent the whole queue every second.
+_TICK_ONLY = ("position", "duration", "score")   # the parts of `now` that change every push
+
+
+def _heavy_key(room_record) -> str:
+    """Stable JSON of the heavy part of a room: `now` without position/duration/score, plus
+    queue, settings, songRev and notice. Two pushes with the same key differ only in clock."""
+    now = room_record.get("now")
+    if isinstance(now, dict):
+        now = {k: v for k, v in now.items() if k not in _TICK_ONLY}
+    return json.dumps({"now": now, "queue": room_record.get("queue", []),
+                       "settings": room_record.get("settings", {}),
+                       "songRev": room_record.get("songRev", 0),
+                       "notice": room_record.get("notice", "")},
+                      sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _heavy_key_cached_locked(r) -> str:
+    # Every guest stream of a room asks after each push; the key only changes when rev does.
+    if r.get("_heavy_rev") != r["rev"]:
+        r["_heavy"], r["_heavy_rev"] = _heavy_key(r), r["rev"]
+    return r["_heavy"]
+
+
+def _room_live_locked(room):
+    """The live record for an already-normalized code, or None. Call while holding the lock."""
+    r = _rooms.get(room)
+    if not r or r["ts"] < int(time.time()) - ROOM_TTL:
+        return None
+    return r
+
+
+def _room_poll(code, role, cursor):
+    """Events newer than `cursor` for one stream, and the cursor to pass next time.
+
+    Pure given _remote_lock (the caller holds it; nothing here blocks or mutates a room).
+    cursor = {"rev": int, "heavy": str, "seq": int} (+ "epoch", added here). Returns None when
+    the room is dead. A guest gets ("state", full view) on its first poll and whenever the
+    heavy key moved, else ("tick", clock) once per host push; a host gets ("command", cmd) for
+    every command with a seq above the cursor, in seq order. Commands are not consumed —
+    POST /api/remote/host still drains them until acked, so the two paths cannot disagree.
+    """
+    r = _room_live_locked(_norm_room(code))
+    if r is None:
+        return None
+    if cursor.get("epoch") != r.get("epoch"):
+        # First poll, or the code expired and a host re-created it: every rev/seq restarted.
+        cursor = {"rev": -1, "heavy": "", "seq": 0, "epoch": r.get("epoch")}
+    if role == "host":
+        cmds = [dict(c) for c in r["commands"] if c["seq"] > cursor["seq"]]
+        if not cmds:
+            return [], cursor
+        return [("command", c) for c in cmds], {**cursor, "rev": r["rev"], "seq": cmds[-1]["seq"]}
+    if r["rev"] == cursor["rev"]:
+        return [], cursor
+    heavy = _heavy_key_cached_locked(r)
+    if heavy != cursor["heavy"]:
+        event = ("state", _room_view_locked(r))
+    else:
+        now = r.get("now") if isinstance(r.get("now"), dict) else {}
+        event = ("tick", {"rev": r["rev"], "age": _room_age_locked(r),
+                          "position": now.get("position"), "duration": now.get("duration"),
+                          "paused": bool(now.get("paused", False)), "score": now.get("score")})
+    return [event], {**cursor, "rev": r["rev"], "heavy": heavy}
+
+
+def _room_put_song(room, song_rev, song_id, doc) -> dict:
+    """The host publishes the prepared lyric document for the song it is playing (P9).
+    One document per room, last write wins; it dies with the room."""
+    code = _norm_room(room)
+    if not code:
+        return {"ok": False, "error": "no-room"}
+    try:
+        rev = int(song_rev)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "songRev"}
+    if rev < 0 or isinstance(song_rev, bool):
+        return {"ok": False, "error": "songRev"}
+    if doc is not None and not isinstance(doc, dict):
+        return {"ok": False, "error": "doc"}
+    with _remote_cond:
+        _gc_rooms_locked()
+        r = _room_live_locked(code)
+        if r is None:
+            return {"ok": False, "error": "no-room"}
+        r["song"] = {"songRev": rev, "id": str(song_id or "")[:512], "doc": doc}
+        _remote_cond.notify_all()
+        return {"ok": True, "songRev": rev}
+
+
+def _room_get_song(code) -> dict:
+    """GET /api/remote/song: the room's published document, or an empty one (songRev 0)."""
+    room = _norm_room(code)
+    if not room:
+        return {"ok": False, "error": "no-room"}
+    with _remote_lock:
+        _gc_rooms_locked()
+        r = _room_live_locked(room)
+        if r is None:
+            return {"ok": False, "error": "no-room"}
+        song = r.get("song")
+        if not song:
+            return {"ok": True, "songRev": 0, "id": "", "doc": None}
+        return {"ok": True, "songRev": song["songRev"], "id": song["id"], "doc": song["doc"]}
+
+
+class _SseSlot:
+    """One open event stream. `closed` flips when a newer stream with the same (room, role,
+    cid) replaces it — the old loop notices on its next wake and ends."""
+    __slots__ = ("room", "role", "cid", "closed")
+
+    def __init__(self, room, role, cid):
+        self.room, self.role, self.cid, self.closed = room, role, cid, False
+
+
+def _sse_slot_acquire(room, role, cid):
+    """A slot for a new stream, or None when a cap is reached. A tab reconnecting with its own
+    cid replaces its old slot (never refused, even at the cap): a half-open socket from a
+    phone that dropped off Wi-Fi must not lock that same phone out."""
+    key = (room, role, cid)
+    with _remote_cond:
+        old = _sse_slots.get(key)
+        if old is None:
+            in_room = sum(1 for k in _sse_slots if k[0] == room)
+            if in_room >= SSE_MAX_PER_ROOM or len(_sse_slots) >= SSE_MAX_TOTAL:
+                return None
+        slot = _sse_slots[key] = _SseSlot(room, role, cid)
+        if old is not None:
+            old.closed = True
+            _remote_cond.notify_all()   # the old loop may be parked in wait()
+        return slot
+
+
+def _sse_slot_release(slot) -> None:
+    """Free a stream's slot. Idempotent; a replaced slot never frees its successor."""
+    with _remote_cond:
+        key = (slot.room, slot.role, slot.cid)
+        if _sse_slots.get(key) is slot:
+            del _sse_slots[key]
+        slot.closed = True
+
+
+def _sse_counts() -> tuple:
+    """(open event streams, live rooms) — for /api/remote/info."""
+    with _remote_lock:
+        cutoff = int(time.time()) - ROOM_TTL
+        return len(_sse_slots), sum(1 for r in _rooms.values() if r["ts"] >= cutoff)
+
+
+def _sse_frame(name, data) -> str:
+    # json.dumps never emits a raw newline, so one `data:` line always holds the payload.
+    return f"event: {name}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+_SSE_HB = "event: hb\ndata: {}\n\n"       # a NAMED event: EventSource never surfaces comments
+_SSE_GONE = 'event: gone\ndata: {"error":"no-room"}\n\n'
+
+
+def _sse_serve(slot, code, role, write, peer_closed=lambda: False) -> None:
+    """Run one event stream until the room dies, the slot is replaced, the stream reaches
+    SSE_MAX_AGE, or the client goes away. `write(str)` sends bytes; it raises OSError on a
+    dead socket. `peer_closed()` answers, without blocking, whether the client hung up.
+    Always releases the slot.
+
+    The poll and the wait share ONE hold of the lock, so a notify_all() that fires while this
+    thread is writing (lock released) is never lost: the next poll sees the change before the
+    thread would wait. No I/O happens under the lock.
+
+    A closed tab must free its slot at once, not when a later write fails: the first write
+    after the client's FIN usually lands in the kernel buffer, so that takes one or two whole
+    heartbeats, and a party reloading phones would fill SSE_MAX_PER_ROOM with dead streams.
+    So the wait is capped at SSE_PEER_CHECK and `peer_closed()` is asked on every pass,
+    before anything is written. A HALF-OPEN socket (a phone that left Wi-Fi without a FIN)
+    cannot be seen this way: writes keep succeeding into the buffer, and SSE_MAX_AGE is what
+    ends that stream.
+    """
+    try:
+        write("retry: 2000\n\n")
+        cursor = {"rev": -1, "heavy": "", "seq": 0}
+        last_write = time.monotonic()
+        deadline = last_write + SSE_MAX_AGE
+        while not slot.closed:
+            with _remote_cond:
+                res = _room_poll(code, role, cursor)
+                if res is not None and not res[0] and not slot.closed:
+                    now = time.monotonic()
+                    # Wake for the next heartbeat, the deadline or the next peer check,
+                    # whichever is first, so a spurious wake never pushes the heartbeat out
+                    # by a whole period and a closed client is noticed within a second.
+                    _remote_cond.wait(timeout=max(0.0, min(SSE_HEARTBEAT - (now - last_write),
+                                                           deadline - now, SSE_PEER_CHECK)))
+                    res = _room_poll(code, role, cursor)
+            if slot.closed:
+                break                                   # replaced by the same tab
+            if peer_closed():
+                break                                   # the client hung up: free the slot now
+            if res is None:                             # the room died
+                write(_SSE_GONE)
+                break
+            events, cursor = res
+            if events:
+                write("".join(_sse_frame(name, data) for name, data in events))
+                last_write = time.monotonic()
+            elif time.monotonic() - last_write >= SSE_HEARTBEAT:
+                write(_SSE_HB)
+                last_write = time.monotonic()
+            if time.monotonic() >= deadline:
+                break                                   # the client reconnects via retry
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        pass                                            # the client went away
+    finally:
+        _sse_slot_release(slot)
+
+
+# The compact phone catalogue: one row per song in the host's catalog.songs order, the
+# repeated strings (source tag, kind, language) as dictionary indices, gzip on the wire.
+_COMPACT_SOURCES = ("", "SH", "PLATKAR", "TJMEDIA", "MIDI")
+_COMPACT_KINDS = ("midi", "video", "audio")
+_COMPACT_COLS = ("code", "name", "artist", "source", "kind", "lang")
+_compact_lock = threading.Lock()   # one build at a time: two phones must not both parse 24 MB
+_compact_cache = None              # (file key, identity body, gzip body, etag)
+
+
+def _compact_rows(midi, video, audio) -> dict:
+    """Pure: the compact body without "rev". Row i is the host's catalog.songs[i] (catalog.js
+    concatenates the three arrays in this order and keeps every element), so a non-list
+    catalogue contributes nothing and a non-dict element still gets a placeholder row."""
+    sources = list(_COMPACT_SOURCES)
+    src_ix = {s: i for i, s in enumerate(sources)}
+    langs = [""]
+    lang_ix = {"": 0}
+    rows = []
+    for kind_i, records in enumerate((midi, video, audio)):
+        if not isinstance(records, list):
+            continue
+        for rec in records:
+            if not isinstance(rec, dict):
+                rows.append(["", "", "", 0, kind_i, 0])
+                continue
+            src = rec.get("source")
+            src = src if isinstance(src, str) else ""
+            si = src_ix.get(src)
+            if si is None:            # a tag this server does not know yet: keep it, append it
+                si = src_ix[src] = len(sources)
+                sources.append(src)
+            lang = rec.get("langName")
+            lang = lang if isinstance(lang, str) else ""
+            li = lang_ix.get(lang)
+            if li is None:
+                li = lang_ix[lang] = len(langs)
+                langs.append(lang)
+            code = rec.get("code")
+            name = rec.get("name")
+            artist = rec.get("artistName")
+            rows.append(["" if code is None else code,
+                         "" if name is None else str(name),
+                         "" if artist is None else str(artist),
+                         si, kind_i, li])
+    return {"v": 1, "sources": sources, "kinds": list(_COMPACT_KINDS), "langs": langs,
+            "cols": list(_COMPACT_COLS), "rows": rows}
+
+
+def _compact_file_key(path):
+    try:
+        st = os.stat(path)
+    except OSError:
+        return (path, None, None)
+    return (path, st.st_mtime_ns, st.st_size)
+
+
+def _load_catalog_list(path) -> list:
+    """A catalogue file as a list; absent or invalid → [] (catalog.js does the same)."""
+    try:
+        with open(path, "rb") as fh:
+            data = json.loads(fh.read())
+    except (OSError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _compact_catalog() -> tuple:
+    """(identity_body, gzip_body, etag) for GET /api/catalog/compact, cached until one of the
+    three catalogue files changes (mtime + size). The ETag hashes the body, so an unchanged
+    library keeps its ETag across restarts and a phone's cached copy stays valid."""
+    global _compact_cache
+    paths = (CATALOG_PATH, VIDEO_CATALOG_PATH, AUDIO_CATALOG_PATH)
+    key = tuple(_compact_file_key(p) for p in paths)
+    cached = _compact_cache
+    if cached is not None and cached[0] == key:
+        return cached[1:]
+    with _compact_lock:
+        key = tuple(_compact_file_key(p) for p in paths)   # another thread may have built it
+        cached = _compact_cache
+        if cached is not None and cached[0] == key:
+            return cached[1:]
+        body = _compact_rows(*(_load_catalog_list(p) for p in paths))
+        version = body.pop("v")
+        try:
+            rest = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except UnicodeEncodeError:   # a lone surrogate in a name: fall back to \u escapes
+            rest = json.dumps(body, separators=(",", ":")).encode("ascii")
+        rev = hashlib.sha1(b"%d\n" % version + rest).hexdigest()[:16]
+        # Splice "v" and "rev" in front rather than serialising a multi-MB body twice.
+        identity = b'{"v":%d,"rev":"%s",' % (version, rev.encode("ascii")) + rest[1:]
+        gz = gzip.compress(identity, compresslevel=6, mtime=0)
+        _compact_cache = (key, identity, gz, f'"{rev}"')
+        return _compact_cache[1:]
+
+
+def _accepts_gzip(header) -> bool:
+    """True when Accept-Encoding allows gzip (an explicit q=0 refuses it)."""
+    for part in (header or "").split(","):
+        name, _, params = part.strip().partition(";")
+        if name.strip().lower() not in ("gzip", "*"):
+            continue
+        q = 1.0
+        for p in params.split(";"):
+            k, _, v = p.strip().partition("=")
+            if k.strip().lower() == "q":
+                try:
+                    q = float(v)
+                except ValueError:
+                    q = 0.0
+        if q > 0:
+            return True
+    return False
+
+
+def _etag_matches(header, etag) -> bool:
+    """If-None-Match comparison (weak, as RFC 9110 requires for this header)."""
+    for tag in (header or "").split(","):
+        tag = tag.strip()
+        if tag == "*" or (tag[2:] if tag.startswith("W/") else tag) == etag:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +976,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Remote-relay read endpoints (before static/range handling).
             if path.startswith("/api/remote/"):
                 return self._handle_remote_get(path)
+            if path == "/api/catalog/compact":
+                return self._handle_compact_get()
             # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
             # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
             if self.headers.get("Range") and self._serve_range():
@@ -594,7 +991,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # QR works even when the host opened http://127.0.0.1. (The room code is host-owned.)
         if path == "/api/remote/info":
             port = self.server.server_address[1]
-            self._send_json({"ok": True, "lanUrl": f"http://{_lan_ip()}:{port}", "port": port})
+            streams, rooms = _sse_counts()   # for soak tests: open event streams, live rooms
+            self._send_json({"ok": True, "lanUrl": f"http://{_lan_ip()}:{port}", "port": port,
+                             "streams": streams, "rooms": rooms})
             return
         # GET /api/remote/state?room=<code>[&since=<rev>] → that room's snapshot (short-circuits
         # to {unchanged:true} when the caller's rev is current; {error:'no-room'} for a dead code).
@@ -602,7 +1001,103 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
             self._send_json(_room_state(qs.get("room", [""])[0], qs.get("since", [None])[0]))
             return
+        # GET /api/remote/events?room=&role=guest|host&cid= → a Server-Sent Events stream.
+        if path == "/api/remote/events":
+            self._handle_events()
+            return
+        # GET /api/remote/song?room=<code> → the lyric document the host published.
+        if path == "/api/remote/song":
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            self._send_json(_room_get_song(qs.get("room", [""])[0]))
+            return
         self.send_error(404)
+
+    def _handle_events(self):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        cid = qs.get("cid", [""])[0]
+        role = qs.get("role", [""])[0]
+        if not _CID_RE.match(cid):
+            self._send_json({"ok": False, "error": "cid"}, 400)
+            return
+        if role not in _SSE_ROLES:
+            self._send_json({"ok": False, "error": "role"}, 400)
+            return
+        code = _norm_room(qs.get("room", [""])[0])
+        live = False
+        if code:
+            with _remote_lock:
+                _gc_rooms_locked()
+                live = _room_live_locked(code) is not None
+        if not live:
+            self._send_json({"ok": False, "error": "no-room"}, 404)
+            return
+        slot = _sse_slot_acquire(code, role, cid)
+        if slot is None:
+            self._send_json({"ok": False, "error": "busy"}, 503)
+            return
+        # From here the slot is ours; _sse_serve releases it, and so does this finally if the
+        # headers never made it out.
+        try:
+            # A stream has no length, so it cannot share a keep-alive socket: Connection:
+            # close + close_connection, and no Content-Length. X-Accel-Buffering stops an
+            # nginx in front from holding events back; end_headers() adds Cache-Control.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            self.close_connection = True
+            _sse_serve(slot, code, role, self._sse_write, self._sse_peer_closed)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            _sse_slot_release(slot)
+            self.close_connection = True
+
+    def _sse_write(self, text):
+        self.wfile.write(text.encode("utf-8"))
+        self.wfile.flush()
+
+    def _sse_peer_closed(self) -> bool:
+        """True once the event-stream client has closed its end. Never blocks.
+
+        An EventSource sends nothing after its request, so a readable socket means EOF (the
+        client's FIN) or stray bytes. MSG_PEEK looks without consuming: b"" is EOF; stray
+        bytes are left alone and do not count as closed. A reset or a closed fd is closed.
+        """
+        sock = self.connection
+        try:
+            if not select.select([sock], [], [], 0)[0]:
+                return False
+            return sock.recv(1, socket.MSG_PEEK) == b""
+        except (OSError, ValueError):
+            return True
+
+    def _handle_compact_get(self):
+        # GET /api/catalog/compact → every song as an array row, for the phone remote. ETag +
+        # If-None-Match → 304, so a returning phone revalidates instead of re-downloading.
+        try:
+            identity, gz, etag = _compact_catalog()
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
+            return
+        if _etag_matches(self.headers.get("If-None-Match"), etag):
+            self.send_response(304)          # bodiless by definition, so no Content-Length
+            self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
+        use_gzip = _accepts_gzip(self.headers.get("Accept-Encoding"))
+        body = gz if use_gzip else identity
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("ETag", etag)
+        self.send_header("Vary", "Accept-Encoding")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def translate_path(self, path):
         # Route data URLs (songs, videos, catalogs, soundfont) to DATA_DIR; every
@@ -801,6 +1296,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
             return
+        if path == "/api/remote/song":
+            # The host publishes the prepared lyric lines of its current song. Body:
+            # {room, songRev, id, doc} → {ok, songRev}. Same drained-body + origin gates as
+            # every POST, plus a tighter cap than MAX_POST_BYTES (a song is 10–40 KB).
+            if len(raw) > SONG_DOC_MAX:
+                self._send_json({"ok": False, "error": "request too large"}, 413)
+                return
+            try:
+                body = json.loads(raw or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError("body must be a JSON object")
+                res = _room_put_song(body.get("room"), body.get("songRev"),
+                                     body.get("id"), body.get("doc"))
+                if res.get("ok"):
+                    self._send_json(res)
+                else:
+                    self._send_json(res, 403 if res.get("error") == "no-room" else 400)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"ok": False, "error": str(exc)[:200]}, 400)
+            return
         if path == "/api/remote/command":
             # A guest posts an intent to a room. Body: {room, type, …, by} → {ok, seq}.
             # The room code gates control: an unknown/dead room is rejected (403 no-room).
@@ -852,6 +1367,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         # quieter: only log non-200s and the initial page
         msg = fmt % args
+        # The event stream is quiet too: a 200 that lives for minutes, and the 400/404 of a
+        # phone whose host left, are routine. Only "busy" (a cap was hit) is worth a line.
+        if getattr(self, "path", "").startswith("/api/remote/events") and " 503 " not in msg:
+            return
         if " 200 " not in msg or self.path in ("/", "/index.html"):
             sys.stderr.write(f"  {self.address_string()} — {msg}\n")
 
