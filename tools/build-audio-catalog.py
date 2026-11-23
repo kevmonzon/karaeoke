@@ -11,7 +11,8 @@ The novelty vs. the other builders: each song is TWO files that share a basename
 one audio payload plus one lyric sidecar. Files are grouped by basename (filename
 minus extension); a group that has an audio file becomes one record, and its lyric
 sidecar (if any) is attached as `lyrics`:
-    { "code", "name", "artistName", "langName", "type":"AUDIO", "file", "lyrics"? }
+    { "code", "name", "artistName", "langName", "type":"AUDIO", "source", "file", "lyrics"? }
+`source` is the filename's songbook tag (SH / PLATKAR / TJMEDIA / MIDI, "" when none).
 
   audio (played) : .mp3 .wav .flac .m4a .aac .opus .oga .ogg .weba .mp4
   lyric (sidecar): .lrc  >  .kar/.mid/.midi  >  .vtt/.srt  >  .txt   (priority when several)
@@ -109,7 +110,7 @@ def index_audio(audio_dir: str, rel_base: str):
 
         if rec is None:
             # No leading code: keep it anyway — blank code, filename as the title.
-            rec = {"code": "", "name": stem, "artistName": "", "langName": "", "type": "AUDIO"}
+            rec = {"code": "", "name": stem, "artistName": "", "langName": "", "type": "AUDIO", "source": ""}
             rec["file"] = audio_rel
             if g["lyric"]:
                 rec["lyrics"] = os.path.join(rel_base, pick_lyric(g["lyric"])).replace(os.sep, "/")

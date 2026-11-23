@@ -3,9 +3,10 @@
 Build (and refresh) catalog.json for the karaoke player.
 
 Each record has the shape:
-    { "code", "name", "artistName", "langName", "type", "file" }
+    { "code", "name", "artistName", "langName", "type", "source", "file" }
 where "file" is the relative path to the local song payload in kar_raw/
-(null if not present).
+(null if not present), "type" is always "MIDI" and "source" is the songbook tag
+the filename ends with (SH / PLATKAR / TJMEDIA / MIDI, or "" when it has none).
 
 Scans kar_raw/, parses each filename, and emits one record per file
 -> catalog.json = "what I can actually play right now".

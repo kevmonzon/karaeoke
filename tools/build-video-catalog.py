@@ -8,8 +8,8 @@ files (.mp4/.webm/.ogg/.mov) and emits a parallel catalog the app merges alongsi
 the MIDI one (tagging each row VID vs KAR).
 
 Each record mirrors the MIDI catalog schema + the added `file` path, with `type`
-forced to "VIDEO":
-    { "code", "name", "artistName", "langName", "type":"VIDEO", "file" }
+forced to "VIDEO" and `source` the filename's songbook tag ("" when it has none):
+    { "code", "name", "artistName", "langName", "type":"VIDEO", "source", "file" }
 
 Filename grammar (same as the MIDI downloader's, `type` is ignored/overridden):
     {code} - {artistName} - {name} - {langName} - {type}.{ext}
@@ -84,6 +84,7 @@ def index_videos(videos_dir: str, rel_base: str):
                 "artistName": "",
                 "langName": "",
                 "type": "VIDEO",
+                "source": "",
                 "file": rel,
             })
             continue

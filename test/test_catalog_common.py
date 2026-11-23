@@ -28,7 +28,7 @@ class TestParseFilename(unittest.TestCase):
         r = parse_filename("1 - Bryan Chong - Tahan - International - MIDI.mid")
         self.assertEqual(r, {
             "code": 1, "name": "Tahan", "artistName": "Bryan Chong",
-            "langName": "International", "type": "MIDI",
+            "langName": "International", "type": "MIDI", "source": "MIDI",
         })
 
     def test_separator_inside_the_title_is_safe(self):
