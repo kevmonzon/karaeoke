@@ -49,6 +49,11 @@ import urllib.parse
 import urllib.request
 import webbrowser
 
+# A sibling module in tools/, imported the way the catalog builders import it: `python
+# tools/serve.py` (from any cwd) puts the script's own directory first on sys.path, and the
+# tests put tools/ there themselves. Top-level on purpose — main() chdirs into src/ later.
+from catalog_common import IGNORE_NAMES
+
 HERE = os.path.dirname(os.path.abspath(__file__))   # …/tools (this script lives in tools/)
 # The static app (code). Override with KARAEOKE_APP_DIR; defaults to the project root.
 APP_DIR = os.path.abspath(os.environ.get("KARAEOKE_APP_DIR") or os.path.dirname(HERE))
@@ -81,8 +86,15 @@ ALLOWED_ORIGINS = {
 }
 
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
-DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/audio_lyrics/")
+# /bgv/ and /bgphoto/ are the stage backgrounds (M11): looping clips and a photo slideshow.
+DATA_URL_PREFIXES = ("/kar_raw/", "/videos/", "/audio_lyrics/", "/bgv/", "/bgphoto/")
 DATA_URL_FILES = ("/catalog.json", "/catalog-video.json", "/catalog-audio.json", "/soundfont.sf2")
+
+# Stage background media, listed by GET /api/backgrounds (see _list_backgrounds): the files
+# directly in DATA_DIR/bgv and DATA_DIR/bgphoto, plus one level of sub-folders (= categories).
+BG_VIDEO_EXTS = (".mp4", ".webm", ".m4v", ".mov")
+BG_PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".webp")
+BG_MAX_ITEMS = 2000           # per kind; the scan runs on every request, so it stays bounded
 
 # --- SpessaSynth engine ---
 # These 4 files are VENDORED into the repo under src/vendor/ (see src/vendor/README.md
@@ -917,6 +929,104 @@ def _etag_matches(header, etag) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Stage backgrounds (M11) — GET /api/backgrounds lists DATA_DIR/bgv and DATA_DIR/bgphoto
+# ---------------------------------------------------------------------------
+def _bg_name_ok(name: str) -> bool:
+    """A listable directory entry: not hidden, not OS litter, and representable in a URL."""
+    if not name or name.startswith(".") or name.lower() in IGNORE_NAMES:
+        return False
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:   # an undecodable byte name (Linux surrogate escape)
+        return False
+    return True
+
+
+def _bg_inside(path: str, real_root: str) -> bool:
+    """True when path, with every symlink resolved, is real_root or lies under it."""
+    try:
+        return os.path.commonpath([os.path.realpath(path), real_root]) == real_root
+    except ValueError:           # different drives (Windows)
+        return False
+
+
+def _bg_scan_dir(path: str, real_root: str) -> tuple:
+    """(file names, sub-folder names) directly in path, each sorted; ([], []) if unreadable.
+
+    A symlink is followed only when its target stays inside real_root (the data dir): the
+    listing must not advertise files from elsewhere on the machine. A dangling one is neither.
+    """
+    try:
+        with os.scandir(path) as it:
+            entries = sorted(it, key=lambda e: e.name)
+    except OSError:
+        return [], []
+    files, dirs = [], []
+    for entry in entries:
+        if not _bg_name_ok(entry.name):
+            continue
+        try:
+            if entry.is_symlink() and not _bg_inside(entry.path, real_root):
+                continue
+            if entry.is_file():
+                files.append(entry.name)
+            elif entry.is_dir():
+                dirs.append(entry.name)
+        except OSError:
+            continue
+    return files, dirs
+
+
+def _bg_url(folder: str, *segments: str) -> str:
+    """'/bgv/<seg>/<seg>' with every segment percent-encoded on its own (UTF-8, nothing safe)."""
+    return "/" + folder + "/" + "/".join(urllib.parse.quote(s, safe="") for s in segments)
+
+
+def _bg_list_kind(base: str, folder: str, exts, real_root: str, cap: int) -> list:
+    """The media under base: its own files (category ""), then each sub-folder's files
+    (category = the folder name), all in name order, stopping at cap."""
+    if cap <= 0 or not os.path.isdir(base) or not _bg_inside(base, real_root):
+        return []
+    items: list = []
+
+    def take(category, names):
+        for name in names:
+            if len(items) >= cap:
+                return
+            if os.path.splitext(name)[1].lower() in exts:
+                segments = (category, name) if category else (name,)
+                items.append({"url": _bg_url(folder, *segments), "category": category})
+
+    files, dirs = _bg_scan_dir(base, real_root)
+    take("", files)
+    for sub in dirs:
+        if len(items) >= cap:
+            break
+        take(sub, _bg_scan_dir(os.path.join(base, sub), real_root)[0])   # one level only
+    return items
+
+
+def _bg_categories(items) -> list:
+    return sorted({item["category"] for item in items if item["category"]})
+
+
+def _list_backgrounds(data_dir: str) -> dict:
+    """Pure given the directory: the GET /api/backgrounds body without "ok".
+
+    {"videos": [{"url", "category"}], "photos": [...],
+     "categories": {"videos": [...], "photos": [...]}}  — a missing folder is an empty list.
+    The categories are those of the listed items (an empty sub-folder is not one), sorted.
+    """
+    real_root = os.path.realpath(data_dir)
+    videos = _bg_list_kind(os.path.join(data_dir, "bgv"), "bgv", BG_VIDEO_EXTS, real_root,
+                           BG_MAX_ITEMS)
+    photos = _bg_list_kind(os.path.join(data_dir, "bgphoto"), "bgphoto", BG_PHOTO_EXTS,
+                           real_root, BG_MAX_ITEMS)
+    return {"videos": videos, "photos": photos,
+            "categories": {"videos": _bg_categories(videos), "photos": _bg_categories(photos)}}
+
+
+# ---------------------------------------------------------------------------
 # HTTP server with cross-origin isolation + correct MIME types
 # ---------------------------------------------------------------------------
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -950,6 +1060,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         ".opus": "audio/ogg",
         ".oga": "audio/ogg",
         ".weba": "audio/webm",
+        # background photos (served from bgphoto/). Pinned here so the type never depends on
+        # the Python version's built-in table or on the host's mime.types (absent in slim images).
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
     }
 
     # Speak HTTP/1.1 so a reverse proxy / cloudflared can keep the origin connection
@@ -978,6 +1094,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._handle_remote_get(path)
             if path == "/api/catalog/compact":
                 return self._handle_compact_get()
+            if path == "/api/backgrounds":
+                return self._handle_backgrounds_get()
             # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
             # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
             if self.headers.get("Range") and self._serve_range():
@@ -1098,6 +1216,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_backgrounds_get(self):
+        # GET /api/backgrounds → the stage background media, rescanned on every call (a
+        # folder dropped in while the app runs shows up on the next fetch; no cache to go
+        # stale). The files themselves are served by the /bgv/ and /bgphoto/ data routes.
+        try:
+            listing = _list_backgrounds(DATA_DIR)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)[:200]}, 500)
+            return
+        self._send_json({"ok": True, **listing})
 
     def translate_path(self, path):
         # Route data URLs (songs, videos, catalogs, soundfont) to DATA_DIR; every
