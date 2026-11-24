@@ -236,6 +236,14 @@ export const DEFAULT_CONFIG = {
     // Who a host-added song is ranked under (a phone's song keeps its guest nickname). Trimmed,
     // at most 24 characters; empty = "Host".
     hostPlayer: "Host",
+    // What the singer sees while singing (plan §5.15): "note" = a PERFECT / EXCELLENT / GREAT /
+    // GOOD / MISS chip as each note ends · "line" = the per-line chip (Perfect! / Great! / …) ·
+    // "both" · "off". The score, and the five tallies on the score card, are the same whichever.
+    feedback: "note",
+    // "easy" | "normal" | "hard" (plan §5.16): how close counts as on pitch, and the score curve.
+    // "normal" is the original numbers. A change applies from the NEXT song (the song on stage
+    // keeps the level it started with). Rankings record the level; bests stay per song.
+    difficulty: "normal",
   },
 
   // MIDI mode — a per-channel mixer band (between the lyrics and the transport)
@@ -253,6 +261,11 @@ export const DEFAULT_CONFIG = {
   mic: {
     enabled: false, // reflects live state; actual enable needs a click
     volume: 0.9, // mic monitor level (0–1.5)
+    // How late the voice reaches the pitch detector, in ms (0–500; plan §5.17). The scorer and the
+    // per-note verdicts read the melody this much earlier, and the guide draws the mic trace with
+    // the same shift. Settings → Singing → "Calibrate…" measures it. The 100 ms default (P13)
+    // moves scores slightly for anyone who sang before M9; 0 restores the old behaviour exactly.
+    latencyMs: 100,
 
     // Feedback / noise control -------------------------------------------------
     // Browser constraints. Changing these re-acquires the mic. echoCancellation

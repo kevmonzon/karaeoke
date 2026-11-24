@@ -15,6 +15,8 @@
  */
 
 import { getCacheStatus } from "./asset-cache.js";
+// The dialog's own "why calibration cannot run" (pure), so the button says exactly what it says.
+import { calibrateUnavailable } from "./ui/calibrate-ui.js";
 
 const $ = (id) => document.getElementById(id);
 const pct = (v) => `${Math.round(v * 100)}%`;
@@ -76,6 +78,9 @@ const SETTINGS_SCHEMA = [
   { id: "set-score", path: "score.enabled", type: "check" },
   { id: "set-score-card", path: "score.card", type: "check" },
   { id: "set-score-golden", path: "score.golden", type: "check" },
+  // M9: per-note / per-line chips while singing; the difficulty (applies from the next song)
+  { id: "set-score-feedback", path: "score.feedback", type: "select" },
+  { id: "set-score-difficulty", path: "score.difficulty", type: "select" },
   // the leaderboard (M6): record a row per scored song + the name a host-added song ranks under
   { id: "set-score-rankings", path: "score.rankings", type: "check" },
   { id: "set-score-host", path: "score.hostPlayer", type: "text", clean: cleanPlayerName },
@@ -95,6 +100,8 @@ const SETTINGS_SCHEMA = [
   { id: "set-mic-hp", path: "mic.highpass", type: "check" },
   { id: "set-mic-gate", path: "mic.gate", type: "check" },
   { id: "set-mic-gate-th", path: "mic.gateThresholdDb", type: "range", valId: "set-mic-gate-val", fmt: (v) => `${v} dB` },
+  // M9: the voice's delay to the pitch detector — the scorer reads the melody this much earlier
+  { id: "set-mic-latency", path: "mic.latencyMs", type: "range", fmt: (v) => `${v} ms` },
   { id: "set-mic-echo", path: "mic.echo.enabled", type: "check" },
   { id: "set-mic-echo-mix", path: "mic.echo.mix", type: "range", valId: "set-mic-echo-val", fmt: pct },
   { id: "set-mic-reverb", path: "mic.reverb.enabled", type: "check" },
@@ -191,6 +198,10 @@ const SEARCH_KEYWORDS = {
   "set-score": "points rating videoke sing grade",
   "set-score-card": "points rating result end of song",
   "set-score-golden": "hooks bonus double weight",
+  "set-score-feedback": "verdict perfect excellent great good miss chip popup per note per line feedback",
+  "set-score-difficulty": "level easy normal hard strict lenient tolerance pitch accuracy",
+  "set-mic-latency": "microphone delay lag offset timing sync calibrate calibration ms",
+  "mic-calibrate": "calibrate calibration measure latency delay lag clicks loopback microphone timing gate noise",
   "set-score-rankings": "leaderboard ranking top scores high score history player",
   "set-score-host": "player singer name nickname leaderboard ranking host",
   "export-data": "backup save download favorites queue settings json",
@@ -223,9 +234,11 @@ export function matchesQuery(text, query) {
  * @param {object} deps.mic        the MicEngine (enable button + status)
  * @param {()=>Promise<{ok:boolean, records?:number, error?:string}>} deps.onRebuild
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
- * @returns {{ wireSettings, syncSettingsUI, updateMicBtn, onOpen }}  onOpen: the overlay's open hook
+ * @param {()=>void} [deps.onCalibrate]  app-owned: open the calibration dialog (M9)
+ * @returns {{ wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen }}
+ *   onOpen: the overlay's open hook · updateCalibrateBtn(note?): re-evaluate "Calibrate…"
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEraseAll, onExportData, onImportData, onShowRecap }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData, onShowRecap }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -260,7 +273,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #rebuild-catalog, #export-data, #import-data, #show-recap"; // matchable controls + action buttons
+  const LEAF_SEL = ".row, #mic-enable, #mic-calibrate, #rebuild-catalog, #export-data, #import-data, #show-recap"; // matchable controls + action buttons
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -372,6 +385,27 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     if (!btn) return;
     btn.textContent = mic.enabled ? "🎤 Disable microphone" : "🎤 Enable microphone";
     btn.classList.toggle("on", mic.enabled);
+    // Q6: no microphone on an insecure page — disabled, with the reason as its title.
+    const insecure = mic.secure === false;
+    btn.disabled = insecure && !mic.enabled;
+    btn.title = insecure ? (mic.unavailableReason || "") : "";
+  }
+
+  // "Calibrate…" (M9): DISABLED, with the reason beside it and as its title, on a page that is
+  // not a secure context (a TV box on http://<LAN-IP> has no microphone at all — Q6) or while
+  // Bluetooth mode is on. Re-evaluated on every sync (the panel opening, Reset, an import) and
+  // by app.js when bt.enabled changes. When it can run, the line shows the last calibration's
+  // outcome instead (`note`, e.g. "Mic latency set to 140 ms").
+  let calNote = "";
+  function updateCalibrateBtn(note) {
+    if (typeof note === "string") calNote = note;
+    const btn = $("mic-calibrate");
+    if (!btn) return;
+    const why = calibrateUnavailable({ mic, settings }) || "";
+    btn.disabled = !!why;
+    btn.title = why;
+    const line = $("mic-calibrate-why");
+    if (line) line.textContent = why || calNote;
   }
 
   // The panel is one overlay of the stage-first shell. Opening, closing, Escape/Back, the
@@ -407,6 +441,16 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       else await mic.enable();
       updateMicBtn();
     });
+
+    // The calibration dialog is app.js's (it owns the overlays); a click re-checks the reason
+    // first, so a state that changed since the last sync can never start it.
+    const calBtn = $("mic-calibrate");
+    if (calBtn && onCalibrate) {
+      calBtn.onclick = () => {
+        updateCalibrateBtn();
+        if (!calBtn.disabled) onCalibrate();
+      };
+    }
 
     // Reset just the lyric offset to 0 (settings.set fans out to applyVisualSettings;
     // syncSettingsUI moves the slider + "0 ms" label back).
@@ -487,6 +531,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
   function syncSettingsUI() {
     autoSync();
     updateMicBtn();
+    updateCalibrateBtn();
     updateCacheStatus();
     // bottom transport controls (wired in app.js, but reflected here on reset).
     // Tempo & key are ± steppers (labels only); volume is still a slider.
@@ -498,5 +543,5 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
     }
   }
 
-  return { wireSettings, syncSettingsUI, updateMicBtn, onOpen };
+  return { wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen };
 }

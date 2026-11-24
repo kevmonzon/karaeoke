@@ -141,6 +141,8 @@
           <div id="sc-song" class="sc-song"></div>
           <div id="sc-score" class="sc-score">0</div>
           <div id="sc-band" class="sc-band"></div>
+          <div id="sc-difficulty" class="sc-difficulty"></div>
+          <div id="sc-verdicts" class="sc-verdicts"></div>
           <div id="sc-singer" class="sc-singer"></div>
           <div id="sc-best" class="sc-best"></div>
         </div>
@@ -499,6 +501,23 @@
         <label class="row toggle"><span>Score my singing</span><input id="set-score" type="checkbox" /></label>
         <label class="row toggle"><span>Score card when a song ends</span><input id="set-score-card" type="checkbox" /></label>
         <label class="row toggle"><span>Golden notes count double</span><input id="set-score-golden" type="checkbox" /></label>
+        <label class="row">
+          <span>Feedback while singing</span>
+          <select id="set-score-feedback">
+            <option value="note">Per note</option>
+            <option value="line">Per line</option>
+            <option value="both">Both</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Difficulty <em class="muted">(from the next song)</em></span>
+          <select id="set-score-difficulty">
+            <option value="easy">Easy</option>
+            <option value="normal">Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
         <label class="row toggle"><span>Keep rankings</span><input id="set-score-rankings" type="checkbox" /></label>
         <label class="row">
           <span>Host singer name</span>
@@ -533,6 +552,15 @@
           <input id="set-mic-gate-th" type="range" min="-70" max="-20" step="1" value="-50" />
         </label>
         <div class="hint sub">Best fix for feedback: use headphones. Echo-cancel + gate tame howl on speakers.</div>
+
+        <div class="sub-h">Latency</div>
+        <label class="row">
+          <span>Mic latency <em id="set-mic-latency-val">100 ms</em></span>
+          <input id="set-mic-latency" type="range" min="0" max="500" step="5" value="100" />
+        </label>
+        <div class="hint sub">How late your voice reaches the scorer. Scoring and the guide's mic trace are shifted by this much; 0 = no compensation.</div>
+        <button id="mic-calibrate" class="reset-btn" type="button" aria-describedby="mic-calibrate-why">Calibrate…</button>
+        <div id="mic-calibrate-why" class="hint"></div>
 
         <div class="sub-h">Effects</div>
         <label class="row toggle"><span>Echo</span><input id="set-mic-echo" type="checkbox" /></label>

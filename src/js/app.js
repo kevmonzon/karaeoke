@@ -31,6 +31,7 @@ import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { Scorer } from "./scoring.js";
+import { createVerdictFeed } from "./verdicts.js";
 import { createLibraryUI, BACK_ROW } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
@@ -55,6 +56,7 @@ import { createShell } from "./ui/shell.js";
 import { createHome } from "./ui/home.js";
 import { createSongSheet } from "./ui/song-sheet.js";
 import { createBrowseUI } from "./ui/browse-ui.js";
+import { createCalibrateUI } from "./ui/calibrate-ui.js";
 import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
@@ -144,6 +146,7 @@ let revSong = null;
 let songDocDur = -1;             // the duration the last published document carried (-1 = none sent)
 let currentMelodyChannel = -1;
 let scorer = null;               // scoring.js Scorer for the current MIDI song (null = nothing to score)
+let verdictFeed = null;          // verdicts.js feed judging `scorer`'s notes (null whenever scorer is)
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -208,7 +211,7 @@ async function boot() {
   // choice; onSheetAction carries it out (the queue, the player and the overlays are ours).
   songSheet = createSongSheet({ el: $("ov-song"), onAction: onSheetAction });
   settingsUI = createSettingsUI({
-    settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
+    settings, mic, onRebuild, onToggleMic: toggleMic, onCalibrate: openCalibration, onEraseAll: eraseAllData,
     onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => overlays.open("recap"),
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
@@ -327,7 +330,13 @@ function buildShell() {
   reg("song", { el: $("ov-song"), initialFocus: () => songSheet.firstButton() });
   reg("adjust", { el: $("ov-adjust") });
   reg("recap", { el: $("recap"), initialFocus: () => $("recap-close"), onOpen: () => recap.render() });
-  reg("calibrate", { el: $("ov-calibrate") });
+  // The calibration dialog (M9) is built on first use (openCalibration), hence the closures:
+  // focus its step's first button; any close (Back, the scrim, Cancel) stops a measurement.
+  reg("calibrate", {
+    el: $("ov-calibrate"),
+    initialFocus: () => (calibrateUI ? calibrateUI.firstButton() : null),
+    onClose: () => { if (calibrateUI) calibrateUI.close(); },
+  });
   reg("confirm", { el: $("ov-confirm"), initialFocus: () => $("ov-confirm-cancel") });
   overlays.wire();
 
@@ -1100,7 +1109,10 @@ function onSettingChanged(path) {
     if (chordEngine) chordEngine.setTranspose(settings.get("audio.key"));
   }
   if (path === "*" || path.startsWith("chords.")) applyChordSettings();
-  if (path === "*" || path === "bt.enabled") applyBluetoothMode(path === "bt.enabled");
+  if (path === "*" || path === "bt.enabled") {
+    applyBluetoothMode(path === "bt.enabled");
+    settingsUI.updateCalibrateBtn();   // M9: "Calibrate…" is unavailable in Bluetooth mode
+  }
   if (path === "*" || path === "youtube.enabled") {
     libraryView.updateYoutubeToggle();
     // reflect the new state in the current search (append or drop YouTube rows)
@@ -1245,17 +1257,47 @@ function loadMelody(parsed) {
       : "no guide melody found in this file";
     // The guide melody IS the scorer's reference track — the piece UltraStar-family games
     // have to hand-author per song and we derive from the KAR file (see scoring.js).
-    scorer = mel.hasMelody ? new Scorer(mel.notes, { golden: settings.get("score.golden") }) : null;
+    // score.difficulty is read HERE, once: a change applies from the next song, and the scorer
+    // and its verdict feed always judge with the same level (an unknown name is "normal").
+    const difficulty = settings.get("score.difficulty");
+    scorer = mel.hasMelody ? new Scorer(mel.notes, { golden: settings.get("score.golden"), difficulty }) : null;
+    verdictFeed = scorer ? newVerdictFeed(scorer, difficulty) : null;
   } catch (e) {
     console.warn("melody extract failed:", e);
     pitchGuide.load({ hasMelody: false, notes: [], range: { min: 60, max: 72 } });
     scorer = null;
+    verdictFeed = null;
   }
   score.resetLineBonus();
   pitchGuide.setScore(null);
 
   currentKey = settings.get("key.autoDetect") ? detectKey(parsed) : null;
   updateKeyDisplay();
+}
+
+// Per-note verdicts (M9, plan §5.15) for one scorer: the feed judges each note once it has
+// ended and keeps the five tallies for the score card. score.showVerdict reads score.feedback
+// itself, so the tallies are kept even while the chips are off. `quietVerdicts` silences the
+// end-of-song sweep (the card is about to cover the stage). In its own try: verdicts are a
+// garnish, and a throw here must not take the scorer and the guide down with it.
+let quietVerdicts = false;
+function newVerdictFeed(s, difficulty) {
+  try {
+    return createVerdictFeed({
+      scorer: s,
+      difficulty,
+      onVerdict: (v) => { if (!quietVerdicts) score.showVerdict(v); },
+    });
+  } catch (e) {
+    console.warn("verdict feed setup failed:", e);
+    return null;
+  }
+}
+
+// The microphone latency the scorer compensates (mic.latencyMs, plan §5.17), in seconds, 0–0.5.
+function micLatencySec() {
+  const ms = Number(settings.get("mic.latencyMs")) || 0;
+  return Math.min(500, Math.max(0, ms)) / 1000;
 }
 
 // Key beside the title (current → transposed) + the resulting key on the Key control.
@@ -1751,6 +1793,7 @@ function hideMidiSurfaces() {
   lastParsed = null;
   currentKey = null;
   scorer = null;          // no MIDI note data → nothing to score against
+  verdictFeed = null;
   score.resetLineBonus();
 }
 
@@ -1802,6 +1845,7 @@ function hideNoteSurfaces() {
   lastParsed = null;
   currentKey = null;
   scorer = null;          // no MIDI note data → nothing to score against
+  verdictFeed = null;
   score.resetLineBonus();
 }
 
@@ -1984,6 +2028,9 @@ async function playMidi(song, gen = playGen) {
   } else {
     chordEngine.clear();
     midiMixer.clear();
+    // No parse → no melody: never score (or call verdicts) against the PREVIOUS song's notes.
+    scorer = null;
+    verdictFeed = null;
   }
 
   // A file can pass the MThd check and still be rejected by the sequencer; without this the
@@ -2034,7 +2081,17 @@ function endOfSong() {
   if (endGuard) return;
   endGuard = true;
   // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
+  // First judge the notes still inside their grace window (M9), silently: the card is about
+  // to cover the stage, so a last chip would only flash underneath it.
+  if (scorer && verdictFeed) {
+    quietVerdicts = true;
+    try { verdictFeed.update(Number.MAX_VALUE); }
+    catch (e) { console.error("Could not judge the last notes:", e); }
+    finally { quietVerdicts = false; }
+  }
+  // `difficulty` comes from the scorer (its finish()); the tallies are merged in for the card.
   const res = score.finish(scorer, current, currentBy);
+  if (res && verdictFeed) res.verdicts = verdictFeed.tally();
   recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
   logRanking(res);                                          // one leaderboard row (M6) — needs current too
   score.resetLineBonus();
@@ -2174,15 +2231,21 @@ function tick() {
 
       // Feed the scorer every frame — including UNVOICED ones, which advance its clock but
       // score nothing (you have to be allowed to breathe). See scoring.js.
+      // The voice reaches the detector mic.latencyMs late (M9, plan §5.17): what it hears now
+      // was sung against the melody at gt − lat, so that is where the scorer and the verdict
+      // judge read it. 0 = the pre-M9 behaviour exactly.
+      const lat = micLatencySec();
       if (scoringOn) {
-        scorer.addFrame(gt, micMidi);
-        score.lineBonus(scorer, lyrics);
+        scorer.addFrame(gt - lat, micMidi);
+        if (verdictFeed) verdictFeed.update(gt - lat);   // onVerdict → score.showVerdict
+        score.lineBonus(scorer, lyrics);                 // gated by score.feedback inside
       }
 
       if (guideOn) {
         if (settings.get("guide.scoring")) pitchGuide.setScore(scoringOn ? scorer.liveScore() : null);
         else pitchGuide.setScore(null);
-        pitchGuide.update(gt, settings.get("guide.showMic") ? micMidi : null);
+        // The mic trace is drawn `lat` earlier, so what the singer sees is what is scored.
+        pitchGuide.update(gt, settings.get("guide.showMic") ? micMidi : null, { micShiftSec: lat });
       }
 
       // Auto-tune: bend the voice toward the target note.
@@ -2458,6 +2521,35 @@ async function toggleMic() {
   else await mic.enable();
   settingsUI.updateMicBtn();
   updateMicToggle();
+}
+
+// Mic calibration (M9, plan §5.17): Settings → "Calibrate…" (settings-ui.js disables it, with the
+// reason, on an insecure page or in Bluetooth mode). The dialog is built on first use — nothing
+// at boot depends on it. open() renders its first step BEFORE the overlay opens: overlays-dom
+// focuses synchronously, so the initialFocus hook (buildShell) finds that step's first button.
+let calibrateUI = null;          // ui/calibrate-ui.js, created by the first openCalibration()
+function openCalibration() {
+  try {
+    if (!calibrateUI) {
+      calibrateUI = createCalibrateUI({ el: $("ov-calibrate"), mic, audio, settings, onSave: onCalibrated });
+    }
+    // The clicks go out through the song's own output and are listened for on the mic: a playing
+    // song would mask them, so opening calibration pauses it (play resumes it as usual).
+    remotePause();
+    calibrateUI.open();
+  } catch (e) {
+    console.error("Calibration is unavailable:", e);
+    setStatus("Calibration is unavailable");
+    return;
+  }
+  overlays.open("calibrate");
+}
+// The dialog saved mic.latencyMs (and the gate threshold, if kept): move the sliders, say so.
+function onCalibrated() {
+  settingsUI.syncSettingsUI();
+  const msg = `Mic latency set to ${Number(settings.get("mic.latencyMs")) || 0} ms`;
+  settingsUI.updateCalibrateBtn(msg);   // the line beside the button, in the panel underneath
+  setStatus(msg);
 }
 
 function setKey(semi) {
