@@ -1,1 +1,124 @@
-/* backgrounds.css — filled in M11 (background video, photo and camera). Empty until then. */
+/* ============================================================================
+ * backgrounds.css — the background layer behind the lyrics (M11, plan §5.22).
+ *
+ * backgrounds.js fills #bg-layer (stage.css layer 0, under the media and the flow)
+ * with ONE of: a looping <video class="bg-video">, a cross-fading pair of
+ * <img class="bg-photo">, or the live <video class="bg-camera">; plus
+ * <div class="bg-dim"> over it, and a "Tap to start camera" button when the
+ * camera needs a gesture. It also sets body[data-bg="on"|"off"], data-anim and
+ * --bg-dim on the layer. Sizes are --u multiples; colours are tokens. No width
+ * breakpoints: only reduced-motion, hover and colour-scheme @media.
+ * ========================================================================== */
+
+/* The legibility halo behind lyrics and home text over a picture. Dark theme: a
+   dark halo under light text. Light theme: the lyrics are mid-tone amber / grey,
+   so the halo is light. Same selector pattern as tokens.css. */
+:root, :root[data-theme="dark"] { --bg-halo: rgba(0, 0, 0, .88); --bg-halo-soft: rgba(0, 0, 0, .55); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --bg-halo: rgba(255, 255, 255, .92); --bg-halo-soft: rgba(255, 255, 255, .6); }
+}
+:root[data-theme="light"] { --bg-halo: rgba(255, 255, 255, .92); --bg-halo-soft: rgba(255, 255, 255, .6); }
+
+/* ---- The layer ------------------------------------------------------------------ */
+/* stage.css owns its place (absolute, inset 0, z 0, no pointer events). The slide and
+   zoom animations move a photo past the edges: clip them here, never a scrollbar. */
+.bg-layer { overflow: hidden; --bg-anim-dur: 1.2s; }
+
+/* Every child fills the stage, cropped, never letterboxed. */
+.bg-layer > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* The dim sits over the picture and under the lyrics (which are in later stage layers). */
+.bg-dim { z-index: 2; background: #000; opacity: var(--bg-dim, .35); pointer-events: none; }
+
+/* The live camera: mirrored for the front camera (bg.camera.mirror; the module sets the class). */
+.bg-camera.bg-mirror { transform: scaleX(-1); }
+
+/* ---- Photo slideshow: a cross-fading pair ---------------------------------------------
+   The module swaps the classes: the incoming photo becomes .is-on (on top), the
+   outgoing one .is-out (under it). data-anim on the layer picks the motion. Only
+   transform and opacity animate (§4.8). An .is-out photo stays put under the
+   incoming one for the duration, then hides — so a PNG with transparency never
+   shows two pictures for long. */
+.bg-photo { opacity: 0; z-index: 0; }
+.bg-photo.is-on { opacity: 1; z-index: 1; animation: bg-fade-in var(--bg-anim-dur) var(--ease) both; }
+.bg-photo.is-out { opacity: 1; z-index: 0; animation: bg-hold-out var(--bg-anim-dur) step-end both; }
+
+/* None: a cut. */
+.bg-layer[data-anim="none"] .bg-photo.is-on { animation: none; }
+.bg-layer[data-anim="none"] .bg-photo.is-out { animation: none; opacity: 0; }
+/* Slide: the new photo pushes the old one out to the left. */
+.bg-layer[data-anim="slide"] .bg-photo.is-on { animation: bg-slide-in var(--bg-anim-dur) var(--ease) both; }
+.bg-layer[data-anim="slide"] .bg-photo.is-out { animation: bg-slide-out var(--bg-anim-dur) var(--ease) both; }
+/* Zoom: the new photo fades in while settling from a slight zoom. */
+.bg-layer[data-anim="zoom"] .bg-photo.is-on { animation: bg-zoom-in var(--bg-anim-dur) var(--ease) both; }
+
+@keyframes bg-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bg-hold-out { to { opacity: 0; } }
+@keyframes bg-slide-in { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes bg-slide-out { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+@keyframes bg-zoom-in { from { opacity: 0; transform: scale(1.12); } to { opacity: 1; transform: scale(1); } }
+
+/* ---- "Tap to start camera" ---------------------------------------------------------
+   Shown when a stored Camera mode cannot start without a gesture (R27). While it is
+   up the module sets data-tap on the layer and drops its aria-hidden; the layer then
+   rises above the flow and the home layer (both cover the whole stage) so the button
+   can be tapped. The layer itself still passes every other pointer through, and it
+   holds nothing else meanwhile (no picture, no dim). Bottom centre, above the control
+   bar while the bar is up (the same strip the flow gives up, stage.css). */
+.bg-layer[data-tap] { z-index: 4; }
+.bg-layer > .bg-camera-start {
+  inset: auto; left: 50%; bottom: calc(var(--edge-b) + var(--gap));
+  width: auto; height: auto; max-width: calc(100% - var(--edge-l) - var(--edge-r));
+  min-height: var(--hit); padding: 0 var(--pad);
+  transform: translateX(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  pointer-events: auto; cursor: pointer;
+  border: 1px solid var(--brand-2); border-radius: var(--r-pill);
+  background: var(--surface-1); color: var(--text); box-shadow: var(--elev-2);
+  font-family: inherit; font-size: var(--t-body); font-weight: 700; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+body:not(.controls-hidden) .bg-layer > .bg-camera-start {
+  bottom: calc(max(var(--edge-b), min(var(--bar-h, 0px), 45vh)) + var(--gap));
+}
+.bg-layer > .bg-camera-start:focus-visible { outline: var(--focus-w) solid var(--focus); outline-offset: 2px; }
+.bg-layer > .bg-camera-start:active { background: var(--surface-2); }
+@media (hover: hover) {
+  .bg-layer > .bg-camera-start:hover { background: var(--surface-2); }
+}
+
+/* ---- Legibility over a picture (body[data-bg="on"], set by the module) ---------------
+   The STAGE lyric style paints its own outline + shadow on the canvas. The SCROLL
+   style's syllables are gradient text (background-clip: text, transparent fill), and
+   a text-shadow there would paint OVER the clipped gradient and hide the wipe — so the
+   halo is a drop-shadow filter on each line instead, which shades the rendered glyphs. */
+body[data-bg="on"] .lyric-view .line {
+  filter: drop-shadow(0 0 calc(2 / 16 * var(--u)) var(--bg-halo))
+          drop-shadow(0 calc(1 / 16 * var(--u)) calc(6 / 16 * var(--u)) var(--bg-halo-soft));
+}
+/* Over a picture the scroll lyrics use the videoke look in BOTH themes: light text, a dark halo (the
+   dim is black in both themes too) and less-faded neighbour lines. The light theme's amber / mid-grey
+   lyric colours with a light halo were close to unreadable over a bright clip (integration fix, M11). */
+body[data-bg="on"] .lyric-view {
+  --sung: var(--gold); --unsung: #eef2ff;
+  --bg-halo: rgba(0, 0, 0, .88); --bg-halo-soft: rgba(0, 0, 0, .55);
+}
+body[data-bg="on"] .lyric-view .line.past     { opacity: .6; }
+body[data-bg="on"] .lyric-view .line.upcoming { opacity: .75; }
+/* The idle home's plain text (brand, "Select a song"): a real text-shadow is fine here. */
+body[data-bg="on"] .home-brand,
+body[data-bg="on"] .home-prompt {
+  text-shadow: 0 0 calc(2 / 16 * var(--u)) var(--bg-halo), 0 calc(1 / 16 * var(--u)) calc(8 / 16 * var(--u)) var(--bg-halo-soft);
+}
+/* The queue bar gets the same translucent ground it has over a video song (stage.css). */
+body[data-bg="on"] .queue-bar {
+  background: var(--overlay-bg-soft); border-bottom-color: transparent;
+  border-radius: var(--radius); padding: var(--gap) var(--pad);
+}
+
+/* ---- Reduced motion: every photo change is a cut (§4.8) ---------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .bg-layer .bg-photo { animation: none !important; }
+  .bg-layer .bg-photo.is-out { opacity: 0; }
+}

@@ -116,6 +116,8 @@ export function needsActivate(desc) {
  * @param {(id:string)=>Element|null} o.getOverlayEl  the element registered for an overlay id
  * @param {()=>Element|null} o.getHomeRoot   #home-tiles
  * @param {()=>Element|null} o.getBarRoot    #ov-controls
+ * @param {()=>Element[]}    [o.getExtraRoots] more roots on the bare stage (M11: the background layer while its
+ *                                          "Tap to start camera" button shows) — added after home + bar
  * @param {()=>Element|null} [o.getBarEntry] #btn-play — the bar's entry point (else its first focusable)
  * @param {()=>boolean} o.isIdle             body[data-idle="true"]
  * @param {()=>boolean} o.isBarVisible       !body.classList.contains("controls-hidden")
@@ -130,7 +132,7 @@ export function needsActivate(desc) {
  * }}
  *
  * scopeRoots(): the top modal's element if one is open (stack.top() → getOverlayEl); else
- *   [home root if isIdle()] + [bar root if isBarVisible()] (A7); else [] (bare stage).
+ *   [home root if isIdle()] + [bar root if isBarVisible()] (A7) + getExtraRoots() (M11); else [] (bare stage).
  *   A modal whose element is not registered gives [] too — but move() then does nothing
  *   (returns false) rather than showing a bar that the modal has made inert.
  * focusables(roots = scopeRoots()): elements matching FOCUSABLE inside the roots, in DOM order,
@@ -175,6 +177,7 @@ export function createNav(o = {}) {
     getOverlayEl = () => null,
     getHomeRoot = () => null,
     getBarRoot = () => null,
+    getExtraRoots = () => [],
     getBarEntry = null,
     isIdle = () => false,
     isBarVisible = () => false,
@@ -260,7 +263,8 @@ export function createNav(o = {}) {
     }
     const home = call(isIdle, false) ? call(getHomeRoot) : null;
     const bar = call(isBarVisible, false) ? call(getBarRoot) : null;
-    return { modal: null, roots: [home, bar].filter(Boolean), home, bar };
+    const extra = call(getExtraRoots, []);
+    return { modal: null, roots: [home, bar, ...(Array.isArray(extra) ? extra : [])].filter(Boolean), home, bar };
   }
 
   function scopeRoots() { return scope().roots; }
@@ -290,7 +294,8 @@ export function createNav(o = {}) {
   function focusEntry(sc) {
     if (sc.modal) return focusFirst(sc.roots);
     if (sc.home && focusFirst(sc.home)) return true;
-    return sc.bar ? focusBarEntry(sc.bar) : false;
+    if (sc.bar) return focusBarEntry(sc.bar);
+    return focusFirst(sc.roots);   // M11: only an extra root (the background's camera button) is in scope
   }
 
   function rectOf(el, id) {

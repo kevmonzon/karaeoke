@@ -387,6 +387,32 @@ test("nav: scope is home + bar while idle, the bar alone while a song is loaded,
   assert.ok(r.home.contains(r.doc.activeElement));
 });
 
+test("nav: extra roots (M11: the background's camera button) join the bare-stage scope and are reachable", () => {
+  const doc = makeDoc();
+  const stage = doc.body.add("main", { id: "stage", tabindex: "-1" }, R(0, 0, 1920, 1080));
+  const layer = stage.add("div", { id: "bg-layer" }, R(0, 0, 1920, 1080));
+  const tap = layer.add("button", { class: "bg-camera-start" }, R(810, 800, 300, 80));
+  const barEl = doc.body.add("section", { id: "ov-controls" }, R(0, 980, 1920, 100));
+  const play = barEl.add("button", { id: "btn-play" }, R(120, 1000, 60, 60));
+  const st = { bar: false, extra: true, shown: 0 };
+  const nav = createNav({ doc, stack: { top: () => null }, getHomeRoot: () => null, getBarRoot: () => barEl,
+    getBarEntry: () => play, getExtraRoots: () => (st.extra ? [layer] : []), isIdle: () => false,
+    isBarVisible: () => st.bar, showBar: () => { st.shown++; st.bar = true; } });
+  assert.deepEqual(nav.scopeRoots(), [layer], "bar hidden: the button alone is in scope");
+  doc.activeElement = stage;
+  assert.equal(nav.move("up"), true);
+  assert.equal(doc.activeElement, tap, "the first arrow lands on the button, not on a hidden bar");
+  st.bar = true;
+  assert.deepEqual(nav.scopeRoots(), [barEl, layer]);
+  doc.activeElement = play;
+  assert.equal(nav.move("up"), true);
+  assert.equal(doc.activeElement, tap, "Up from the bar reaches the button above it");
+  st.extra = false;
+  assert.deepEqual(nav.scopeRoots(), [barEl], "no button, no extra root");
+  const plain = createNav({ doc, stack: { top: () => null }, getBarRoot: () => barEl, isBarVisible: () => true });
+  assert.deepEqual(plain.scopeRoots(), [barEl], "the option is optional");
+});
+
 test("nav: skips hidden, disabled, inert, data-nav-skip and tabindex=\"-1\" elements", () => {
   for (const computed of [true, false]) {
     const r = navRig({ computed });
