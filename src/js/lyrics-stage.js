@@ -16,6 +16,8 @@
  * Same public surface as LyricsEngine (load / loadLines / update / reset / clear /
  * setOptions + lines / activeLine / hasLyrics), so the score's per-line bonus and app.js
  * treat both alike. LyricsSwitch (below) holds one of each and routes to the chosen style.
+ * M7 (relay v2): `loadDoc` takes a parsed lyric document (lyrics-doc.js parseLyricsDoc — the
+ * phone), and `source` hands back what buildLyricsDoc needs after any load (the host).
  *
  * Performance: each visible line is painted ONCE into two offscreen bitmaps (unsung + sung,
  * per wrapped row); a frame is then two drawImage calls per row, split at the wipe edge. The
@@ -51,6 +53,21 @@ const FIT_2 = 4.4, FIT_4 = 7.5;  // font-heights the 2- and 4-row layouts need (
 const CACHE_LINES = 24;
 
 const clamp = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+const EMPTY_SOURCE = Object.freeze({ lines: Object.freeze([]), cues: Object.freeze([]), beats: Object.freeze([]) });
+
+/**
+ * The tempo map as [[t, secPerBeat], …] — the SAME segments makeBeatAt (lyric-pager.js) steps
+ * through, so a lyric document's beatAt agrees with this engine's. makeBeatAt holds the first tempo
+ * before its first entry, so that entry is pinned to t = 0 (parseMidi always puts one at tick 0).
+ */
+function flatTempo(tempoMap, tickToSeconds) {
+  const beats = (tempoMap || [])
+    .map((e) => [tickToSeconds(e.tick), e.usPerQuarter / 1e6])
+    .filter(([sec, spb]) => Number.isFinite(sec) && spb > 0)
+    .sort((a, b) => a[0] - b[0]);
+  if (beats.length && beats[0][0] > 0) beats[0][0] = 0;
+  return beats;
+}
 
 export class StageLyricsEngine {
   /** @param {HTMLElement} container  #lyrics — the canvas is appended (the scroll view's DOM is left alone) */
@@ -76,6 +93,7 @@ export class StageLyricsEngine {
     this._slots = [];
     this._anims = [];
     this._t = 0;
+    this._source = EMPTY_SOURCE;
 
     this.setOptions(opts);
     if (typeof ResizeObserver === "function") {
@@ -100,13 +118,35 @@ export class StageLyricsEngine {
     const t2s = makeTickToSeconds(parsed);
     const { lines, cues } = buildLyrics(parsed.lyricEvents, t2s);
     const beatAt = parsed.isSmpte ? () => STAGE.DEFAULT_BEAT : makeBeatAt(parsed.tempoMap, t2s);
+    this._source = { lines, cues, beats: parsed.isSmpte ? [] : flatTempo(parsed.tempoMap, t2s) };
     return this._setLines(lines, cues, beatAt);
   }
 
   /** Pre-built raw lines (the AUDIO sidecars). No tempo, so beats default to 120 bpm. */
   loadLines(rawLines) {
-    return this._setLines(Array.isArray(rawLines) ? rawLines : [], [], () => STAGE.DEFAULT_BEAT);
+    const lines = Array.isArray(rawLines) ? rawLines : [];
+    this._source = { lines, cues: [], beats: [] };
+    return this._setLines(lines, [], () => STAGE.DEFAULT_BEAT);
   }
+
+  /**
+   * A parsed lyric document (lyrics-doc.js parseLyricsDoc → { lines, cues, beatAt, beats? }): the
+   * phone's path, no song file involved. `beats` is optional and only feeds `source`.
+   * @returns {boolean} whether there are lyrics (as load / loadLines)
+   */
+  loadDoc({ lines, cues, beatAt, beats } = {}) {
+    const L = Array.isArray(lines) ? lines : [];
+    const C = Array.isArray(cues) ? cues : [];
+    this._source = { lines: L, cues: C, beats: Array.isArray(beats) ? beats : [] };
+    return this._setLines(L, C, typeof beatAt === "function" ? beatAt : () => STAGE.DEFAULT_BEAT);
+  }
+
+  /**
+   * What the last load* was given, for buildLyricsDoc: { lines (the RAW lines), cues (count-in cue
+   * times, s), beats (the tempo map flattened to [[t, secPerBeat], …], [] for loadLines / SMPTE) }.
+   * The arrays are the engine's own — read them, do not mutate them.
+   */
+  get source() { return this._source || EMPTY_SOURCE; }
 
   _setLines(raw, cues, beatAt) {
     this.lines = prepareStageLines(raw, beatAt);
@@ -134,6 +174,7 @@ export class StageLyricsEngine {
 
   clear() {
     this.lines = [];
+    this._source = EMPTY_SOURCE;
     this.plan = null;
     this.hasLyrics = false;
     this._noLyrics = false;
@@ -353,7 +394,11 @@ export class StageLyricsEngine {
 
   _rowX(row, slot) {
     const g = this._geo;
-    if (g.rows === 4) return (g.cw - Math.min(row.width, g.maxW)) / 2;   // four rows: always centred
+    // Four rows: always centred. Centre the UNSQUASHED width: a row wider than maxW is squashed about
+    // the canvas centre in _drawRow, which then fits it to maxW. Centring min(width, maxW) here as well
+    // compensated twice and pushed a long line right, off the canvas edge (portrait phones and the
+    // TV's portrait mode; found in M7 when the phone got stage lyrics).
+    if (g.rows === 4) return (g.cw - row.width) / 2;
     return alignX(row.width, g.cw, slot % 2 ? "right" : "left", this.opts.align, g.side);
   }
 
@@ -507,6 +552,18 @@ export class LyricsSwitch {
     const b = this.stage.loadLines(rawLines);
     return this.style === "scroll" ? a : b;
   }
+
+  /** A parsed lyric document (the phone, M7): the stage engine takes the lot, the scroll view the
+   *  same raw lines (it has no use for cues or tempo). */
+  loadDoc(parsedDoc = {}) {
+    const lines = Array.isArray(parsedDoc && parsedDoc.lines) ? parsedDoc.lines : [];
+    const a = this.scroll.loadLines(lines);
+    const b = this.stage.loadDoc(parsedDoc || {});
+    return this.style === "scroll" ? a : b;
+  }
+
+  /** What the stage engine was loaded with (see StageLyricsEngine#source) — the host's doc input. */
+  get source() { return this.stage.source; }
 
   update(t) { this.active.update(t); }
   reset() { this.scroll.reset(); this.stage.reset(); }

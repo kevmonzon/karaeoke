@@ -46,6 +46,7 @@ import { createRankings } from "./rankings.js";
 import { createSearchClient } from "./search-client.js";
 import { createRemoteGlue } from "./remote-glue.js";
 import { createRemoteHost } from "./remote-host.js";
+import { buildLyricsDoc } from "./lyrics-doc.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { collectAppData, restoreAppData, clearAppData } from "./store.js";
 import { createOverlayStack } from "./ui/overlay-stack.js";
@@ -126,6 +127,13 @@ let playDelayTimer = null; // delays music start until ~1s before the title card
 let lastParsed = null;
 let currentKey = null;
 let pendingUnsyncedLines = null; // AUDIO song: unsynced .txt lines awaiting duration-based timing
+// The phones' lyric document (M7). `songRev` counts loaded songs: each play* bumps it once the
+// song's lyrics are in, and it rides in getNowPlaying() so a phone knows to fetch the new
+// document. `revSong` is the song it was bumped for — `current` is written BEFORE a play*'s
+// first await, so for a moment it can name a song whose lyrics are not loaded yet.
+let songRev = 0;
+let revSong = null;
+let songDocDur = -1;             // the duration the last published document carried (-1 = none sent)
 let currentMelodyChannel = -1;
 let scorer = null;               // scoring.js Scorer for the current MIDI song (null = nothing to score)
 
@@ -198,7 +206,16 @@ async function boot() {
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({
     getSnapshot: () => remoteGlue.snapshot(),
-    applyCommand: (cmd) => remoteGlue.applyCommand(cmd),
+    // Push the new state the moment a guest command lands (a pause, a refusal's notice) instead of
+    // on the next ~1 s tick — the phone's round trip. Inside a POST this coalesces into ONE
+    // follow-up POST, and that one acks the command, so it cannot loop.
+    applyCommand: (cmd) => { remoteGlue.applyCommand(cmd); remoteHost.push(); },
+    // Read after every accepted POST, so "Instant updates" off closes the event stream and on
+    // opens it without rebuilding the host (its command-seq bookkeeping survives the change).
+    push: () => !!settings.get("remote.push"),
+    // The relay restarted or the room lapsed: it no longer holds this song's lyric document.
+    onRelayReset: () => publishCurrentSong(),
+    onPushStatus: () => updatePushStatus(),   // "Phones: instant / polling" under the queue QR
   });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); updateMicToggle(); };
   buildShell();          // the overlay stack, every overlay, the control bar and the home layer
@@ -1210,6 +1227,9 @@ const remoteGlue = createRemoteGlue({
     // Live score, so the room can watch the number climb on their own phones. Null unless the
     // song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
     score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
+    // Which lyric document describes this song (remote-glue lifts it to the snapshot's top
+    // level). Inside this getter on purpose: §5.29 rule 2 allows exactly one.
+    songRev,
   } : null),
   setStatus: (m) => setStatus(m),
   actions: {
@@ -1229,6 +1249,15 @@ const remoteGlue = createRemoteGlue({
       settingsUI.syncSettingsUI();     // refresh the ⚙ panel controls
       syncTransportLabels();           // …and the bottom key/tempo/volume labels
     },
+    // M7. remote-glue gates these first (remote.guestPlayNow / remote.guestPriority, fair play,
+    // the per-guest cap); what is left here is the playback state only app.js may write.
+    playNow: (song, by) => playNow(song, by),
+    playNext: (song, by) => {
+      queue.addFront(song, by);                       // an explicit jump, as the host sheet's Play next
+      if (!current && !loadingSong) advanceQueue();   // enqueue's auto-start guard (§5.29 rule 4)
+    },
+    restart: () => restartSong(),
+    bgNext: () => {},                                 // the background picker arrives in M11
   },
 });
 
@@ -1238,8 +1267,68 @@ function applyRemoteMode() {
   // Where the stage shows the QR ("idle" | "always" | "never"); the CSS reads it with remote-on.
   document.body.dataset.qr = settings.get("remote.qrOnStage");
   if (!remoteHost) return;
-  if (on) remoteHost.start(); else remoteHost.stop();
+  if (!on) remoteHost.stop();
+  // Already running: push now, so a remote.* change reaches the phones at once (guest Play now
+  // appearing) and a remote.push change opens or closes the event stream after this one POST.
+  else if (remoteHost.running) remoteHost.push();
+  else { remoteHost.start(); publishCurrentSong(); } // turned on mid-song: the phones need this song's lyrics
   remoteGlue.refreshQr(on); // render/refresh (or clear) the QR on the queue panel + the stage
+  updatePushStatus();
+}
+
+// The push channel's state under the queue QR (refreshed on every status change, and here when
+// Remote is toggled). The host's own event stream stands in for the phones': same relay, same way.
+let _pushLine = null;
+function updatePushStatus() {
+  const el = $("remote-push-status");
+  if (!el || !remoteHost) return;
+  const on = !!settings.get("remote.enabled");
+  const ps = remoteHost.pushStatus;
+  // "connecting" is not "polling": the stream is open and a guest command arrives on it at once;
+  // it only waits for the first event (the server's heartbeat comes every 15 s).
+  const text = !on ? "" : ps === "push" ? "Phones: instant" : ps === "connecting" ? "Phones: connecting…" : "Phones: polling";
+  if (text === _pushLine) return;
+  _pushLine = text;
+  el.textContent = text;
+  el.hidden = !on;
+}
+
+/**
+ * Publish the lyric document for the loaded song (M7, plan §5.14), so phones draw the same lyrics
+ * without fetching or parsing song files. Fire and forget: a failure here must never reach the
+ * player. Called by each play* once its lyrics are in, again (same songRev) when a duration or an
+ * unsynced .txt's line times arrive in tick(), when the relay restarts, and when Remote is turned on.
+ */
+function publishCurrentSong() {
+  songDocDur = -1;
+  if (!remoteHost || !current || current !== revSong || !settings.get("remote.enabled")) return;
+  try {
+    const duration = (media && media.duration) || 0;
+    const doc = lyricDocFor(current, duration);
+    songDocDur = duration;
+    Promise.resolve(remoteHost.publishSong(songRev, current.id, doc))
+      .catch((e) => console.warn("Lyric document not published:", e));
+  } catch (e) {
+    console.warn("Lyric document not published:", e);
+  }
+}
+
+// MIDI and AUDIO sidecars: what the stage engine was loaded with (raw lines, count-in cues, the
+// tempo map — empty for a text sidecar, which has no tempo). A song with no lyrics (instrumental,
+// no sidecar, a failed parse: the engine was cleared) has no usable line, and buildLyricsDoc turns
+// "lines" with none into "none". VIDEO / YouTube carry their lyrics in the picture.
+function lyricDocFor(song, duration) {
+  const id = song.id;
+  if (song.kind === "video" || song.kind === "youtube") return buildLyricsDoc({ id, kind: "baked", duration });
+  const { lines, cues, beats } = lyrics.source;
+  return buildLyricsDoc({ id, kind: "lines", lines, cues, beats, duration });
+}
+
+// A play* calls this once the song's lyrics are loaded (after its last stale check).
+function songLoaded(song) {
+  songRev++;
+  revSong = song;
+  publishCurrentSong();
 }
 
 async function remotePlay() {
@@ -1448,6 +1537,7 @@ async function playVideo(song, gen = playGen) {
   video.setKey(settings.get("audio.key")); // apply the current transpose to the video's audio
   video.load(url);
   setStageKind("video");
+  songLoaded(song);            // no await above this line: the play cannot be stale yet
   setStatus(`Now playing: ${song.code} — ${song.name}`);
   await video.play();
   if (stalePlay(gen)) return;  // a newer song took over while the picture was loading
@@ -1501,8 +1591,9 @@ async function playAudio(song, gen = playGen) {
   await audioFile.load(url);   // fetch the audio into an in-memory blob (reliable load/seek)
   if (stalePlay(gen)) return;  // a newer song was picked while this one was downloading
   setStageKind("audio");
-  await loadAudioLyrics(song); // fetch + parse the sidecar into the lyric surface
+  await loadAudioLyrics(song, gen); // fetch + parse the sidecar into the lyric surface
   if (stalePlay(gen)) return;
+  songLoaded(song);
   showTitleCard(song);
   setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
   await audioFile.play();
@@ -1513,7 +1604,9 @@ async function playAudio(song, gen = playGen) {
 // Load an AUDIO song's lyric sidecar into the LyricsEngine. Handles the timed text
 // formats (.lrc/.vtt/.srt), plain .txt (unsynced → spread across the duration once known),
 // and a lyrics-only .kar/.mid (reuse the SMF parser). A missing/failed sidecar is non-fatal.
-async function loadAudioLyrics(song) {
+// `gen`: §5.23 — a newer song picked while the sidecar downloads owns the lyric surface, so a
+// stale load writes nothing (it used to load its lines over the newer song's).
+async function loadAudioLyrics(song, gen = playGen) {
   const badge = $("lyric-badge");
   const url = Catalog.lyricsUrl(song);
   if (!url) { lyrics.clear(); badge.textContent = "no lyrics"; return; }
@@ -1521,12 +1614,16 @@ async function loadAudioLyrics(song) {
   try {
     if (ext === "kar" || ext === "mid" || ext === "midi") {
       const raw = await cachedArrayBuffer(url);   // may be raw-deflate compressed (like kar_raw)
+      if (stalePlay(gen)) return;
       const parsed = parseMidi(toMidiBytes(raw).slice(0));
       badge.textContent = lyrics.load(parsed) ? "" : "no lyrics";
     } else {
       const res = await fetch(url);
+      if (stalePlay(gen)) return;
       if (!res.ok) throw new Error(`sidecar ${res.status}`);
-      const { lines, synced } = linesFromLyricFile(ext, await res.text());
+      const text = await res.text();
+      if (stalePlay(gen)) return;
+      const { lines, synced } = linesFromLyricFile(ext, text);
       if (!synced) {
         distributeLineTimes(lines, audioFile.duration); // duration may be 0 here → refined in tick
         pendingUnsyncedLines = lines;
@@ -1534,6 +1631,7 @@ async function loadAudioLyrics(song) {
       badge.textContent = lyrics.loadLines(lines) ? (synced ? "" : "unsynced") : "no lyrics";
     }
   } catch (e) {
+    if (stalePlay(gen)) return;
     console.warn("Lyric sidecar failed:", e);
     lyrics.clear();
     badge.textContent = "no lyrics";
@@ -1570,6 +1668,7 @@ async function playYoutube(song, gen = playGen) {
   youtube.setTempo(settings.get("audio.tempo"));
   youtube.load(song.videoId);
   setStageKind("youtube");
+  songLoaded(song);            // no await above this line: the play cannot be stale yet
   setStatus(`Now playing: ${song.name}`);
   await youtube.play();
   if (stalePlay(gen)) return;
@@ -1653,6 +1752,7 @@ async function playMidi(song, gen = playGen) {
     return;
   }
   setStageKind("midi");
+  songLoaded(song);    // lyrics are in and the sequencer took the file (its length follows in tick)
 
   pushRecent(song);    // only once the song has actually loaded — a failed load isn't "played"
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
@@ -1802,6 +1902,11 @@ function tick() {
       distributeLineTimes(pendingUnsyncedLines, d);
       lyrics.loadLines(pendingUnsyncedLines);
       pendingUnsyncedLines = null;
+      publishCurrentSong();   // the document sent at load may carry placeholder line times (F43)
+    } else if (songDocDur === 0 && d > 0) {
+      // The document went out before the engine knew the length (a MIDI sequencer reports it
+      // a moment after loadSong; video and YouTube after their metadata). Same songRev.
+      publishCurrentSong();
     }
 
     // MIDI-only stage work: pitch guide, chords, mixer, scoring, auto-tune (needs note data).

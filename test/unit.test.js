@@ -1674,7 +1674,9 @@ test("remoteGlue: the snapshot carries the room, now-playing, queue and mirrored
   // `code` passes through as the catalog stores it (a number); only a MISSING code becomes "".
   assert.deepEqual(snap.queue, [{ id: "midi:2", name: "Beer", artist: "Itchyworms", kind: "midi", code: 2, by: "Rae", dur: null }]);
   assert.equal(glueHarness({ list: [{ id: "x" }], listBy: [""], settings: {} }).glue.snapshot().queue[0].code, "");
-  // Exactly the allowlist is mirrored — no more, no less.
+  // With none of the read-only host flags set, exactly the guest-settable allowlist is mirrored —
+  // no more, no less. (M7's read-only mirror — remote.guestPlayNow / guestPriority / push,
+  // queue.fairPlay — is covered in test/remote-v2.test.js.)
   assert.deepEqual(Object.keys(snap.settings).sort(), [...REMOTE_SETTABLE].sort());
 });
 

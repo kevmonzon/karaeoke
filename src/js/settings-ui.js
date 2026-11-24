@@ -123,6 +123,10 @@ const SETTINGS_SCHEMA = [
   { id: "set-remote", path: "remote.enabled", type: "check" },
   { id: "set-qr-stage", path: "remote.qrOnStage", type: "select" },
   { id: "set-remote-url", path: "remote.baseUrl", type: "text" },
+  // M7: the push channel, and what a guest may do beyond Reserve (remote-glue.js gates both)
+  { id: "set-remote-push", path: "remote.push", type: "check" },
+  { id: "set-guest-playnow", path: "remote.guestPlayNow", type: "check" },
+  { id: "set-guest-priority", path: "remote.guestPriority", type: "check" },
 ];
 
 // Synonyms so intuitive words find a control whose visible label doesn't contain
@@ -171,6 +175,9 @@ const SEARCH_KEYWORDS = {
   "set-show-source": "songbook source sh platkar tjmedia midi chip number",
   "set-remote": "phone qr code queue guest party mobile control",
   "set-remote-url": "phone qr url tunnel address host",
+  "set-remote-push": "phone instant push realtime latency polling stream sse fast",
+  "set-guest-playnow": "phone guest play now stop interrupt singer permission",
+  "set-guest-priority": "phone guest play next priority jump front queue permission",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
   "set-score": "points rating videoke sing grade",

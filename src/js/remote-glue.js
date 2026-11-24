@@ -21,10 +21,29 @@ const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // no ambiguous glyp
 const ROOM_LEN = 6;
 const MAX_NICKNAME = 24;
 
-const $ = (id) => document.getElementById(id);
+/** How long a refusal stays in the snapshot's `notice` (the phones show it, then it clears). */
+export const NOTICE_MS = 5000;
+const NOTICE_MAX = 200;   // serve.py keeps this many characters of it (NOTICE_MAX)
 
 /**
- * The host-settings subset mirrored to phones AND the allowlist a guest may change.
+ * Host settings mirrored to phones READ-ONLY, so a phone can hide what the host refuses (Play now,
+ * Play next) instead of offering a button that only ever earns a "not allowed", and follow the
+ * host's `remote.push` ("Instant updates": off forces polling everywhere, e.g. behind a proxy that
+ * breaks the event stream — the phone stops its push client when it reads false). They are NOT in
+ * REMOTE_SETTABLE: a guest `setting` command for one of them is ignored like any other unknown path.
+ * Mirrored only when the host's settings hold a boolean for them (config.js gives the defaults); a
+ * phone should read a missing gate as "not allowed" and a missing remote.push as "push allowed".
+ */
+export const REMOTE_READONLY_MIRROR = Object.freeze(["remote.guestPlayNow", "remote.guestPriority", "queue.fairPlay", "remote.push"]);
+// The host gates' defaults when a setting is missing altogether (plan P11 / Q9: Play now off).
+const GATE_DEFAULTS = Object.freeze({ "remote.guestPlayNow": false, "remote.guestPriority": true, "queue.fairPlay": false });
+
+const $ = (id) => document.getElementById(id);
+const nickname = (by) => String(by || "").slice(0, MAX_NICKNAME);
+
+/**
+ * The host-settings subset mirrored to phones AND the allowlist a guest may change. (The phones
+ * also get REMOTE_READONLY_MIRROR, which is mirrored only — never settable.)
  *
  * A guest `setting` command with any other path is ignored — never settings.set() an arbitrary
  * path off the network. The paths and their legal value RANGES live together in remote-host.js:
@@ -58,14 +77,17 @@ export function renderQr(el, text) {
  * @param {object} deps.durations
  * @param {() => object|null} deps.getNowPlaying  the `now` block, built by app.js
  * @param {(msg:string)=>void} deps.setStatus
- * @param {object} deps.actions      playback-touching operations, all implemented in app.js
+ * @param {object} deps.actions      playback-touching operations, all implemented in app.js:
+ *   enqueue, removeFromQueue, reorderQueue, play, pause, next, seek, setVolume, applySetting, and
+ *   (M7) playNow(song, by), playNext(song, by), restart(), bgNext() (a no-op until M11)
  * @param {object} [deps.storage]
+ * @param {() => number} [deps.clock]  ms, for the notice's 5 s life (Date.now; injected in tests)
  * (A `positionFocusQr` dependency is still accepted and ignored: the focus-mode QR it placed
  *  is gone, and the stage QR chip is positioned by CSS.)
  */
 export function createRemoteGlue({
   settings, catalog, queue, reactions, libraryView, durations,
-  getNowPlaying, setStatus, actions, storage,
+  getNowPlaying, setStatus, actions, storage, clock = () => Date.now(),
 }) {
   const store = storage !== undefined ? storage : (() => {
     try { return window.localStorage; } catch (_) { return null; }
@@ -73,6 +95,49 @@ export function createRemoteGlue({
 
   let hostRoom = null;
   let lanUrl = null;   // server-detected LAN base (fetched once, cached)
+  let notice = "";     // the last refusal, shown on the phones for NOTICE_MS
+  let noticeAt = 0;
+  // song → its index in catalog.songs, so a queue item can carry ref {i, code} (the phone's compact
+  // catalogue row i is the host's catalog.songs[i]). Rebuilt only when catalog.songs is replaced
+  // (load / adopt assign a new array) — never an indexOf per push over 120k songs.
+  let indexedSongs = null;
+  let songIndex = null;
+
+  function refOf(song) {
+    const songs = catalog && catalog.songs;
+    if (!Array.isArray(songs)) return null;
+    if (songs !== indexedSongs) {
+      songIndex = new Map();
+      songs.forEach((s, i) => { if (s && !songIndex.has(s)) songIndex.set(s, i); });
+      indexedSongs = songs;
+    }
+    const i = songIndex.get(song);
+    return i === undefined ? null : { i, code: song.code };
+  }
+
+  /** A gate's value: the host's boolean, else the documented default. */
+  function gate(path) {
+    const v = settings.get(path);
+    return typeof v === "boolean" ? v : GATE_DEFAULTS[path];
+  }
+
+  /** Refuse a guest command where the room can see why: the phones' notice and the host's status line. */
+  function refuse(text) {
+    notice = String(text).slice(0, NOTICE_MAX);
+    noticeAt = clock();
+    setStatus(text);
+  }
+  const notAllowed = (by) => refuse(`${by || "A guest"}: not allowed by the host`);
+
+  /** Optional reservation cap — the digital form of "don't hog the mic". 0 = off; the host ("") is never capped. */
+  function overCap(by) {
+    const cap = +settings.get("queue.maxPerGuest") || 0;
+    if (cap > 0 && by && queue.countBy(by) >= cap) {
+      refuse(`${by} already has ${cap} song${cap === 1 ? "" : "s"} reserved — wait for your turn.`);
+      return true;
+    }
+    return false;
+  }
 
   /**
    * The room code, OWNED BY THIS HOST BROWSER: generated once and kept in localStorage, so it
@@ -91,12 +156,28 @@ export function createRemoteGlue({
     return hostRoom;
   }
 
-  /** Resolve a song a phone asked to enqueue. Library songs resolve by id; a YouTube result
-   *  (not in the local catalog) is reconstructed from the command metadata and registered so it
-   *  resolves everywhere else — favorites, recents, the queue — like a local one. */
+  /** Resolve a song a phone asked for. In order: by `id` (older phones, and the queue); by `ref`
+   *  {i, code} — the phone's compact-catalogue row, which IS catalog.songs[i] unless the catalogue
+   *  was rebuilt since, so the code must match (a blank code must match the title too); else every
+   *  song with that code in the named songbook (`source`, else all), first wins; else a YouTube
+   *  result (not in the local catalog), reconstructed from the command metadata and registered so it
+   *  resolves everywhere else — favorites, recents, the queue — like a local one. Every field is
+   *  untrusted (a raw POST is not the phone UI): shapes are checked, lookups are Maps. */
   function resolveSong(c) {
-    const hit = catalog.getById(c.id);
+    const hit = c.id != null && c.id !== "" ? catalog.getById(c.id) : null;
     if (hit) return hit;
+    const ref = c.ref;
+    if (ref && typeof ref === "object" && (typeof ref.code === "string" || (typeof ref.code === "number" && Number.isFinite(ref.code)))) {
+      const code = String(ref.code);
+      const songs = Array.isArray(catalog.songs) ? catalog.songs : [];
+      const at = Number.isInteger(ref.i) && ref.i >= 0 && ref.i < songs.length ? songs[ref.i] : null;
+      if (at && String(at.code ?? "") === code && (code !== "" || (typeof c.name === "string" && at.name === c.name))) return at;
+      if (code !== "" && typeof catalog.lookupCode === "function") {
+        const source = typeof c.source === "string" && c.source ? c.source : "all";
+        const byCode = catalog.lookupCode(code, source)[0];
+        if (byCode) return byCode;
+      }
+    }
     if (c.kind === "youtube" && c.videoId) {
       return libraryView.registerYoutube(Catalog.makeYoutubeRecord({
         videoId: c.videoId, title: c.name, channelTitle: c.artist,
@@ -108,33 +189,71 @@ export function createRemoteGlue({
   return {
     getHostRoom,
 
-    /** Snapshot the host state for the phones. remote-host.js adds the ackSeq before POSTing. */
+    /**
+     * Snapshot the host state for the phones. remote-host.js adds the ackSeq before POSTing.
+     * `songRev` is lifted out of the now block (app.js keeps it there — the one getter, §5.29) to
+     * the top level, where serve.py reads it; 0 with nothing playing. `notice` is the last refusal
+     * for NOTICE_MS, then "". A queue item carries `ref: {i, code}` when the song is in the catalogue.
+     */
     snapshot() {
-      const q = queue.list.map((s, i) => ({
-        id: s.id, name: s.name || "", artist: s.artistName || "",
-        kind: s.kind, code: s.code || "", by: queue.listBy[i] || "",
-        dur: durations.get(s.id),   // learned length → the phone computes "how long until mine"
-      }));
+      const q = queue.list.map((s, i) => {
+        const item = {
+          id: s.id, name: s.name || "", artist: s.artistName || "",
+          kind: s.kind, code: s.code || "", by: queue.listBy[i] || "",
+          dur: durations.get(s.id),   // learned length → the phone computes "how long until mine"
+        };
+        const ref = refOf(s);
+        if (ref) item.ref = ref;
+        return item;
+      });
       const settingsSub = {};
       for (const p of REMOTE_SETTABLE) settingsSub[p] = settings.get(p);
-      return { room: getHostRoom(), now: getNowPlaying(), queue: q, settings: settingsSub };
+      for (const p of REMOTE_READONLY_MIRROR) {
+        const v = settings.get(p);
+        if (typeof v === "boolean") settingsSub[p] = v;
+      }
+      const now = getNowPlaying();
+      const rev = now && now.songRev;
+      if (notice && clock() - noticeAt >= NOTICE_MS) notice = "";
+      return {
+        room: getHostRoom(), now, queue: q, settings: settingsSub,
+        songRev: Number.isInteger(rev) && rev > 0 ? rev : 0,
+        notice,
+      };
     },
 
     /** Apply one guest command (already validated server-side to a known type). */
     applyCommand(cmd) {
       switch (cmd.type) {
         case "enqueue": {
-          const by = String(cmd.by || "").slice(0, MAX_NICKNAME);
-          // Optional reservation cap — the digital form of "don't hog the mic". 0 = off.
-          const cap = +settings.get("queue.maxPerGuest") || 0;
-          if (cap > 0 && by && queue.countBy(by) >= cap) {
-            setStatus(`${by} already has ${cap} song${cap === 1 ? "" : "s"} reserved — wait for your turn.`);
-            break;
-          }
+          const by = nickname(cmd.by);
+          if (overCap(by)) break;
           const song = resolveSong(cmd);
           if (song) actions.enqueue(song, by);
           break;
         }
+        // M7. The relay only routes these; whether a guest may is the host's call, every time.
+        case "playnow": {
+          // Off by default (plan P11 / Q9): it stops the current singer mid-song.
+          const by = nickname(cmd.by);
+          if (!gate("remote.guestPlayNow")) { notAllowed(by); break; }
+          const song = resolveSong(cmd);
+          if (song) actions.playNow(song, by);
+          break;
+        }
+        case "priority": {
+          // "Play next" jumps the queue, which is exactly what fair play exists to prevent.
+          const by = nickname(cmd.by);
+          if (!gate("remote.guestPriority") || gate("queue.fairPlay")) { notAllowed(by); break; }
+          if (overCap(by)) break;
+          const song = resolveSong(cmd);
+          if (song) actions.playNext(song, by);
+          break;
+        }
+        case "restart": actions.restart(); break;
+        case "bg": if (typeof actions.bgNext === "function") actions.bgNext(); break;
+        // "digit", "digit_delete", "digit_clear", "digit_commit" arrive in M8; until then they fall
+        // through and are ignored.
         // The id check is what stops a stale index deleting the wrong song — a guest's index
         // can be ~2 s out of date by the time the command lands. See queue.js.
         case "remove":

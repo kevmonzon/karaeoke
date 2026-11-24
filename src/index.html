@@ -262,6 +262,8 @@
       <div id="remote-qr-code" class="remote-qr-code" role="img" aria-label="Remote-control QR code"></div>
       <div class="remote-qr-room">Room code <strong id="remote-room">—</strong></div>
       <div class="remote-qr-urlrow">URL <a id="remote-qr-url" class="remote-qr-url" href="#" target="_blank" rel="noopener">—</a></div>
+      <!-- "Phones: instant" / "Phones: polling" — the push channel's state (app.js updatePushStatus). -->
+      <div id="remote-push-status" class="remote-qr-room" role="status" hidden></div>
     </div>
     <ul id="queue-list" class="queue-list"></ul>
     <div id="queue-actions" class="queue-actions"><button id="queue-clear" class="reset-btn danger" hidden>Clear all</button></div>
@@ -616,7 +618,19 @@
           <span>URL override</span>
           <input id="set-remote-url" type="text" class="set-text" placeholder="auto-detect" />
         </label>
-        <div class="hint sub">Shows a QR on the queue panel (and on the stage: <strong>When idle</strong> = the home screen only, <strong>Always</strong> = also a small corner code during a song); phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
+        <label class="row toggle">
+          <span>Instant updates <em class="muted">(push)</em></span>
+          <input id="set-remote-push" type="checkbox" />
+        </label>
+        <label class="row toggle">
+          <span>Guests can play a song now <em class="muted">(stops the current singer)</em></span>
+          <input id="set-guest-playnow" type="checkbox" />
+        </label>
+        <label class="row toggle">
+          <span>Guests can jump the queue</span>
+          <input id="set-guest-priority" type="checkbox" />
+        </label>
+        <div class="hint sub">Shows a QR on the queue panel (and on the stage: <strong>When idle</strong> = the home screen only, <strong>Always</strong> = also a small corner code during a song); phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. A guest's jump to the front of the queue is refused while fair play is on. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
       </section>
 
       <section>

@@ -179,6 +179,16 @@ export const DEFAULT_CONFIG = {
     // home screen only · "always" = also a small corner code while a song is loaded, for guests
     // who arrive mid-song · "never" = no QR on the stage at all.
     qrOnStage: "idle",
+    // Instant updates: phones and the host hear each other over the relay's event stream (SSE)
+    // in a fraction of a second. Off = the 1 s polling only. A stream a proxy holds back is
+    // noticed and falls back to polling by itself (plan §5.10).
+    push: true,
+    // A guest's "Play now" stops whoever is singing, so it is OFF until the host allows it
+    // (plan P11; Q9 kept the default). The host's own Play now is never affected.
+    guestPlayNow: false,
+    // A guest's "Play next" puts their song first in the queue. Refused while queue.fairPlay is
+    // on; queue.maxPerGuest still counts it (plan §5.11).
+    guestPriority: true,
   },
 
   // Pitch guide — reads the guide melody from the MIDI and shows a scrolling
