@@ -160,7 +160,7 @@
       <div id="home-qr" class="home-qr" role="img" aria-label="Scan to control from your phone"></div>
       <div id="home-room" class="home-room"></div>
       <nav id="home-tiles" class="home-tiles" aria-label="Menu"></nav>
-      <div id="home-hints" class="key-hints" aria-hidden="true"></div>
+      <div id="home-hints" class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose</div>
     </div>
 
     <!-- HUD: the small remote QR chip (remote.qrOnStage = "always") and the offset toast. -->
@@ -216,7 +216,7 @@
           </div>
           <div class="ctl">
             <label for="volume">Volume</label>
-            <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" />
+            <input id="volume" type="range" min="0" max="2" step="0.01" value="0.9" data-nav-axis="vertical" />
           </div>
         </div>
         <div class="ctl-actions">

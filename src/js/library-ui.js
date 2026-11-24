@@ -50,6 +50,39 @@ export function measureRow(listEl) {
 }
 
 const OVERSCAN = 5;      // extra rows above/below the viewport
+const PAGE = 10;         // rows per PageUp / PageDown
+
+/**
+ * What one key does on a focused list row (pure). The list OWNS its movement keys, except at
+ * its edges: ArrowUp on the first row, ArrowDown on the last and ArrowLeft / ArrowRight always
+ * are handed to spatial navigation (`edge`, `prevent: false`), so the key router moves focus
+ * out of the list exactly once. Every other movement key is consumed (`prevent: true`) with a
+ * clamped target row. Any other key → null (Enter / Space / "+" are the row's, printable keys
+ * are type-to-search's: the caller decides those).
+ * @param {string} key    KeyboardEvent.key
+ * @param {number} index  the focused row
+ * @param {number} count  rows in the list
+ * @returns {{move: number|null, edge: "up"|"down"|"left"|"right"|null, prevent: boolean} | null}
+ */
+export function listKeyPlan(key, index, count) {
+  const n = Math.max(0, Math.floor(Number(count)) || 0);
+  const last = n - 1;
+  const i = Math.max(0, Math.min(last, Math.floor(Number(index)) || 0));
+  const edge = (dir) => ({ move: null, edge: dir, prevent: false });
+  const to = (j) => (n ? { move: Math.max(0, Math.min(last, j)), edge: null, prevent: true }
+    : { move: null, edge: null, prevent: false });   // an empty list has nothing to move to
+  switch (key) {
+    case "ArrowUp": return n && i > 0 ? to(i - 1) : edge("up");
+    case "ArrowDown": return n && i < last ? to(i + 1) : edge("down");
+    case "ArrowLeft": return edge("left");
+    case "ArrowRight": return edge("right");
+    case "PageUp": return to(i - PAGE);
+    case "PageDown": return to(i + PAGE);
+    case "Home": return to(0);
+    case "End": return to(last);
+    default: return null;
+  }
+}
 
 // Source icon per song kind (shown on each list + queue row): 🎤 MIDI · 🎞️ video · 🌐 YouTube · 🎵 audio.
 const KIND_ICON = {
@@ -77,9 +110,11 @@ const hasCode = (s) => s.code !== "" && s.code != null;
  * @param {(song, rowEl)=>void} [cb.onActivate]  optional: a click or Enter on a row body calls this
  *        instead of today's select / play (and double-click no longer plays). Not passed yet:
  *        without it rows behave as they always have (click selects, double-click and Enter play).
- * @returns {{ renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh }}
+ * @param {(dir:"up"|"down"|"left"|"right")=>void} [cb.onEdge]  optional: an arrow left the list
+ *        at an edge (listKeyPlan). The key is NOT prevented, so the key router still moves focus.
+ * @returns {{ renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh, focusRow }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null, onEdge = null }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
   const rowH = () => measureRow(viewport);
   // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
@@ -151,13 +186,17 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       li.appendChild(mark);
     }
     const fav = isFavorite && isFavorite(s);
+    // ★ and ＋ are tappable but never a focus stop (tabindex -1): a row is ONE stop for the
+    // D-pad and for Tab. "+" on the row stands in for ＋; ★ moves into the song sheet in M5.
     const favBtn = document.createElement("button");
+    favBtn.tabIndex = -1;
     favBtn.className = "fav" + (fav ? " on" : "");
     favBtn.textContent = fav ? "★" : "☆";
     favBtn.title = fav ? "Remove from favorites" : "Add to favorites";
     favBtn.onclick = (ev) => { ev.stopPropagation(); onToggleFavorite(s); };
     li.appendChild(favBtn);
     const addBtn = document.createElement("button");
+    addBtn.tabIndex = -1;
     addBtn.className = "add";
     addBtn.textContent = "＋";
     addBtn.title = "Add to queue";
@@ -215,7 +254,9 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     if (pendingFocus || hadFocus) {
       pendingFocus = false;
       const el = viewport.querySelector(`.song[data-index="${focusIndex}"]`);
-      if (el) el.focus();
+      // preventScroll: a keyboard move has already scrolled (moveFocus), and a restore after a
+      // wheel / drag scroll must not yank the list back to the focused row.
+      if (el) el.focus({ preventScroll: true });
     }
   }
 
@@ -232,26 +273,41 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     renderWindow();   // the scroll above may also fire renderWindow; both are idempotent
   }
 
+  /**
+   * Put focus on row `i`, or on the roving row when `i` is omitted, scrolled into view.
+   * @returns {boolean} whether focus landed on a row (false for an empty list)
+   */
+  function focusRow(i) {
+    if (!songs.length) return false;
+    moveFocus(i == null ? focusIndex : i);
+    const a = document.activeElement;
+    return !!a && a.classList && a.classList.contains("song") && viewport.contains(a);
+  }
+
   // Keyboard navigation for the list. Deliberately NOT a listbox: the <ul role="list"> +
   // <li> structure is a documented a11y invariant here (§5.19), so this stays a list whose
   // items happen to be focusable and actionable, which is what they already were by mouse.
+  // The list owns its movement keys but not its edges (listKeyPlan): an arrow that would leave
+  // it is NOT prevented, so the document key router moves focus out, once. Printable keys are
+  // left alone too (type-to-search, wired by app.js on the Songs panel).
   viewport.addEventListener("keydown", (e) => {
     if (!songs.length) return;
     const row = e.target.closest && e.target.closest(".song");
     const i = row ? +row.dataset.index : focusIndex;
+    const plan = listKeyPlan(e.key, i, songs.length);
+    if (plan) {
+      if (plan.edge) { if (onEdge) onEdge(plan.edge); return; }
+      if (plan.prevent) e.preventDefault();
+      if (plan.move != null) moveFocus(plan.move);
+      return;
+    }
     switch (e.key) {
-      case "ArrowDown": e.preventDefault(); moveFocus(i + 1); break;
-      case "ArrowUp": e.preventDefault(); moveFocus(i - 1); break;
-      case "PageDown": e.preventDefault(); moveFocus(i + 10); break;
-      case "PageUp": e.preventDefault(); moveFocus(i - 10); break;
-      case "Home": e.preventDefault(); moveFocus(0); break;
-      case "End": e.preventDefault(); moveFocus(songs.length - 1); break;
       case "Enter":
         if (row) { e.preventDefault(); onActivate ? onActivate(songs[i], row) : onPlay(songs[i]); }
         break;
       case " ":
-        // Space selects the row (the transport's global Space-to-play only applies when
-        // focus isn't in the list — see app.js, which ignores keys from a focused row).
+        // Space selects the row. It is prevented, so the key router (app.js) never also reads
+        // it as play/pause; the key map leaves Space / "+" to a focused row as well.
         if (row) { e.preventDefault(); focusIndex = i; selectRow(songs[i]); }
         break;
       case "+": case "=":
@@ -325,6 +381,15 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   // shown as a "· name" badge on the artist line. Absent/blank for host-added songs.
   function renderQueue(queue, queueBy = []) {
     const q = $("queue-list");
+    // The rebuild destroys a focused ✕ (Enter on it removes its own row; the queue also moves
+    // on when a song starts), which would drop keyboard focus to <body> inside an open panel.
+    // Note which row held focus and put it back on the ✕ at the same place afterwards.
+    const a = document.activeElement;
+    let keep = -1;
+    if (a && a !== q && q.contains(a)) {
+      const li = a.closest && a.closest("li");
+      keep = li ? [...q.children].indexOf(li) : -1;
+    }
     q.innerHTML = "";
     queue.forEach((s, i) => {
       const li = document.createElement("li");
@@ -346,6 +411,13 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       li.appendChild(rm);
       q.appendChild(li);
     });
+    if (keep >= 0) {
+      const btns = q.querySelectorAll("li button");
+      // The same place, else the new last row; an emptied queue falls back to its panel's Close.
+      const host = q.closest && q.closest("[data-ov]");
+      const target = btns[Math.min(keep, btns.length - 1)] || (host && host.querySelector("[data-ov-close]"));
+      if (target) target.focus({ preventScroll: true });
+    }
     // NOT "queue-count": that id also belonged to the now-playing chip in the stage header,
     // so getElementById returned the chip and this overwrote it — the chip read "(1)" instead
     // of "⏭ 1" and the queue heading never showed a count at all. Two writers, one id.
@@ -359,5 +431,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     getList: () => songs, // the currently-rendered list (used to skip to the next result)
     setNowPlaying,
     refresh, // re-measure the row + --vlist-h and re-render (panel opened / font size / resize)
+    focusRow, // keys: #search ArrowDown and the Songs panel's initial focus
   };
 }

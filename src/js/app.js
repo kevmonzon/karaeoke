@@ -49,6 +49,10 @@ import { createOverlayStack } from "./ui/overlay-stack.js";
 import { createOverlays } from "./ui/overlays-dom.js";
 import { createShell } from "./ui/shell.js";
 import { createHome } from "./ui/home.js";
+import { keyToAction } from "./ui/keymap.js";
+import { createInputMode } from "./ui/input-mode.js";
+import { createNav } from "./ui/nav-dom.js";
+import { createActions } from "./ui/actions.js";
 
 const $ = (id) => document.getElementById(id);
 // What an empty song list should SAY. A bare white panel is indistinguishable from a broken
@@ -87,6 +91,10 @@ const score = createScorePresentation({ settings });
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer;  // UI modules (created at boot)
 let stack, overlays, shell, home; // the stage-first shell (created at boot — see buildShell)
+let inputMode, nav, actions;     // keys and D-pad (created at boot — see buildKeys)
+// id → the element registered for that overlay, kept beside the overlays.register calls: the
+// D-pad's scope is the top modal's element (nav.getOverlayEl).
+const overlayEls = new Map();
 let stageKind = "";              // the loaded song's kind as last told to the shell ("" = none)
 
 let remoteHost;                  // host↔phone relay driver (created at boot)
@@ -222,49 +230,39 @@ function buildShell() {
   // rows (and fill its viewport) once the panel is laid out: re-measure on the next frame.
   const remeasure = () => requestAnimationFrame(() => lib.refresh());
   const first = (root, sel) => (root ? root.querySelector(sel) : null);
+  const reg = (id, opts) => { overlayEls.set(id, opts.el || null); overlays.register(id, opts); };
+  // Initial focus depends on the input mode (§4.2 table): a D-pad lands on a row / a category,
+  // touch and mouse on the search field (so the keyboard comes up, or typing just works).
+  const keysMode = () => !!inputMode && inputMode.mode === "keys";
   // Every overlay except "controls" — the shell registers the bar itself (its one owner).
-  overlays.register("search", { el: $("ov-search"), initialFocus: () => $("search"), onOpen: remeasure });
-  overlays.register("queue", {
+  reg("search", {
+    el: $("ov-search"),
+    // Keys: the last focused row (the roving one), else the first; an empty list → the field.
+    initialFocus: () => (keysMode() && lib.focusRow() ? document.activeElement : $("search")),
+    onOpen: remeasure,
+  });
+  reg("queue", {
     el: $("ov-queue"),
     // Queue rows are not focusable yet (their ✕ is): start on Close, so Enter can't remove a song.
     initialFocus: () => first($("ov-queue"), ".ov-close"),
     onOpen: remeasure,
   });
-  overlays.register("mixer", { el: $("ov-mixer"), initialFocus: () => first($("midi-mixer"), "input, button") });
-  overlays.register("settings", { el: $("settings-panel"), initialFocus: () => $("set-search"), onOpen: settingsUI.onOpen });
-  overlays.register("song", { el: $("ov-song") });
-  overlays.register("adjust", { el: $("ov-adjust") });
-  overlays.register("recap", { el: $("recap"), initialFocus: () => $("recap-close"), onOpen: () => recap.render() });
-  overlays.register("calibrate", { el: $("ov-calibrate") });
-  overlays.register("confirm", { el: $("ov-confirm"), initialFocus: () => $("ov-confirm-cancel") });
+  reg("mixer", { el: $("ov-mixer"), initialFocus: () => first($("midi-mixer"), "input, button") });
+  reg("settings", {
+    el: $("settings-panel"),
+    initialFocus: () => (keysMode() && first($("settings-panel"), ".set-cat:not(.filtered-out) > summary")) || $("set-search"),
+    onOpen: settingsUI.onOpen,
+  });
+  reg("song", { el: $("ov-song") });
+  reg("adjust", { el: $("ov-adjust") });
+  reg("recap", { el: $("recap"), initialFocus: () => $("recap-close"), onOpen: () => recap.render() });
+  reg("calibrate", { el: $("ov-calibrate") });
+  reg("confirm", { el: $("ov-confirm"), initialFocus: () => $("ov-confirm-cancel") });
   overlays.wire();
-  // Escape = Back: one press closes the top overlay (the overlay stack decides which). A field
-  // that clears itself on Escape (the search boxes, while they hold text) handles it first and
-  // calls preventDefault(), so one press never both clears and closes. The full remote-key map
-  // (Backspace, BrowserBack, TV codes) arrives with the key router. Wired here, not in wireUI,
-  // so it works while the catalogue is still loading.
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || e.defaultPrevented) return;
-    if (overlays.back()) e.preventDefault();
-  });
 
-  shell = createShell({
-    overlays, stack, settings,
-    actions: {
-      // Restart only means something with a song on the stage (and not mid-load).
-      restart: () => {
-        if (!current || !media || loadingSong) return;
-        media.restart();
-        userPaused = false;
-        setPlayIcon();
-      },
-      fullscreen: () => {
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        else document.documentElement.requestFullscreen().catch(() => {});
-      },
-    },
-  });
+  shell = createShell({ overlays, stack, settings, actions: { restart: restartSong, fullscreen: toggleFullscreen } });
   shell.wire();
+  overlayEls.set("controls", $("ov-controls"));
 
   home = createHome({
     el: $("home"),
@@ -272,6 +270,8 @@ function buildShell() {
     onTile: openFromHome,
   });
   home.render();
+
+  buildKeys();   // input mode, D-pad navigation, the named actions, the one key router, media keys
 
   // An open or closing panel reflows the stage beside it (never over the lyrics), and the
   // overscan inset moves it in from the edges. The stage lyric canvas re-measures itself; the
@@ -314,6 +314,271 @@ function openFromHome(id) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Keys and D-pad (M4, plan §4.3). ONE keydown listener on the document, bubble phase, decides
+// what a key means. The protocol is `defaultPrevented`: a widget that handles a key (the song
+// list, the search fields, a native control) prevents it and the router ignores it; a widget
+// that wants the router to take over (a list edge) does not. No key is handled twice.
+// Installed from buildShell, so the keys work while the catalogue is still loading.
+// ---------------------------------------------------------------------------
+const DIALOGS = new Set(["recap", "calibrate", "confirm"]);
+// A single-line text field: it releases ArrowUp / ArrowDown (a text field owns only Left/Right).
+const LINE_TYPES = /^(text|search|url|email|tel|password)$/;
+const isLineField = (el) => !!el && el.tagName === "INPUT" && LINE_TYPES.test(el.type);
+const noMods = (e) => !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+// Is the caret (no selection) at the start (ArrowLeft) or end (ArrowRight) of a field's text?
+// A type without the selection API (email) counts as at the edge, so it can never trap focus.
+const caretAtEdge = (el, key) => {
+  const s = el.selectionStart, end = el.selectionEnd;
+  if (s == null || end == null) return true;
+  if (s !== end) return false;
+  return key === "ArrowLeft" ? s === 0 : s === el.value.length;
+};
+let keyEvent = null;   // the keydown being routed: `c` and Back hand it to the shell (see shell.toggle)
+
+function buildKeys() {
+  inputMode = createInputMode();   // html[data-input] = touch | mouse | keys (hints, the ring's grow)
+  inputMode.wire();
+  nav = createNav({
+    stack,
+    getOverlayEl: (id) => overlayEls.get(id) || null,
+    getHomeRoot: () => $("home-tiles"),
+    getBarRoot: () => $("ov-controls"),
+    getBarEntry: () => $("btn-play"),
+    isIdle: () => document.body.dataset.idle === "true",
+    isBarVisible: () => !document.body.classList.contains("controls-hidden"),
+    showBar: () => shell.poke(),
+  });
+  // A handler returns false for "not handled" (the key goes through); anything else = handled.
+  // `digit` (M8) and `bgNext` (M11) have no handler yet, so their keys are never swallowed.
+  actions = createActions({
+    back: () => goBack(),
+    playPause: (arg) => playPauseKey(arg),
+    next: () => nextKey(),
+    restart: () => { if (!restartSong()) return false; showAdjust("Restart"); return true; },
+    stop: () => stopSong(),
+    keyUp: () => adjustKey(1),
+    keyDown: () => adjustKey(-1),
+    tempoUp: () => adjustTempo(0.05),
+    tempoDown: () => adjustTempo(-0.05),
+    offsetUp: () => { nudgeOffset(50); return true; },
+    offsetDown: () => { nudgeOffset(-50); return true; },
+    melodyToggle: () => {
+      const mute = !settings.get("guide.vocal.mute");
+      settings.set("guide.vocal.mute", mute);   // → onSettingChanged → the 🎵 button's state
+      showAdjust(mute ? "Melody off" : "Melody on");
+      return true;
+    },
+    openSearch: () => {
+      if (DIALOGS.has(stack.top())) return false;   // a dialog is on top: not under it
+      if (overlays.isOpen("search")) { $("search").focus(); return true; }
+      overlays.open("search");
+      return true;
+    },
+    openQueue: () => {
+      if (DIALOGS.has(stack.top())) return false;
+      overlays.open("queue");                       // already open → a no-op (open() only touches it)
+      return true;
+    },
+    toggleControls: () => shell.toggle(keyEvent),
+    fullscreen: () => { toggleFullscreen(); return true; },
+  });
+  document.addEventListener("keydown", routeKey);
+  wireTypeToSearch();
+  wireMediaSession();
+}
+
+function routeKey(e) {
+  // 1. a widget already handled it (an IME composition is the field's too)
+  if (e.defaultPrevented || e.isComposing) return;
+  // 2. where focus is
+  const a = document.activeElement;
+  const ctx = {
+    typing: !!a && ((/^(INPUT|TEXTAREA)$/.test(a.tagName) && !/^(range|checkbox|radio|button|color)$/.test(a.type)) || !!a.isContentEditable),
+    // A5: only song rows are rows in M4 (the queue's ✕ buttons stay ordinary buttons until M5).
+    inList: !!(a && a.closest && a.closest(".song")),
+    inSearch: !!(a && a.closest && a.closest("#ov-search")),
+    modal: DIALOGS.has(stack.top()),
+  };
+  // 3. Enter = OK: a checkbox / radio / select / colour does not act on Enter natively
+  if ((e.key === "Enter" || e.key === "NumpadEnter" || e.keyCode === 13) && nav.activate(a)) { e.preventDefault(); return; }
+  // 4. (A8) a single-line text field releases Up / Down to spatial navigation; the key map maps
+  //    nothing while typing, so the router does this itself. Shift+Up/Down still select text.
+  if (ctx.typing && (e.key === "ArrowUp" || e.key === "ArrowDown") && noMods(e) && isLineField(a)) {
+    if (nav.move(e.key === "ArrowUp" ? "up" : "down")) e.preventDefault();
+    return;
+  }
+  //    (A11) …and Left / Right once the caret is already at that end of the text, so the
+  //    buttons on the field's own line (the Songs panel's search row) are reachable by D-pad.
+  if (ctx.typing && (e.key === "ArrowLeft" || e.key === "ArrowRight") && noMods(e) && isLineField(a) && caretAtEdge(a, e.key)) {
+    if (nav.move(e.key === "ArrowLeft" ? "left" : "right", { release: true })) e.preventDefault();
+    return;
+  }
+  //    Space on a focused form control (checkbox, radio, range, select, colour) keeps its
+  //    native meaning, as it did before M4; play/pause is Space everywhere else.
+  if (e.key === " " && a && (a.tagName === "INPUT" || a.tagName === "SELECT")) return;
+  // 5.–7. the key map → spatial navigation or a named action
+  const hit = keyToAction(e, ctx);
+  if (!hit) return;
+  if (hit.action === "nav") { if (nav.move(hit.arg)) e.preventDefault(); return; }
+  keyEvent = e;
+  try { if (actions.run(hit.action, hit.arg)) e.preventDefault(); }
+  finally { keyEvent = null; }
+}
+
+// Back (§4.2 rule 3), one thing per press, first match wins.
+function goBack() {
+  const a = document.activeElement;
+  // 1. a text field with content clears first. #search and #set-search do this themselves for
+  //    the keys they know; this catches the rest (a TV remote's Back in #set-search, say).
+  if (isLineField(a) && a.value) {
+    a.value = "";
+    a.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+  // 2. close the top modal overlay
+  if (overlays.back()) return true;
+  // 3. the bar is up, holds focus, and the stage is not idle → hide it (focus goes to #stage)
+  const bar = $("ov-controls");
+  if (shell.shown && bar && bar.contains(a) && document.body.dataset.idle !== "true") return shell.hide(keyEvent);
+  // 4. nothing: the key goes through (and Back never stops the song)
+  return false;
+}
+
+// Space / k / the media play-pause keys. MediaPlay and MediaPause carry "play" / "pause" and
+// never toggle the wrong way. Nothing loaded: what ▶ does — play a song the user has selected.
+function playPauseKey(arg) {
+  const want = arg === "play" || arg === "pause" ? arg : "toggle";
+  if (!current) {
+    if (loadingSong) return true;               // a song is on its way: nothing to toggle yet
+    if (want === "pause") return false;
+    const sel = lib.getSelectedSong();
+    if (!sel) return false;
+    playNow(sel);
+    return true;
+  }
+  const playing = isPlaying();
+  if ((want === "play" && playing) || (want === "pause" && !playing)) return true;   // already so
+  showAdjust(playing ? "Paused" : "Playing");
+  setPlayback(want);
+  return true;
+}
+async function setPlayback(want) {
+  if (media === audio && !(await ensureEngine())) return;
+  if (want === "play") { media.play(); userPaused = false; }
+  else if (want === "pause") { media.pause(); userPaused = true; }
+  else { media.toggle(); userPaused = media.paused; }   // a pause here is a deliberate hold
+  setPlayIcon();
+}
+
+// n / MediaTrackNext: the same single "move on now" path as ⏭.
+function nextKey() {
+  if (!current && !queue.length) return false;
+  const up = queue.list[0];
+  skipCurrent();
+  showAdjust(up ? `Next: ${up.name || "(untitled)"}` : "End of the queue");
+  return true;
+}
+
+// MediaStop: stop and clear the stage; the queue is kept (§4.3).
+function stopSong() {
+  if (!current && !loadingSong) return false;
+  playGen++;               // a play* still awaiting its file or engine bails at its next checkpoint
+  loadingSong = false;     // …and its `finally` no longer owns the flag, so release it here
+  clearTimeout(endTimer); endTimer = null; endGuard = false;   // no hand-off to the next song
+  score.hideCard();
+  media.stop();
+  current = null;
+  armed = false;           // the idle auto-advance must not start the kept queue again
+  autoAdvancing = false;
+  userPaused = false;
+  clearStage();
+  setPlayIcon();
+  // The THIRD deliberate setIdle(true) caller, beside advanceQueue's empty branch and
+  // onSongFailed with an empty queue: a stopped stage is the home layer, whatever is queued.
+  shell.setIdle(true);
+  setStageKind("");
+  if (remoteHost) remoteHost.push();
+  showAdjust("Stopped");
+  return true;
+}
+
+function adjustKey(delta) {
+  setKey((Number(settings.get("audio.key")) || 0) + delta);
+  showAdjust(`Key ${fmtKey(Number(settings.get("audio.key")) || 0)}`);
+  return true;
+}
+function adjustTempo(delta) {
+  setTempoRate((Number(settings.get("audio.tempo")) || 1) + delta);
+  showAdjust(`Tempo ${(Number(settings.get("audio.tempo")) || 1).toFixed(2)}×`);
+  return true;
+}
+
+// Type-to-search (§4.3): on a song row, a printable key moves focus to the search field BEFORE
+// the browser inserts the character, so the character lands there. Bubble phase on the panel:
+// after the list's own handler (which prevents Space / "+" / "=" and its movement keys), before
+// the document router. Digits included — the key map leaves them alone on a row in Songs.
+function wireTypeToSearch() {
+  const panel = $("ov-search"), field = $("search");
+  if (!panel || !field) return;
+  panel.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.isComposing) return;
+    const row = e.target && e.target.closest ? e.target.closest(".song") : null;
+    if (!row) return;
+    // The list's top edge is the search field. The list released this key (listKeyPlan), and
+    // spatial navigation would have to pick between the field and the filter pills on the same
+    // line — a tie decided by sub-pixel rounding — so the panel takes it, deterministically.
+    if (e.key === "ArrowUp" && noMods(e) && row.dataset.index === "0") {
+      e.preventDefault();
+      field.focus({ preventScroll: true });
+      return;
+    }
+    if (typeof e.key !== "string" || e.key.length !== 1 || e.key === " " || e.ctrlKey || e.metaKey || e.altKey) return;
+    field.focus({ preventScroll: true });
+    const n = field.value.length;
+    try { field.setSelectionRange(n, n); } catch { /* not a text type */ }
+  });
+}
+
+// Hardware media keys when the page is not focused (lock screen, another window): the same
+// actions as the keys. Every piece is optional and guarded — headless browsers lack some.
+function wireMediaSession() {
+  const ms = typeof navigator !== "undefined" ? navigator.mediaSession : null;
+  if (!ms || typeof ms.setActionHandler !== "function") return;
+  const on = (name, action, arg) => {
+    try { ms.setActionHandler(name, () => { actions.run(action, arg); }); } catch { /* unsupported action */ }
+  };
+  on("play", "playPause", "play");
+  on("pause", "playPause", "pause");
+  on("nexttrack", "next");
+  on("previoustrack", "restart");
+  on("stop", "stop");
+}
+// What the OS media surface shows: the song now on the stage (null clears it).
+function announceMedia(song) {
+  const ms = typeof navigator !== "undefined" ? navigator.mediaSession : null;
+  if (!ms) return;
+  try {
+    ms.metadata = song && typeof MediaMetadata === "function"
+      ? new MediaMetadata({ title: song.name || "", artist: song.artistName || "" })
+      : null;
+    if (!song) ms.playbackState = "none";
+  } catch { /* metadata unsupported */ }
+}
+
+function restartSong() {
+  // Restart only means something with a song on the stage (and not mid-load).
+  if (!current || !media || loadingSong) return false;
+  media.restart();
+  userPaused = false;
+  setPlayIcon();
+  return true;
+}
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => {});
+}
+
 // Tell the shell what kind of song now owns the stage ("" = none). The Mixer belongs to MIDI
 // songs only: its button shows only for one (with MIDI mode on), and the panel closes when the
 // stage changes to anything else.
@@ -322,6 +587,7 @@ function setStageKind(kind) {
   shell.setKind(stageKind);
   syncMixerButton();
   if (stageKind !== "midi") closeOverlay("mixer");
+  announceMedia(stageKind ? current : null);   // every play* calls this once its song owns the stage
 }
 function syncMixerButton() {
   const b = $("btn-mixer");
@@ -596,9 +862,10 @@ function advanceQueue() {
     current = null; autoAdvancing = false;
     clearStage();            // blank the lyrics + reset the seek bar/time once playback ends
     setPlayIcon();
-    // Nothing loaded, nothing queued → the home layer. One of EXACTLY two places the stage goes
-    // idle (the other: onSongFailed with an empty queue). Never clearStage(), which also runs
-    // between queued songs, where the home layer must not flash. playNow() ends idle.
+    // Nothing loaded, nothing queued → the home layer. One of EXACTLY three places the stage goes
+    // idle (the others: onSongFailed with an empty queue, and stopSong — MediaStop). Never
+    // clearStage(), which also runs between queued songs, where the home layer must not flash.
+    // playNow() ends idle.
     shell.setIdle(true);
     setStageKind("");
   }
@@ -1198,7 +1465,12 @@ function tick() {
   updateStageBanner(); // singer + "up next" (last 20 s) — change-guarded, cheap
   // Playing vs paused drives the control bar's auto-hide (it never hides while paused).
   const playing = !!(current && media && !media.paused);
-  if (playing !== _shellPlaying) { _shellPlaying = playing; shell.setPlaying(playing); }
+  if (playing !== _shellPlaying) {
+    _shellPlaying = playing;
+    shell.setPlaying(playing);
+    // The OS media surface decides play vs pause for a toggle key from this.
+    try { if (navigator.mediaSession && current) navigator.mediaSession.playbackState = playing ? "playing" : "paused"; } catch { /* unsupported */ }
+  }
   if (current && media) {
     const isMidi = media === audio;
     const isAudioFile = media === audioFile;
@@ -1348,13 +1620,22 @@ function wireUI() {
     });
   }
 
+  // A key typed inside the 120 ms debounce has not rendered yet. Render it now, or the top hit
+  // (Enter) or the first row (ArrowDown) would belong to the query one keystroke earlier.
+  const flushSearch = () => {
+    if (deb) { clearTimeout(deb); deb = null; libraryView.renderSearchResults(search.value, null); }
+  };
+  // The field's own keys. Every key it handles is prevented, so the document key router (and the
+  // browser) never act on it a second time.
   search.onkeydown = (e) => {
+    if (e.isComposing) return;
     if (e.key === "Enter") {
-      // A key typed inside the 120 ms debounce has not rendered yet. Render it now, or the top
-      // hit would belong to the query one keystroke earlier.
-      if (deb) { clearTimeout(deb); deb = null; libraryView.renderSearchResults(search.value, null); }
+      flushSearch();
       const song = libraryView.topHit();
       if (!song) return;
+      // Prevented: the panel is about to close and hand focus back to its opener, and an
+      // unprevented Enter would go on to activate that button too.
+      e.preventDefault();
       // search.enterAction — "auto" reserves while a song is playing or loading, plays when idle.
       if (enterDecision(settings.get("search.enterAction"), !!(current || loadingSong)) === "reserve") {
         enqueue(song);
@@ -1364,10 +1645,16 @@ function wireUI() {
       }
       if (search.value) clearBtn.onclick();   // clear the field and show the whole library again
       closeOverlay("search");                 // a song was taken from the panel: it has done its job
-    } else if (e.key === "Escape" && search.value) {
-      // Back step 1: a field with text clears first; the next Escape closes the panel.
+    } else if (search.value && keyToAction(e, { typing: true })?.action === "back") {
+      // Back step 1 (Escape, BrowserBack, a TV remote's Back): a field with text clears first;
+      // the next Back closes the panel.
       e.preventDefault(); e.stopPropagation();
       clearBtn.onclick();
+    } else if (e.key === "ArrowDown" && noMods(e)) {
+      // Into the list: its roving row (the first row of a fresh result). Empty list → the key
+      // goes on to the router, which finds nothing below and leaves focus here.
+      flushSearch();
+      if (lib.focusRow()) e.preventDefault();
     }
   };
 
@@ -1407,7 +1694,17 @@ function wireUI() {
   $("key-up").onclick = () => setKey(settings.get("audio.key") + 1);
   $("tempo-down").onclick = () => setTempoRate(settings.get("audio.tempo") - 0.05);
   $("tempo-up").onclick = () => setTempoRate(settings.get("audio.tempo") + 0.05);
-  $("volume").oninput = (e) => settings.set("audio.volume", +e.target.value);
+  // Volume. With data-nav-axis="vertical" (A9) the range keeps Up/Down (its native value change)
+  // and gives Left/Right to the D-pad, so the bar stays walkable past it. A change made by a key
+  // shows the adjust toast; a pointer drag stays silent. The flag lives for one task: the range's
+  // own `input` event fires during the keydown's default action, before the timeout runs.
+  const vol = $("volume");
+  let volByKey = false;
+  vol.addEventListener("keydown", () => { volByKey = true; setTimeout(() => { volByKey = false; }, 0); });
+  vol.oninput = (e) => {
+    settings.set("audio.volume", +e.target.value);
+    if (volByKey) showAdjust(`Volume ${Math.round(+e.target.value * 100)}%`);
+  };
 
   $("seek-track").onclick = (e) => {
     if (!current || media.duration <= 0) return;
@@ -1415,16 +1712,8 @@ function wireUI() {
     media.seek(((e.clientX - rect.left) / rect.width) * media.duration);
   };
 
-  document.onkeydown = (e) => {
-    if (e.target.tagName === "INPUT") return;
-    // A focused song row owns its own keys (Space selects, Enter plays, ＋ queues — see the
-    // roving tabindex in library-ui.js). Without this, Space would BOTH select the row and
-    // toggle the transport.
-    if (e.target.closest && e.target.closest(".song")) return;
-    if (e.code === "Space") { e.preventDefault(); $("btn-play").click(); }
-    else if (e.key === "[") nudgeOffset(-50);
-    else if (e.key === "]") nudgeOffset(50);
-  };
+  // Global keys (Space, [ / ], the media and remote keys…) belong to the one key router
+  // (routeKey, installed by buildShell → buildKeys).
 
   // reflect persisted bottom-control values
   updateMelodyToggle();
@@ -1463,16 +1752,17 @@ function nudgeOffset(delta) {
   settings.set("lyrics.offsetMs", v);
   $("set-offset").value = v;
   $("set-offset-val").textContent = `${v} ms`;
-  showOffsetToast(v);
+  showAdjust(`Lyrics offset ${v > 0 ? "+" : ""}${v} ms`);
 }
 
-// The lyric-offset read-out is one case of the "adjust" toast: a non-modal overlay that the
-// stack closes after its 2500 ms period (the shell's 250 ms tick drives that). Opened without
-// user activation so it never takes focus or a history entry; a repeat nudge while it is up
-// just restarts its timer.
-function showOffsetToast(v) {
+// The "adjust" toast: the new value after a key-driven change ("Key +2", "Tempo 0.95×",
+// "Melody off", "Lyrics offset +50 ms", "Volume 95%"). A non-modal overlay that the stack
+// closes after its 2500 ms period (the shell's 250 ms tick drives that). Opened without user
+// activation so it never takes focus or a history entry; a repeat while it is up just restarts
+// its timer.
+function showAdjust(text) {
   const el = $("ov-adjust");
-  if (el) el.textContent = `Lyrics offset ${v > 0 ? "+" : ""}${v} ms`;
+  if (el) el.textContent = text == null ? "" : String(text);
   if (!overlays.open("adjust", { activated: false, opener: null })) stack.touch("adjust");
 }
 
@@ -1648,8 +1938,9 @@ function setStatus(msg) {
 // Reflects the *real* playback state. A MIDI song at its stalled end reports
 // paused===false (§5.14) while nothing is actually sounding, so treat `audio.ended`
 // as stopped too. Only writes on change so it's cheap to call every rAF frame.
+function isPlaying() { return !media.paused && !(media === audio && audio.ended); }
 function setPlayIcon() {
-  const playing = !media.paused && !(media === audio && audio.ended);
+  const playing = isPlaying();
   const href = playing ? "#i-pause" : "#i-play";
   const el = $("play-icon");   // the <use> inside the play button's sprite icon
   if (el && el.getAttribute("href") !== href) el.setAttribute("href", href);

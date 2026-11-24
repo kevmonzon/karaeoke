@@ -71,7 +71,9 @@ export function createMidiMixer({ container, audio }) {
     root.className = "mx-row";
     root.innerHTML =
       `<span class="mx-label"></span>` +
-      `<input class="mx-vol" type="range" min="0" max="100" value="100" ` +
+      // data-nav-axis="vertical" (M4 A9): the D-pad's Up/Down set the level and Left/Right reach
+      // this row's M and S buttons — a slider that kept Left/Right would wall them off.
+      `<input class="mx-vol" type="range" min="0" max="100" value="100" data-nav-axis="vertical" ` +
         `title="Channel ${ch + 1} volume" aria-label="Channel ${ch + 1} volume" />` +
       `<button class="mx-btn mx-mute" title="Mute">M</button>` +
       `<button class="mx-btn mx-solo" title="Solo">S</button>` +
