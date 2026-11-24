@@ -5,10 +5,11 @@
 ### A client-side **karaoke / videoke** player
 
 Plays local **MIDI/KAR** songs through an in-browser SoundFont synth with
-**tick-synced, per-syllable lyrics** — plus a live **microphone with voice effects &
-auto-tune**, a **pitch guide**, **key detection**, drop-in
-**video karaoke**, and optional **YouTube karaoke search**. No accounts, no build step;
-your local library plays offline after first-run setup.
+**tick-synced, per-syllable lyrics** on a full-screen **videoke stage** — plus a live
+**microphone with voice effects & auto-tune**, **per-note scoring**, a **pitch guide**,
+**key detection**, drop-in **video karaoke**, **phone remotes**, **TV-remote / D-pad control**,
+and optional **YouTube karaoke search**. No accounts, no build step; your local library plays
+offline after first-run setup.
 
 `MIDI → SpessaSynth (WASM) → speakers` · `lyrics parsed from the MIDI itself` · `runs in any modern browser`
 
@@ -22,7 +23,7 @@ your local library plays offline after first-run setup.
 2. [Requirements](#2-requirements)
 3. [Setup — first run](#3-setup--first-run)
 4. [Running the app](#4-running-the-app)
-5. [Adding songs](#5-adding-songs)
+5. [Adding songs & backgrounds](#5-adding-songs--backgrounds)
 6. [Using the app — full walkthrough](#6-using-the-app--full-walkthrough)
 7. [Settings reference (⚙)](#7-settings-reference-)
 8. [Keyboard shortcuts](#8-keyboard-shortcuts)
@@ -39,18 +40,22 @@ your local library plays offline after first-run setup.
 | | Feature |
 |---|---|
 | 🎹 | **MIDI synthesis** via SpessaSynth (WebAssembly + AudioWorklet) — no external audio files per song |
-| 📜 | **Smooth-scrolling lyrics** with per-syllable karaoke wipe, parsed from each song's own MIDI meta events |
-| 🎙️ | **Live microphone** mixed with the music: echo, reverb, chorus, pitch-shift, **real-time auto-tune**, feedback/noise control |
-| 🎯 | **Pitch guide** — a scrolling piano-roll of the melody to sing, with your live pitch overlaid + a score |
+| 🖥️ | **Stage-first everywhere** — one full-screen stage on every device; Songs, Queue, Mixer and Settings slide in from the right, one control bar hides while you sing, and a home screen (tiles + QR) shows when nothing is playing |
+| 📜 | **Videoke lyrics** — two fixed rows that take turns, outlined text and a count-in after each break (or the classic smooth-scrolling column), with a per-syllable wipe parsed from each song's own MIDI meta events |
+| 🔎 | **Forgiving search** — typo-tolerant (≈ close matches), a number finds that number in **every songbook** (SH, PLATKAR, TJMEDIA, MIDI), plus **Artists** and **Rankings** tabs, songbook/type chips and sorting |
+| 🎮 | **TV remote / D-pad / keyboard** — everything works with arrows, OK and Back alone; colour keys, media keys and number keys are shortcuts |
+| 🎙️ | **Live microphone** mixed with the music: echo, reverb, chorus, pitch-shift, **real-time auto-tune**, feedback/noise control, and a **latency calibration** |
+| 🏆 | **Score** — every note judged (PERFECT … MISS) against the song's own guide melody, three difficulties, a full-stage score card and a **leaderboard** |
+| 🎯 | **Pitch guide** — a scrolling piano-roll of the melody to sing, with your live pitch overlaid |
+| 🔊 | **Sound** — the drums stay put when you change key, reverb/chorus levels, a 10-band **EQ** with presets, and **even song loudness** learned per song |
+| 🖼️ | **Backgrounds** — your own looping videos, a photo slideshow, or the live camera behind the lyrics |
 | 🎸 | **Chords** — an auto-detected guitar chord lane above the lyrics, scrolling in time (MIDI songs) |
-| 🎛️ | **MIDI mode** — a per-channel mixer (16 channels: volume, mute/solo, live VU) for the current MIDI song |
+| 🎛️ | **Channel mixer** — 16 channels (volume, mute/solo, live VU) for the current MIDI song |
 | 🎼 | **Key detection** + **transpose**, **tempo**, **volume**, all persisted |
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files; play full-stage with real-time **key change** + volume >100% |
-| 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with scrolling lyrics + a **real-time key change** |
+| 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
-| 🏆 | **Score** — your singing rated against the song's own guide melody, with a full-stage score card when it ends |
-| 📚 | **Whole-library** instant search, virtualized list, queue, recents & favorites |
-| 📱 | **Phone remote** — show a QR on the queue; guests scan it to queue, search & control playback from their phones |
+| 📱 | **Phone remote** — guests scan a QR to search, reserve and control from their phones, with **instant updates**, the TV's lyrics on their own screen, and a number pad |
 | 🎉 | **Party features** — fair-play queue ordering, a per-guest song cap, emoji reactions that float on the screen, and a recap of the night |
 | 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
 
@@ -64,12 +69,17 @@ your local library plays offline after first-run setup.
 ## 2. Requirements
 
 - **Python 3.8+** — the only runtime dependency (standard library only; no `pip install`).
-- **A modern desktop browser** — Chromium (Chrome/Edge/Brave) or Firefox. Needs
-  AudioWorklet + `SharedArrayBuffer` support (all current browsers qualify).
+- **A modern browser** — Chromium (Chrome/Edge/Brave) or Firefox, on a computer, tablet or TV.
+  Needs AudioWorklet + `SharedArrayBuffer` support (all current browsers qualify).
 - **Network access** — required on the **first run** (to download the synth engine and a
   ~31 MB SoundFont, one time) and for the optional **YouTube search**. Your local MIDI &
   video songs play offline after setup.
-- **A microphone** (optional) — only for the singing/mic features.
+- **A microphone** (optional) — for singing through the app, scoring and calibration.
+- **A camera** (optional) — only for the camera background.
+
+> 🔒 **MIDI songs**, the microphone and the camera only work on a **secure page**: `http://localhost` /
+> `http://127.0.0.1` on the machine running the server, or HTTPS. See
+> [§9](#9-serving-to-phonestvs-on-your-network) for what that means on a TV box.
 
 > 💡 **No build step, no Node, no framework** for running the app. (Node is only needed if
 > you want to run the unit tests — see [Troubleshooting](#11-troubleshooting).)
@@ -93,6 +103,9 @@ On the **first** run it automatically (only downloading what's missing):
 - ⬇️ fetches a free **General MIDI SoundFont** (GeneralUser GS, ~31 MB) → `data/soundfont.sf2`
 - 🗂️ builds **`catalog.json`** from whatever songs are in `data/kar_raw/`
 - 🗂️ creates `data/videos/` + `data/audio_lyrics/` and builds **`catalog-video.json`** / **`catalog-audio.json`** (empty if you have none yet)
+
+(The background folders `data/bgv/` and `data/bgphoto/` are not created for you — make them
+when you want backgrounds; see [§5.6](#56-backgrounds--databgv-and-databgphoto).)
 
 **3. Your browser opens automatically** at:
 
@@ -127,13 +140,15 @@ The app ships as a container image containing only the code; your library lives 
 volume at `/data`.
 
 ```bash
-docker compose up --build          # then open http://localhost:8080/
+docker compose up --build          # then open http://localhost:52723/
 ```
 
-`docker-compose.yml` mounts the host's `./data` directory into the container, so the same
-song library, soundfont, and catalogs are used. The image stays small and immutable — add
-songs by dropping them in `./data/kar_raw` (or `./data/videos`, `./data/audio_lyrics`) on the host
-and rebuilding the catalog. Override the data location with the **`KARAEOKE_DATA_DIR`** env var.
+`docker-compose.yml` publishes the container's port 8080 on the host's port **52723** and mounts
+the host's `./data` directory into the container, so the same song library, soundfont, and
+catalogs are used. The image stays small and immutable — add songs by dropping them in
+`./data/kar_raw` (or `./data/videos`, `./data/audio_lyrics`) on the host and rebuilding the
+catalog; backgrounds go in `./data/bgv` and `./data/bgphoto`. Override the data location with the
+**`KARAEOKE_DATA_DIR`** env var.
 
 > On first boot the container fills any missing pieces into `/data` (the soundfont download
 > needs network once) — pre-populate `./data/soundfont.sf2` so the container needs no
@@ -141,23 +156,33 @@ and rebuilding the catalog. Override the data location with the **`KARAEOKE_DATA
 
 ---
 
-## 5. Adding songs
+## 5. Adding songs & backgrounds
 
 ### 5.1 MIDI / KAR songs → `data/kar_raw/`
 
-Drop files into the **`data/kar_raw/`** folder using this filename grammar:
+Drop `.mid` / `.midi` / `.kar` files into the **`data/kar_raw/`** folder using this filename grammar:
 
 ```
-{code} - {artist} - {title} - {language} - {type}.mid
+{code} - {artist} - {title} - {language} - {songbook}.mid
 ```
 
 Example: `1 - Bryan Chong - Tahan - International - MIDI.mid`
 
-- `code` is the videoke **dial number** (primary key).
+- `code` is the videoke **dial number**. It is not unique: the same number can exist in several
+  songbooks, and a number search lists them all (§6).
+- `songbook` is one of **SH**, **PLATKAR**, **TJMEDIA** or **MIDI** — it is shown on each song row
+  and can be filtered with the Songbook chips. SH and PLATKAR files carry no language field:
+  `{code} - {artist} - {title} - SH.kar`. A file with no songbook tag still catalogs (it just has
+  no songbook).
 - These payloads may be **raw-DEFLATE-compressed MIDI**; the app inflates them
   automatically. Real uncompressed `MThd…` MIDI files work too.
 
-Then **rebuild the catalog** (see 5.3).
+Then **rebuild the catalog** (see 5.4).
+
+> 🔁 **Upgrading from an older version?** Rebuild the catalog once (⚙ → Sources → Library →
+> ↻ Rebuild Catalog). Older catalogs have no songbooks, so the Songbook chips and the songbook
+> under each number stay empty until you do — and some SH / PLATKAR songs listed with "SH" or
+> "PLATKAR" as their title get their real titles back.
 
 ### 5.2 Video karaoke → `data/videos/`
 
@@ -175,7 +200,7 @@ matching lyric **sidecar**:
   `.kar` / `.mid`**, **`.vtt` / `.srt`** subtitles, or plain **`.txt`**.
 - e.g. `9700 - Adele - Hello - International - AUDIO.mp3` **+** `9700 - Adele - Hello - International - AUDIO.lrc`
 
-They appear marked **🎵** and play full-stage **with scrolling lyrics**. The **Key** control
+They appear marked **🎵** and play full-stage **with lyrics**. The **Key** control
 pitch-shifts the audio in real time (in stereo), and volume can go past 100%. (An audio file with
 no sidecar still plays — just without lyrics.)
 
@@ -183,7 +208,7 @@ no sidecar still plays — just without lyrics.)
 
 Two ways — both scan `kar_raw/`, `videos/` **and** `audio_lyrics/` and refresh the library:
 
-- **In the app:** ⚙ → **Library → ↻ Rebuild Catalog**. The list reloads live.
+- **In the app:** ⚙ → **Sources → Library → ↻ Rebuild Catalog**. The list reloads live.
 - **From the command line:**
   ```bash
   python tools/build-catalog.py          # rebuild catalog.json from kar_raw/
@@ -198,7 +223,7 @@ This project ships **no song content**. Drop your own karaoke files into the dat
 folders and rebuild:
 
 - **MIDI/KAR** → `data/kar_raw/` (filename grammar:
-  `"{code} - {artist} - {title} - {lang} - {type}.mid"`), then
+  `"{code} - {artist} - {title} - {lang} - {songbook}.mid"`), then
   `python tools/build-catalog.py`.
 - **Video** → `data/videos/` (`.mp4`/`.webm`/…), then `python tools/build-video-catalog.py`.
 - **Audio + lyrics** → `data/audio_lyrics/` (an audio file + a matching-name `.lrc`/`.kar`/`.vtt`/
@@ -207,92 +232,261 @@ folders and rebuild:
 `catalog.json` is regenerated locally and is intentionally **git-ignored** — it is a
 compilation of your own library, not something the repo distributes.
 
-> 🎤 The song row's **icon** tells you the source at a glance: **🎤** = MIDI, **🎞️** = video.
+> 🎤 The song row's **icon** tells you the kind at a glance: **🎤** = MIDI, **🎵** = audio + lyrics,
+> **🎞️** = video, **🌐** = YouTube.
+
+### 5.6 Backgrounds → `data/bgv/` and `data/bgphoto/`
+
+Behind the lyrics the stage can show your own looping videos, a photo slideshow, or the live
+camera (⚙ → Display → Background, see [§6](#6-using-the-app--full-walkthrough)). Nothing shows
+until you create the folders:
+
+- **Videos** → `data/bgv/` — `.mp4`, `.webm` or `.m4v` (`.mov` is listed too, but `.mov` / HEVC
+  clips may not play in Chrome; such a clip is skipped).
+- **Photos** → `data/bgphoto/` — `.jpg` / `.jpeg`, `.png` or `.webp`.
+- **One level of sub-folders = a category** (e.g. `data/bgv/beach/`, `data/bgv/city/`), picked
+  under ⚙ → Display → Background → Category. Files directly in the folder show under **All**.
+- No catalog rebuild is needed — the app lists the folders when it loads, so **reload the page**
+  after adding files.
+
+> 💡 For TV boxes and other small devices, use **720p** clips — decoding a large clip behind the
+> lyrics is hard work for a small box.
+>
+> ⚠️ Like `videos/`, these folders are **readable by anyone who can reach the server** on your
+> network (that is how the screens fetch them) — don't put private photos there.
 
 ---
 
 ## 6. Using the app — full walkthrough
 
-### Find & queue songs
-- **Search** by number, title, or artist in the top-left box. **Enter** plays the top hit.
-- **Click** a song to select it, **double-click** to play now, **＋** to add to the **queue**.
-- **★** stars a song; the **★ Favorites** and **⟲ Recent** pills toggle those filtered views.
-- The **🌐** pill in the search row toggles **YouTube search** (see below; **on by default** — it still only queries when your local results are thin).
-- The queue auto-advances between songs (MIDI, video, and YouTube alike). Remove queued items with **✕**.
+### 🖥️ The stage
+Every device — a laptop, a phone, a tablet, a TV — gets the same layout: **one full-screen stage**
+with the lyrics, and everything else on top of it.
+- **The control bar** (bottom) holds the seek bar, the transport, Key / Tempo / Volume and the
+  buttons that open the panels. While a song **plays** it hides after a few idle seconds and comes
+  back on a mouse move, a tap or a key (Back excepted); it never hides while paused, idle, or while
+  a panel is open.
+- **Panels slide in from the right:** **Songs**, **Queue**, **Mixer** (MIDI songs, when the channel
+  mixer is on) and **Settings** (⚙). One is open at a time; on a wide screen the lyrics move over and
+  stay uncovered beside it, on a phone held upright the panel fills the screen. **Back** (Esc, the
+  browser's Back button or a TV remote's Back) closes the top panel and never leaves the app.
+- **The queue bar** (top of the stage) shows the song, artist, singer and key, and a **⏭ N** badge
+  for the songs waiting — tap it to open the queue.
+- **The home screen** appears whenever nothing is loaded: the **Ka-Rae-oke** logo, tiles (**Songs,
+  Artists, Rankings, Favorites, Queue, Tonight, Settings**) and, while the phone remote is on, a
+  big **QR + room code** for guests. It never flashes between queued songs.
+- **Size it for the room** with **⚙ → Display → Font size** (Extra small / Small / Medium /
+  Large). The stage sizes itself from the screen, so the browser's own zoom (Ctrl/⌘ + / −) barely
+  changes it — use Font size instead. **Overscan** moves the stage in from the edges for a TV that
+  crops the picture; **Theme** is Auto (follows your OS), Dark or Light.
+- **Full screen** — the **Full screen** button at the end of the bar, or **F**.
 
-### Playback controls (overlay)
-The transport + seek bar float as a **translucent overlay** at the bottom of the stage. By default
-they **auto-hide** after a few idle seconds and reappear on any movement or keypress — turn
-**Always show playback controls** on (or change the **Auto-hide after** delay) under **⚙ → Display**.
-- **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (toggle the melody guide vocal on/off), and **🎤 Mic**.
+### Find & queue songs
+Open **Songs** (the bar's Songs button, **S**, **/**, the Red key, a home tile — or just type a
+number).
+- **Search** by number, title, artist or language. Results come in up to three groups, always in
+  this order:
+  1. **A number** (digits only) lists every song with exactly that number in **every songbook** —
+     SH, then PLATKAR, TJMEDIA and MIDI (leading zeros don't matter: `00123` finds 123) — then the
+     numbers that start with it.
+  2. **Exact matches** — every word you typed found in the title, artist or language.
+  3. **Close matches**, marked **≈** — words a typo or two away (`barcelna` → Barcelona). They are
+     looked for only when the exact list is short and a word has 4+ letters, and always come after
+     the exact ones (⚙ → Sources → Library → **Also show close matches (typos)**).
+- Each row shows the song's **number** with its **songbook** under it (hide that with **Show
+  songbook on each row**).
+- **Enter** in the search box takes the top row: by default it **reserves** it while a song is
+  playing and **plays it at once** when the stage is idle (⚙ → Sources → Library → **Enter in
+  search**: also *Always reserve* or *Always play now*).
+- **Tabs — All · Artists · Rankings.** *Artists* lists every artist with a song count (Enter opens
+  their songs, with **← Artists** on top to go back; typing filters the names). *Rankings* is the
+  leaderboard (see Score below).
+- **Chips and sort.** *Songbook* (All · SH · PLATKAR · TJMEDIA · MIDI) and *Type* (🎤 MIDI · 🎵 Audio
+  · 🎞️ Video) chips filter every list on the All and Artists tabs — only the songbooks and types in
+  your library appear. The sort menu orders a list by **Relevance**, **Title**, **Artist** or
+  **Number**. Tabs, chips and sort reset when the page reloads.
+- The **★ Favorites** and **⟲ Recent** pills toggle those lists; the **🌐** pill toggles **YouTube
+  search** (on by default; it still only queries when your local results are thin, and not while a
+  chip is on); **123** shows the number pad.
+- **Tap, click or press Enter on a song** to open its **action sheet**: **Reserve** (add to the
+  queue), **Play next** (first in the queue), **Play now**, **★ Favorite**, **Cancel**. A
+  double-click does *not* play — Play now is one tap in the sheet. The row's own **★** and **＋**
+  still act directly.
+- **The Queue panel** lists what's waiting, with the name of the guest who added it. Tap a
+  queued song for **Play now · Move to top · Move up · Move down · Remove**; **✕** removes it at once;
+  **Clear all** empties the queue after asking. The queue advances by itself between songs (MIDI,
+  audio, video and YouTube alike).
+
+### 🔢 Song numbers (number keys & the 123 pad)
+Press a **digit** anywhere on the stage — a keyboard's number row, the numpad or a TV remote's
+number keys — and **Songs** opens with it in the search box, listing every songbook's song with
+that number. Keep typing, then **Enter** takes the top row (as above) — or press **↓** to move
+down to a particular songbook's row and **Enter** for its action sheet. The song keeps playing
+meanwhile. A panel opened this way that still holds
+only a number closes by itself after **8 s** with no key or tap (⚙ → Sources → Library → **Clear
+an untouched song number after**); a panel you opened yourself never does.
+
+No number keys? The **123** pill beside the search box shows an on-screen pad: **1–9, 0, ⌫, ⏎**
+(⏎ = Enter). Phones have the same pad (see the remote, below). **Number keys open the song search**
+turns all of this off.
+
+### 🎮 TV remote, D-pad & keyboard
+Every screen works with **the arrows, OK (Enter) and Back** alone, so a TV remote or a game-pad
+D-pad drives the whole app.
+- **Arrows** move to the nearest control in that direction. With nothing focused, the first arrow
+  shows the control bar and lands on **Play**.
+- **OK** presses the focused control (on a song row: the action sheet).
+- **Back** does one thing per press: clears a search box that has text, then closes the top panel
+  or dialog, then hides the control bar. It never stops the song.
+- **Colour keys:** **Red** = Songs · **Green** = Queue · **Yellow** = next background ·
+  **Blue** = melody on/off. **Media keys** play, pause, stop, skip and restart; **Channel + / −**
+  change the key. The OS media controls (headset buttons, the lock screen) work too.
+- While you use the keys, short **key hints** appear at the bottom of the home screen and panels
+  (⚙ → Display → **Show key hints**).
+
+Full list in [§8](#8-keyboard-shortcuts).
+
+### Playback controls (the control bar)
+- **Restart**, **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (toggle the melody guide
+  vocal on/off), and **🎤 Mic**.
 - **Seek bar** — click/drag to scrub (the current / total time flank it).
 - **Key ±** — transpose in semitones (the resulting key is named next to it).
 - **Tempo ±** — 0.5×–1.5× playback rate (a −/＋ stepper, like Key).
-- **Volume** — up to 200%.
+- **Volume** — up to 200% (with the D-pad: Up / Down on the slider).
+- Then the panel buttons: **Songs**, **Queue**, **Mixer** (MIDI songs with the channel mixer on),
+  **Next background** (only while a video or photo background shows), **Settings** and **Full
+  screen**.
 
-The controls spread evenly and reflow (stack) on narrow screens.
+Keep the bar up all the time with **⚙ → Display → Always show playback controls**, or change how
+long it waits with **Auto-hide after** (1–15 s, default 3 s). A change made from the keyboard or a
+TV remote flashes a short note on the stage ("Key +1", "Tempo 1.05×", "Melody off").
 
 ### Lyrics
-A smooth-scrolling column glides upward as lines finish (no jump-cuts); the active line is
-painted **syllable-by-syllable**. Nudge timing live with **`[`** / **`]`** (∓50 ms). Tune
-visible lines, line merging, width, and font in ⚙ → Lyrics.
+Two looks, under ⚙ → Display → Lyrics → **Style**:
+- **Stage** (default) — the videoke look: **two fixed rows** that take turns (the line being sung,
+  and the one just sung until you reach the new line's second syllable, then a preview of the next),
+  outlined text with a hard-edged wipe, and a **4 · 3 · 2 · 1 · GO!** count-in before the first line
+  and after any break longer than 8 s ("♪ Instrumental" shows during the break). In portrait it uses
+  four rows. Rows, alignment, line animation, highlight colour, outline, shadow and the count-in are
+  under ⚙ → Display → **Stage lyrics**; **(backing vocals)** show in orange.
+- **Scroll** — a smooth-scrolling column that glides upward as lines finish; tune visible lines,
+  line merging and width under ⚙ → Display → Lyrics.
+
+Either way the active line is painted **syllable-by-syllable**. Nudge timing live with **`[`** /
+**`]`** (∓50 ms), and size the lyrics alone with **Lyrics size**.
 
 ### 🎙️ Microphone & voice
-⚙ → **Microphone & voice → Enable microphone** (your browser asks permission; `localhost`
-counts as secure, so no HTTPS needed). Once live, your voice mixes with the music:
+⚙ → **Singing → Microphone & voice → Enable microphone** (or the bar's **🎤**; your browser asks
+permission). It needs a secure page — `http://localhost` / `127.0.0.1` count, so no HTTPS is needed
+on the machine running the server; on a plain LAN address the button is disabled with the reason
+(see [§9](#9-serving-to-phonestvs-on-your-network)). Once live, your voice mixes with the music:
 - **Effects:** Echo, Reverb, Chorus, manual Pitch-shift.
 - **Auto-tune:** bends your voice to a target — the song's **melody guide**, a **key/scale**,
   or **chromatic** — with adjustable **strength**.
 - **Feedback & noise:** browser Echo-cancellation / Noise-suppression / Auto-gain, a
   High-pass filter, and a Noise gate. **The definitive anti-feedback fix is headphones.**
+- **Mic latency** (default **100 ms**) — how late your voice reaches the scorer. Scoring and the
+  pitch guide's mic trace are shifted by it; 0 = no compensation. **Calibrate…** measures it for
+  your room: hold the microphone **20 cm from the speaker**, press Start, stay quiet for two
+  seconds, and the app plays **8 clicks** and listens for them. It shows the result (and how many
+  clicks it heard) — **Save** keeps it (tick *Also set the noise gate* to set the gate from the room
+  noise it heard), **Retry** measures again. Opening it pauses the song; if it can't hear enough
+  clicks it says "Could not measure" and **nothing is saved**. Not available in Bluetooth mode.
 
 ### 🎯 Pitch guide
-⚙ → **Pitch guide → Show pitch guide** (on by default): a scrolling piano-roll of the melody to
-sing (read from the MIDI's guide track). With the mic on it overlays your **live pitch**, a fading
-**trail** of where you've been, and the running **score** number (turn it off under ⚙ → Pitch guide).
+⚙ → **Singing → Pitch guide → Show pitch guide** (on by default): a scrolling piano-roll of the
+melody to sing (read from the MIDI's guide track). With the mic on it overlays your **live pitch**,
+a fading **trail** of where you've been, and the running **score** number (each is a toggle there).
 
 ### 🏆 Score
 With the **mic on**, MIDI songs are scored against their own guide melody — the same notes the
-pitch guide draws, so nothing extra has to be authored per song. When the song ends you get a
-**full-stage score card**: the number, a verdict ("Good job!", "Excellent singing!"), who was
-singing, and your **personal best** for that song.
+pitch guide draws, so nothing extra has to be authored per song.
+- **Every note gets a verdict** as it ends — **PERFECT**, **EXCELLENT**, **GREAT**, **GOOD** or
+  **MISS** — on a chip by the pitch guide (⚙ → Singing → Score → **Feedback while singing**: *Per
+  note* (default), *Per line* — a chip per lyric line instead — *Both*, or *Off*). The chips show how
+  each note went; the score itself is worked out the same way whatever you pick.
+- **Difficulty** — **Easy**, **Normal** (default) or **Hard** decides how close counts as on pitch
+  and how the score is curved. A change applies **from the next song**.
+- **The score card** at the end shows the number, a verdict ("Good job!", "Excellent singing!"),
+  the difficulty, how many notes got each verdict, who was singing, and your **personal best** for
+  that song.
+- **Rankings** — every scored song adds a row to **Songs → Rankings** (or the home screen's
+  Rankings tile): the singer (a guest's nickname, or the **Host singer name**, default "Host"), the
+  song, the score, the difficulty and the date. Filter by player or difficulty; **Clear** empties it
+  after asking. Turn it off with **Keep rankings**.
 
 It's deliberately forgiving, because a scoring system that makes people feel bad is broken however
 accurate it is:
 - **Octave-invariant** — singing the right note an octave down is right, so nobody is punished for
   the song being in someone else's range.
-- **Graded, not pass/fail** — full credit within half a semitone, tapering off from there.
+- **Graded, not pass/fail** — on Normal, full credit within half a semitone, tapering off from there.
 - **Silence is neutral** — you're allowed to breathe; only a note you *sing wrong* costs you.
 - **Golden notes** — the longest notes count double.
-- A small **line bonus** chip rates each lyric line as it goes by, so the feedback starts long
-  before the final number.
 
-Video and YouTube songs carry no note data, so they aren't scored. ⚙ → **Score** turns the whole
-thing (or just the card, or golden notes) off. Bests are kept per song in this browser.
+Audio, video and YouTube songs carry no note data, so they aren't scored. ⚙ → **Singing → Score**
+turns the whole thing (or just the card, or golden notes) off. Bests and rankings are kept in this
+browser.
 
 ### 🎼 Guide vocal
 Turn the detected **melody channel** up to learn a song, **mute** it to perform, or **solo**
-it to isolate the tune (⚙ → Pitch guide → guide vocal). The **🎵** button in the transport — and
-the **Melody** toggle on the phone remote — is a quick mute/unmute for it.
+it to isolate the tune (⚙ → Singing → Score → *Guide vocal (melody)*). The **🎵** button on the
+control bar — and **M**, the Blue key, and the **Melody** toggle on the phone remote — is a quick
+mute/unmute for it.
+
+### 🔊 Sound (the music)
+Under ⚙ → **Music**:
+- **The drums stay put when you change key.** Key ± transposes a MIDI song's instruments but leaves
+  the drum kit alone, so a key change no longer swaps its drum sounds. Want the old behaviour?
+  **MIDI → Transpose drums with the key**.
+- **Reverb** and **Chorus** — the MIDI songs' own effects, **Off · Low · Normal · High · Max**
+  (*Normal* plays them as written).
+- **Equalizer** — **Flat** (default), **Warm**, **Bright**, **Vocal**, **Bass boost**, **Small
+  speakers**, **TV speakers**, or **Custom** (ten bands, 31 Hz – 16 kHz, ±12 dB). It shapes the
+  music of MIDI, audio and video songs — not YouTube, and never the microphone.
+- **Even out song loudness** (on by default) — each song's level is learned while it plays through
+  to its end, and the next time it starts at the **Loudness target** (−24 dB by default), so a quiet
+  song and a loud one sound alike. On a song's first play the level eases in as it goes; a skipped
+  song isn't learned. Not YouTube.
 
 ### 🎸 Chords (guitar follow-along)
-⚙ → **Chords → Show chords** (off by default): a chord lane above the lyrics scrolls to anchor the
+⚙ → **Music → Chords → Show chord lane** (off by default): a chord lane above the lyrics scrolls to anchor the
 current chord, so guitarists can strum along. These KAR files carry no chord symbols — they're
 **auto-detected from the notes** on load. The **Key ±** transpose **relabels the chords live**
 (in sharps), and a **Simplify** toggle collapses jazzy 7ths/sus to the bare triad a strummer
 plays (and fixes thirdless power chords to the key's triad). **MIDI-only** — hidden for video
 and YouTube, which carry no note data.
 
-### 🎛️ MIDI mode (channel mixer)
-⚙ → **MIDI mode** reveals a per-channel mixer between the lyrics and the transport for the
-current MIDI song. It shows **all 16 channels** (each labeled by instrument, ch 10 = Drums;
+### 🎛️ Channel mixer (MIDI)
+⚙ → **Music → MIDI → Channel mixer** adds a **Mixer** button to the control bar for a MIDI song;
+it opens a panel with **all 16 channels** (each labeled by instrument, ch 10 = Drums;
 silent channels are dimmed) with a **volume slider, mute + solo, and a live VU meter** fed by
-each channel's real audio level. Untouched channels keep the song's authored mix; turning MIDI
-mode off — or loading a new song — hands the mix back. **MIDI-only**; per-channel positions
+each channel's real audio level. Untouched channels keep the song's authored mix; turning the
+mixer off — or loading a new song — hands the mix back. **MIDI-only**; per-channel positions
 reset per song.
 
+### 🖼️ Backgrounds
+Put your own clips in `data/bgv/` and photos in `data/bgphoto/` ([§5.6](#56-backgrounds--databgv-and-databgphoto)),
+then pick what shows behind the lyrics under ⚙ → **Display → Background**:
+- **Background** — **Auto** (default: videos if there are any, else photos, else nothing — never
+  the camera), **Off**, **Videos**, **Photos** or **Camera**. **Category** picks one sub-folder,
+  or All.
+- **Dim** (default 35%) darkens the background under the lyrics; **Next background on each song**
+  (on) moves to the next clip or photo when a song starts. The **Yellow** key or the bar's **Next
+  background** button (shown only while a video or photo background is up) changes it any time.
+- **Photos** — **Each photo** (3–60 s, default 8 s) and **Photo animation** (None, Fade, Slide,
+  Zoom; default Fade). With reduced motion on in your OS, photos simply cut.
+- **Camera** — the live camera, **Which camera** (Back / Front) and **Mirror** (Auto mirrors the
+  front camera only, or On / Off). It asks for permission only when you pick it, and nothing is
+  recorded or sent. It needs a secure page (https or localhost) — elsewhere the option is disabled
+  with the reason. If the page reloads with Camera chosen and permission not yet given, a **Tap to
+  start camera** button appears (OK reaches it too).
+
+The background shows behind MIDI and audio songs and on the home screen — never behind a video or
+YouTube song, which have their own picture. Nothing changes until the folders exist. (An older
+install may already have a `data/bgv/` folder — Auto will show it; choose **Off** to hide it.)
+
 ### 🎞️ Video karaoke
-A video song plays **full-stage** (the MIDI-only surfaces hide themselves). Transport,
+A video song plays **full-stage** (the MIDI-only surfaces and any background hide themselves). Transport,
 seeking, queue, tempo, volume, and the mic all work. Because a karaoke video has its lyrics
 **baked into the picture**, the **lyric offset shifts the video's audio** (not the picture)
 so you can line the sound up to the on-screen words. The **Key ±** control now **transposes the
@@ -302,8 +496,8 @@ no added latency.)*
 
 ### 🌐 YouTube karaoke (BYOC)
 **On by default**, but the app stays offline-first in practice — it queries YouTube **only when your
-local library comes up short**. Toggle it with the **🌐** pill in the search row (or ⚙ →
-**YouTube search**). Such a search appends a "karaoke" keyword to the query, and the hits append to
+local library comes up short**. Toggle it with the **🌐** pill in the Songs search row (or ⚙ →
+**Sources → YouTube search**). Such a search appends a "karaoke" keyword to the query, and the hits append to
 the list marked **🌐**. Selecting one plays the **official YouTube embed** full-stage, with working
 transport / seek / queue / tempo / volume and the mic; YouTube songs are favoritable and show
 up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` pointer.
@@ -311,24 +505,52 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 **needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
 
 ### 📱 Remote control (phones)
-A **QR code + room code** sit on the queue panel (the remote is **on by default**; turn it off under
-**⚙ → Sources → Remote** for an untrusted network). Guests scan the QR with their phones (same
-network) to open **`/remote`**. Scanning auto-connects; anyone typing the URL by hand enters the
-**room code** shown on screen. Five tabs:
-- **Now** — the current song with play/pause, next, seek, **key / tempo / volume** (tempo is a −/＋
-  stepper), and a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from their phone
-  (mirrors the host's 🎵 button).
-- **🎤 Lyrics** — the current song's lyrics, scrolling and wiping syllable-by-syllable **on your own
-  phone**, in time with the room. Handy when you're away from the TV, or reading ahead. Works for MIDI
-  and audio+lyrics songs; video / YouTube songs have their lyrics baked into the picture, so the tab
-  says so. If your phone reads a touch early or late, nudge it with the **sync** slider at the bottom —
-  it only moves *your* screen (the **You** tab's lyric offset moves everyone's).
-- **Search** — the same songbook (number / title / artist), plus optional 🌐 YouTube; tap **＋** to queue.
+A **QR code + room code** sit on the Queue panel and on the home screen (the remote is **on by
+default**; turn it off under **⚙ → Sources → Remote** for an untrusted network, and choose with **QR
+on the stage** whether the stage shows it *When idle* (default), *Always* — a small corner code during
+songs too — or *Never*). Guests scan the QR with their phones (same network) to open **`/remote`**.
+Scanning auto-connects; anyone typing the URL by hand enters the **room code** shown on screen.
+
+The phone downloads only a **compact copy of the songbook** (a couple of megabytes even for a very
+large library) and gets **instant updates**: a tap reaches the TV in a fraction of a second over a
+live event stream. If something on the network holds that stream back, the phone falls back to
+checking once a second by itself and tries the stream again a minute later. The Queue panel shows
+the state (**Phones: instant / connecting… / polling**), and so does the phone's **You** tab. Five tabs:
+- **Now** — the current song with restart, play/pause, next, seek, **key / tempo / volume** (tempo
+  is a −/＋ stepper), a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from
+  their phone (mirrors the host's 🎵 button), the live score, and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
+- **🎤 Lyrics** — the current song's lyrics **on your own phone**, in time with the room, in the
+  same **Stage** look as the TV (or **Scroll** — pick it on the You tab). Handy when you're away from
+  the TV, or reading ahead. Works for MIDI and audio+lyrics songs; video / YouTube songs have their
+  lyrics baked into the picture, so the tab says so. If your phone reads a touch early or late, nudge
+  it with the **Sync nudge** slider at the bottom — it only moves *your* screen (the **You** tab's
+  lyric offset moves everyone's).
+- **Search** — the TV's own search: numbers across every songbook, exact matches, then **≈** close
+  matches; plus optional 🌐 YouTube. **Tap a song** for **Reserve**, **Play next** and **Play now** —
+  the last two only when the host allows them (see below). The **123** button shows the number pad.
 - **Queue** — the live queue with an "added by" name and a rough **"~7 min"** wait for each song,
-  plus remove / reorder. Reactions (👏 🎉 🔥 ❤️ 😂 🙌) are a tap away on the **Now** tab.
+  plus move up / down, remove, and **⤒ Play next** (when the host allows jumping the queue).
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size,
-  **how the lyrics look on your phone** (lyric lines 2–8 and lyrics size 70–180% — yours alone; the
-  karaoke screen keeps its own layout), and the connection status + room code.
+  **how the lyrics look on your phone** (lyric style, lyric lines 2–8 for Scroll, lyrics size
+  70–180% — yours alone; the karaoke screen keeps its own layout), and the connection status + room code.
+
+**The phone's number pad.** With **Show guests' number typing on screen** on (the default), each key
+on a guest's pad also types into the **TV's** Songs search — it opens there with "📱 *nickname*"
+beside the number, without moving the TV's focus — and the guest's **⏎** reserves the TV's top row
+in their name (or plays it at once, if *Guests can play a song now* is on and nothing is playing).
+Off, the pad searches the phone's own list and ⏎ reserves its top result. Either way the host's
+reservation cap still counts.
+
+**What guests may do** — ⚙ → Sources → Remote:
+
+| Setting | Default | |
+|---|---|---|
+| **Instant updates** | on | the live event stream; off = phones check once a second |
+| **Guests can play a song now** | **off** | a guest's *Play now* stops whoever is singing, so it waits for the host's say-so |
+| **Guests can jump the queue** | on | a guest's *Play next* puts their song first; refused while **Fair play** is on, and counted against the per-guest cap |
+| **Show guests' number typing on screen** | on | the phone's pad types live into the TV's search (above) |
+
+A request the host doesn't allow is refused, and the phone says so ("not allowed by the host").
 
 The host stays the real player — phones send requests that the host applies, so the whole room can
 build the queue together. When a song was queued from a phone, the host shows **who's singing** above
@@ -339,55 +561,44 @@ host has its own code, so several karaoke stations can share one server. ⚠️ 
 gate for a trusted network, not real security** — anyone on your LAN who has the code can control
 playback (see [§9](#9-serving-to-phonestvs-on-your-network)).
 
-The phone keeps its **screen awake** while it's connected, and pull-to-refresh is disabled so an
-accidental swipe can't reload the page mid-song.
+Pull-to-refresh is disabled so an accidental swipe can't reload the page mid-song. Where the browser
+allows it, the phone also keeps its **screen awake** while it's connected (browsers offer that to
+secure pages only, so over a plain `http://` LAN address the phone may still go to sleep).
 
 **Second screen:** open `/remote?room=CODE&kiosk=1` on a spare tablet and it becomes a dedicated
-lyric monitor — the Lyrics tab full-bleed, header and tabs hidden, type scaled up.
+lyric monitor — the stage lyrics alone, no header or tabs.
 
 ### 🎉 Party features
-- **Fair play** (⚙ → Queue) — each *new* request joins the back of its singer's own round, so
+- **Fair play** (⚙ → Sources → Queue) — each *new* request joins the back of its singer's own round, so
   everyone sings once before anyone sings twice. Songs already waiting never move: people watch
   that list, and a song sliding backwards reads as a cheat. Off by default — plain FIFO is what
-  people expect until they ask for fair.
-- **Reservation cap** (⚙ → Queue) — the polite version of "don't hog the mic": how many songs one
-  phone may have waiting. `0` = unlimited. A guest over the cap is told why, not silently ignored.
-- **Reactions** (⚙ → Reactions) — a guest taps 👏 🎉 🔥 ❤️ 😂 🙌 on their phone and it floats up
+  people expect until they ask for fair. (The host's own **Play next** is an explicit jump and
+  skips the rounds.)
+- **Reservation cap** (⚙ → Sources → Queue) — the polite version of "don't hog the mic": how many
+  songs one phone may have waiting. Off (`0`) = unlimited. A guest over the cap is told why, not
+  silently ignored.
+- **Reactions** (⚙ → Sources → Reactions) — a guest taps 👏 🎉 🔥 ❤️ 😂 🙌 on their phone and it floats up
   the karaoke screen; 👏 also fires a burst of applause (synthesized — the app ships no audio
   files). Only those six can ever appear, since this is a stranger's phone drawing on your TV.
-- **Tonight's recap** (⚙ → Library → 🏆) — songs sung, singers, and top scores for the night. A
+- **Tonight's recap** (the home screen's **Tonight** tile, or ⚙ → Sources → Library → 🏆) — songs
+  sung, singers, and top scores for the night. A
   six-hour gap starts a new night. Nothing is recorded or uploaded; it's the data the queue and
   scorer already produce, kept in order.
 
 ### 💾 Backup & reset
-Your queue, recents, favorites, settings, scores and saved-YouTube pointers live **only in this
-browser**. ⚙ → **Backup** exports all of it to one JSON file and imports it back (handy when moving
-machines, or before clearing site data). ⚙ → Library → **Reset to defaults** restores the default
-settings but keeps your library data; **Erase all app data** (red, two-click) wipes everything
-including the cached soundfont and starts fresh. That one is irreversible.
+Your queue, recents, favorites, settings, scores, rankings, each song's learned loudness and
+saved-YouTube pointers live **only in this browser**. ⚙ → **Backup** (near the bottom of the panel)
+exports all of it to one JSON file and imports it back (handy when moving machines, or before
+clearing site data). **Reset to defaults** restores the default settings but keeps your library
+data; **Erase all app data** (red, two-click) wipes everything including the cached soundfont and
+starts fresh. That one is irreversible.
 
 ### 🎬 Title card, Bluetooth mode
 - **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
-  lyrics when a song starts, then fades in the words (⚙ → duration 0–10 s; 0 = off).
-- **Bluetooth mode** (⚙) — BT speakers lag ~260 ms, so this delays the visuals to match and
-  disables the mic; the offset stays adjustable.
-
-### Layout & screens
-Set the overall **Font size** — **Small / Medium / Large** (**⚙ → Display → Font size**) — to scale
-the whole player's text + controls for your viewing distance (pick **Large** for a TV across the
-room); the Lyrics **Lyrics size** slider fine-tunes just the lyrics on top. Collapse the **song list
-/ queue** from the top-bar toggles (**🔍 ▦**), go **full screen** with the **⛶** button (top-right),
-and find the live **song count** under ⚙ → Library. Pick a **Theme** — Auto (follows your OS), Dark
-or Light — under ⚙ → Display.
-
-**Focus mode (◎)** clears everything but the lyrics for 10-foot viewing: panels and chrome fade out,
-the "up next" pill grows, and the phone-remote QR moves onto the stage so guests can still scan it.
-Any keypress or mouse move brings the controls back; **Esc** exits.
-
-On **phones and tablets in portrait** the layout stacks to a single column with the lyrics front and
-centre, and the **song list (🔍)** and **queue (▦)** open **one at a time** to save space (tap the
-open one to hide it for a full-screen lyrics view). A **tablet in landscape** gets the full desktop
-three-column layout. The remote QR, focus (◎), and full-screen (⛶) buttons are hidden on mobile.
+  lyrics when a song starts, then fades in the words (⚙ → Display → Lyrics → **Title card**,
+  0–10 s; 0 = off).
+- **Bluetooth mode** (⚙ → Display → Lyrics) — BT speakers lag ~260 ms, so this delays the visuals
+  to match and disables the mic (and calibration); the offset stays adjustable.
 
 ---
 
@@ -397,61 +608,106 @@ All settings live in the **⚙ panel** and persist in `localStorage`. Their **de
 from **`src/config.js`** — edit that file to change built-in defaults, then click **Reset to
 defaults** in the panel to adopt them.
 
-The panel is organized into **collapsible categories** (🎬 Display · 🎵 Music · 🎤 Singing ·
-🔎 Sources) with a **search box** at the top — start typing to filter every control across all
-categories at once (it matches labels, section names, and synonyms like "latency" → Offset or
-"transpose" → Key). `Esc` or ✕ clears.
+Settings is a panel on the right (the bar's Settings button, or the home screen's Settings tile),
+organized into **collapsible categories** (🎬 Display · 🎵 Music · 🎤 Singing · 🔎 Sources) with a
+**search box** at the top — start typing to filter every control across all categories at once (it
+matches labels, section names, and synonyms like "latency" → Offset or "transpose" → Key). `Esc`
+or ✕ clears it. Volume, Tempo and Key live on the control bar (and are remembered too).
 
-| Group | What it controls |
+Defaults are in *italics*.
+
+| Category → section | Controls |
 |---|---|
-| **Lyrics** | offset, smooth wipe, visible lines, merge lines, width, lyrics size |
-| **Audio** | volume, tempo, key (also driven by the bottom controls) |
-| **Key** | auto-detect, show key badge |
-| **Pitch guide** | enable, look-ahead, height, melody channel, mic overlay, trail, scoring, guide-vocal vol/mute/solo |
-| **Chords** | show chord lane, simplify (collapse 7ths/sus to triads) |
-| **Score** | enable scoring, show the end-of-song card, golden notes |
-| **Queue** | fair-play round-robin ordering, max songs reserved per guest |
-| **Reactions** | enable guest reactions, applause sound |
-| **MIDI mode** | enable the per-channel mixer band (volume/mute/solo/VU) |
-| **Microphone & voice** | enable, volume, echo/reverb/chorus/pitch, auto-tune (mode/strength/key/scale), AEC/NS/AGC, high-pass, noise gate |
-| **YouTube search** | enable, result threshold, debounce, max results, append-keyword |
-| **Remote** | enable the phone remote (QR on the queue panel), auto-detected URL + override |
-| **Font size** | Small / Medium / Large — scales the whole player's text + controls (the Lyrics "Lyrics size" slider fine-tunes lyrics on top) |
-| **Theme** | Auto (follows your OS) / Dark / Light |
-| **Playback controls** | Always show (off = the transport overlay auto-hides) + auto-hide delay |
-| **Title card** | seconds shown, 0–10 (0 = off; default 5) |
-| **Bluetooth** | latency-compensation mode |
-| **UI** | collapsible-panel visibility |
-| **Backup** | export / import every setting and library list as one JSON file |
+| 🎬 **Display → Screen** | Theme (*Auto* / Dark / Light) · Font size (Extra small / Small / *Medium* / Large) · Overscan (*0* – 5%) · Show key hints (*on*) |
+| 🎬 **Display → Playback controls** | Always show playback controls (*off*) · Auto-hide after (1 – 15 s, *3 s*) |
+| 🎬 **Display → Lyrics** | Offset (±2000 ms, *0*) + Reset offset · Bluetooth mode (*off*) · Style (*Stage* / Scroll) · Smooth wipe (*on*) · Visible lines (2 – 8, *5*) · Merge lines (1 – 4, *2*) · Line width (50 – 100%, *90%*) — those three shape the Scroll style · Lyrics size (0.6 – 1.8×, *1.00×*) · Title card (0 – 10 s, *5 s*) |
+| 🎬 **Display → Stage lyrics** | Rows (*Auto — 4 in portrait* / 2 / 4) · Alignment (*Center* / Left-Right Split / Close Split) · Line animation (*None* / Fade / Wipe / Crossfade / Flip / Pop bounce) · Highlight colour (*blue*) · Random colour per song (*off*) · Outline (0 – 12, *6*) · Shadow (*on*) · Count-in (*on*) · "Instrumental" during breaks (*on*) |
+| 🎬 **Display → Background** | Background (*Auto* / Off / Videos / Photos / Camera) · Category (*All* + your sub-folders) · Dim (0 – 80%, *35%*) · Next background on each song (*on*) · Each photo (3 – 60 s, *8 s*) · Photo animation (None / *Fade* / Slide / Zoom) · Which camera (*Back* / Front) · Mirror (*Auto — front camera* / On / Off) |
+| 🎵 **Music → Sound** | Reverb and Chorus (Off / Low / *Normal* / High / Max) · Equalizer (*Flat* / Warm / Bright / Vocal / Bass boost / Small speakers / TV speakers / Custom — ten bands, ±12 dB) · Even out song loudness (*on*) · Loudness target (−30 – −12 dB, *−24 dB*) |
+| 🎵 **Music → MIDI** | Channel mixer (*off*) · Transpose drums with the key (*off* — the old behaviour when on) |
+| 🎵 **Music → Key detection** | Auto-detect key (*on*) · Show key by title (*on*) |
+| 🎵 **Music → Chords** | Show chord lane (*off*) · Simplify (*off*) |
+| 🎤 **Singing → Pitch guide** | Show pitch guide (*on*) · Look-ahead (2 – 10 s, *5 s*) · Band height · Melody channel (*auto* or 1 – 16) · Overlay my pitch (*on*) · Soft pitch trail (*on*) · Live score on the guide (*on*) |
+| 🎤 **Singing → Score** | Score my singing (*on*) · Score card when a song ends (*on*) · Golden notes count double (*on*) · Feedback while singing (*Per note* / Per line / Both / Off) · Difficulty (Easy / *Normal* / Hard, from the next song) · Keep rankings (*on*) · Host singer name (*Host*) · Guide vocal: Volume (0 – 200%, *100%*), Mute melody, Solo melody (*off*) |
+| 🎤 **Singing → Microphone & voice** | Enable microphone · Mic volume (0 – 150%, *90%*) · Echo cancellation (*on*) · Noise suppression (*on*) · Auto gain (*off*) · High-pass (*on*) · Noise gate (*on*) · Gate threshold (−70 – −20 dB, *−50 dB*) · Mic latency (0 – 500 ms, *100 ms*) + **Calibrate…** · Echo / Reverb / Chorus (*off*) with their mix · Pitch shift (*off*, ±12 st) · Auto-tune (*off*) · Strength (*100%*) · Snap to (*Melody guide* / Key / scale / Chromatic) · Key (*Auto (detected)* / C … B) · Scale (*Major* / Minor / Pentatonic / Chromatic) |
+| 🔎 **Sources → YouTube search** | Enabled (*on*; also the 🌐 pill) · Query YouTube when local has (fewer than 1 – 10 hits, or always; *< 2*) · Debounce (0.5 – 10 s, *3 s*) · Max results (5 – 40, *20*) · Append keyword (*karaoke*) |
+| 🔎 **Sources → Remote** | Enabled (*on*) · QR on the stage (*When idle* / Always / Never) · URL override (*blank = auto-detect*) · Instant updates (*on*) · Guests can play a song now (***off***) · Guests can jump the queue (*on*) · Show guests' number typing on screen (*on*) |
+| 🔎 **Sources → Library** | Also show close matches (typos) (*on*) · Enter in search (*reserve while singing, play when idle* / Always reserve / Always play now) · Show songbook on each row (*on*) · Number keys open the song search (*on*) · Clear an untouched song number after (3 – 30 s, *8 s*) · the live song count · ↻ Rebuild Catalog · 🏆 Tonight's recap |
+| 🔎 **Sources → Queue** | Fair play (*off*) · Max reservations per guest (*off*, 1 – 6) |
+| 🔎 **Sources → Reactions** | Let phones send reactions (*on*) · Play applause (*on*) |
+| **Below the categories** | Reset to defaults · **Backup** — ⭳ Export app data / ⭱ Import app data… (every setting and library list as one JSON file) · Erase all app data |
 
 ---
 
 ## 8. Keyboard shortcuts
 
-| Key | Action |
-|---|---|
-| **Space** | Play / pause |
-| **`[`** / **`]`** | Nudge lyric offset −/+ 50 ms |
-| **Esc** | Close the settings drawer or the recap; leave focus mode |
-| **Double-click** a song | Play now |
+Everything below works the same from a keyboard, a TV remote or a D-pad. Letter and symbol
+shortcuts are ignored while you type in a text field, and a key held with Ctrl / ⌘ / Alt is always
+left to the browser.
 
-**In the search box**
+**Moving around**
 
 | Key | Action |
 |---|---|
-| **Enter** | Play the top search hit |
-| **Esc** | Clear the search box |
+| **← ↑ → ↓** | Move to the nearest control in that direction (with nothing focused, the first arrow shows the control bar and lands on Play). On a slider, ← / → change it — the bar's Volume uses ↑ / ↓ |
+| **Enter** / **OK** | Press the focused control — on a song row, open its action sheet |
+| **Esc** / **Backspace** / **Back** | Back, one step per press: clear a search box that has text → close the top panel or dialog → hide the control bar. Never stops the song |
 
-**In the song list** — Tab into it once, then it's all keyboard:
+**Playback & the stage**
 
 | Key | Action |
 |---|---|
-| **↑ / ↓** | Move through songs |
-| **PageUp / PageDown** | Move a screenful |
+| **Space** or **K** | Play / pause |
+| **N** | Next song |
+| **P** | Restart the song |
+| **+** (or **=**) / **-** | Key up / down a semitone |
+| **.** / **,** | Tempo up / down (0.05×) |
+| **`]`** / **`[`** | Nudge the lyric offset +/− 50 ms |
+| **M** or **F2** | Melody guide on / off |
+| **S**, **/** or **F1** | Open Songs (focus its search box if it's already open) |
+| **Q** | Open the queue |
+| **C** | Show / hide the control bar |
+| **F** | Full screen |
+| **0 – 9** | Open Songs with that number in the search (see [§6](#6-using-the-app--full-walkthrough)) |
+
+**TV remote & media keys**
+
+| Key | Action |
+|---|---|
+| **Red** | Open Songs |
+| **Green** | Open the queue |
+| **Yellow** | Next background (while a video or photo background shows) |
+| **Blue** | Melody guide on / off |
+| **Play** / **Pause** / **Play-Pause** | Play · pause · toggle (separate Play and Pause buttons never toggle the wrong way) |
+| **Stop** | Stop the song and show the home screen; the queue is kept |
+| **Next track** / **Previous track** | Next song / restart the song |
+| **Channel + / −** | Key up / down |
+| **Back** | Back (as above) |
+
+Your OS's media controls (headset buttons, the lock screen, a keyboard's media keys) map to the same
+play, pause, next, previous and stop.
+
+**In the Songs search box**
+
+| Key | Action |
+|---|---|
+| **Enter** | Take the top row — reserve it while a song plays, play it when idle (⚙ → Sources → Library → **Enter in search**) |
+| **↓** | Into the list |
+| **↑** | Up to the controls above |
+| **← / →** at the end of the text | On to the buttons beside the box |
+| **Esc** / **Back** | Clear the box; press again to close Songs |
+
+**In a song list** (Songs, and the queue's list):
+
+| Key | Action |
+|---|---|
+| **↑ / ↓** | Move through songs (past the first or last row, focus moves on to what's above or below) |
+| **PageUp / PageDown** | Move ten rows |
 | **Home / End** | First / last song |
-| **Enter** | Play the highlighted song |
-| **Space** | Select it |
-| **＋** | Add it to the queue |
+| **Enter** | Open the song's action sheet (Reserve · Play next · Play now · ★ Favorite; on a queued song: Play now · Move to top / up / down · Remove) |
+| **Space** | Select the song (Songs list) |
+| **+** | Add it to the queue (Songs list) |
+| any other letter or digit | Jump to the search box and type it (Songs list) |
 
 ---
 
@@ -465,11 +721,31 @@ tools/serve-lan.sh          # macOS / Linux / Git-Bash
 python tools/serve.py --host 0.0.0.0
 ```
 
-Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi.
+Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi. On Windows, allow
+Python through the firewall on **Private** networks.
 
-> ⚠️ On remote devices the **microphone is unavailable** (browsers require HTTPS or
-> localhost for mic access) — playback, lyrics, and the pitch guide still work. On Windows,
-> allow Python through the firewall on **Private** networks.
+### 🔒 Secure pages: what a TV box (or any other screen) can and can't do
+
+Browsers give the **MIDI synthesizer** (it runs on an AudioWorklet), the **microphone** and the
+**camera** only to a *secure* page: `http://localhost` / `http://127.0.0.1` (the machine running the
+server), or HTTPS. So:
+
+- **On the machine running the server** (`http://localhost:8080/`) — everything works.
+- **On a TV box, a second laptop or a tablet that opens `http://<your-LAN-IP>:8080/`** —
+  **MIDI / KAR songs do not play** (the synthesizer cannot start: picking one shows "MIDI songs need
+  a secure page — open the app on localhost or https" and the song is skipped), there is **no
+  microphone**, so **no singing through the app, no scoring and no calibration**, and **no camera
+  background**. The mic and camera options stay visible but **disabled, with the reason** beside
+  them. **Audio + lyrics songs** (without key shift) and **video songs** still play; browsing and
+  searching the songbook, the queue, the panels and the D-pad, video and photo backgrounds and the
+  phone remote work as usual.
+- **Phones** using the remote (`/remote`) need none of these features, so the plain LAN address is
+  fine for them.
+
+To have MIDI songs and the microphone on a big screen, either run the server on the machine plugged into the TV
+and open `localhost` there (that's what the Steam Deck setup below does), or reach the app over
+HTTPS — `serve.py` itself speaks plain HTTP, so that means an HTTPS reverse proxy or tunnel (such as
+cloudflared) in front of it.
 
 ### 🎮 Steam Deck (portable, no-install)
 
@@ -494,18 +770,24 @@ TV and hosts a Wi-Fi hotspot; guests connect and control it from their phones.
 3. **Guests** join the Deck's hotspot and open the printed `http://<deck-ip>:8080/` (typically
    `http://10.42.0.1:8080/`), or scan the phone-remote QR — see below.
 
-> The Deck's **own** browser opens `localhost`, so the host mic still works there; guests just
-> queue/control (no mic on remote devices, as above). Force kiosk mode on any Linux box with
-> `./tools/serve-lan.sh --kiosk`.
+> The Deck's **own** browser opens `localhost`, so the host mic, scoring and the camera background
+> still work there; guests just queue/control from their phones. Force kiosk mode on any Linux box
+> with `./tools/serve-lan.sh --kiosk`.
 
 ### 📱 Phone remote control
 
-Once you're serving on the LAN, turn on **⚙ → Sources → Remote** on the host. A **QR code + a room
-code** appear on the queue panel — guests scan the QR to open **`http://<your-LAN-IP>:8080/remote`**
-(it auto-connects), or type that URL and enter the **room code** shown on screen. Then they can
-queue / search / control from their phones (any modern mobile browser; see the walkthrough in
-[§6](#6-using-the-app--full-walkthrough)). The URL is **auto-detected** (the host's LAN IP, or the
-public origin behind a tunnel like cloudflared); set a manual **URL override** in ⚙ if needed.
+Once you're serving on the LAN, the remote is already on (**⚙ → Sources → Remote**). A **QR code + a
+room code** appear on the Queue panel and the home screen — guests scan the QR to open
+**`http://<your-LAN-IP>:8080/remote`** (it auto-connects), or type that URL and enter the **room
+code** shown on screen. Then they can search / reserve / control from their phones (any modern
+mobile browser; see the walkthrough in [§6](#6-using-the-app--full-walkthrough)). The URL is
+**auto-detected** (the host's LAN IP, or the public origin behind a tunnel like cloudflared); set a
+manual **URL override** in ⚙ if needed.
+
+> 💡 Phones update **instantly** over a live event stream. A proxy or tunnel that buffers that
+> stream is detected — the phones fall back to checking once a second by themselves (the Queue panel
+> then reads *Phones: polling*) and keep working. To skip the stream altogether, turn off
+> **Instant updates**.
 
 > ⚠️ The room code is a **friction gate for a trusted network, not real security** — anyone on your
 > LAN with the code can control playback and edit the queue. Keep it on a **trusted network**; behind
@@ -521,38 +803,54 @@ public origin behind a tunnel like cloudflared); set a manual **URL override** i
 ```
 karaoke-clone/
 ├── README.md                 ← this file (setup + usage + architecture overview)
-├── package.json              ← npm test (node --test) for the pure functions
+├── package.json              ← npm test: the Node suite + the Python suite (§11)
 ├── tools/                    ← all ops scripts (run from the project root)
 │   ├── serve.py              ← the local server + first-run setup   ← START HERE
-│   ├── serve-lan.sh         ← LAN launcher
+│   ├── serve-lan.sh          ← LAN launcher (+ Steam Deck kiosk mode)
 │   ├── build-catalog.py      ← (re)build catalog.json from data/kar_raw/
 │   ├── build-video-catalog.py← (re)build catalog-video.json from data/videos/
-│   └── build-audio-catalog.py← (re)build catalog-audio.json from data/audio_lyrics/
+│   ├── build-audio-catalog.py← (re)build catalog-audio.json from data/audio_lyrics/
+│   └── catalog_common.py     ← the filename grammar (incl. the songbook tag) the three builders share
+│
+├── test/                     ← *.test.js (Node: node --test) + test_*.py (Python: unittest)
+├── .github/workflows/test.yml← CI: both suites + a syntax check
 │
 ├── data/                     ← ALL your content — the mounted volume in Docker
 │   ├── catalog.json          ← MIDI song library (rebuilt locally)        [git-ignored]
 │   ├── catalog-video.json    ← video song library (rebuilt locally)      [git-ignored]
 │   ├── catalog-audio.json    ← audio+lyrics song library (rebuilt locally) [git-ignored]
-│   ├── kar_raw/          ← MIDI/KAR song files (compressed MIDI)   [git-ignored]
+│   ├── kar_raw/              ← MIDI/KAR song files (compressed MIDI)   [git-ignored]
 │   ├── videos/               ← video-karaoke files                     [git-ignored]
 │   ├── audio_lyrics/         ← audio files + matching lyric sidecars    [git-ignored]
+│   ├── bgv/                  ← background videos (you create it; sub-folders = categories)
+│   ├── bgphoto/              ← background photos (you create it; sub-folders = categories)
 │   └── soundfont.sf2         ← General MIDI SoundFont (~31 MB, auto-fetched) [git-ignored]
 │
 ├── Dockerfile · .dockerignore · docker-compose.yml   ← containerized run (§4)
 │
 └── src/                      ← the app — served at the site root /
-    ├── index.html            ← shell + import map + settings panel
+    ├── index.html            ← the stage + its panels, sheet and dialogs + the settings panel + import map
     ├── remote.html           ← phone remote-control page (served at /remote)
     ├── config.js             ← DEFAULT_CONFIG (editable defaults)
-    ├── css/style.css · css/remote.css
+    ├── css/                  ← tokens (palette, both themes) · style · stage · overlays · sheet ·
+    │                            browse · scoring · backgrounds · remote (the phone page)
     ├── sw.js                 ← self-destruct stub (the caching SW was removed; unregisters old workers)
     ├── js/                   ← app modules. app.js orchestrates; the rest own one thing each:
-    │                            playback engines (audio · video · youtube · audiofile · media-engine),
-    │                            content (catalog · lyrics · lyrics-formats · chords · melody · mic),
-    │                            state (queue · session · library-view · store · duration-hints),
-    │                            features (scoring · score-presentation · recap · reactions · midi-mixer),
-    │                            remote (remote-host · remote-glue · remote [phone] · sync-clock),
-    │                            and helpers (settings · library-ui · settings-ui · asset-cache · pitch-*)
+    │                            playback (audio · audiofile · video · youtube · media-engine · pitch-chain),
+    │                            sound (music-fx · loudness · midi-mixer),
+    │                            lyrics (lyrics · lyrics-formats · lyrics-stage · lyric-pager · lyrics-doc · chords),
+    │                            singing (mic · melody · pitch-yin · scoring · verdicts · latency-cal ·
+    │                              score-presentation),
+    │                            library & search (catalog · compact-catalog · search-core · search-client ·
+    │                              library-ui · library-view · library-browse · rankings · duration-hints),
+    │                            the night (queue · queue-order · session · recap · reactions · backgrounds),
+    │                            remote (remote-host · remote-glue · remote-push · remote [phone] · sync-clock),
+    │                            settings & storage (settings · settings-ui · store · asset-cache)
+    │   ├── ui/               ← the stage-first shell and the keys: overlay-stack · overlays-dom · shell ·
+    │   │                        home · song-sheet · browse-ui · numpad · calibrate-ui ·
+    │   │                        keymap · actions · spatial-nav · nav-dom · input-mode
+    │   ├── workers/          ← pitch-worker (pitch detection) · search-worker (the typo index)
+    │   └── worklets/         ← mic-dsp (noise gate + pitch shift) · capture (calibration's raw mic)
     └── vendor/               ← SpessaSynth engine + pako + qrcode (committed)
 ```
 
@@ -573,42 +871,59 @@ karaoke-clone/
 | **Blank page / "SharedArrayBuffer is not defined"** | You opened `index.html` as a `file://`. Launch via `python tools/serve.py` instead. |
 | **No sound when a MIDI song plays** | The first play loads the 31 MB soundfont — wait a few seconds. If still silent, check `data/soundfont.sf2` exists (re-run setup) and that your OS volume/output is right. |
 | **"Invalid MIDI Header! Expected 'MThd'…"** | A song file isn't valid MIDI. The app handles compressed MIDI automatically; a truly corrupt file should be removed from `kar_raw/`. |
-| **Search is empty / song missing** | Rebuild the catalog (⚙ → Library → Rebuild, or `python tools/build-catalog.py`). |
+| **Search is empty / song missing** | Rebuild the catalog (⚙ → Sources → Library → ↻ Rebuild Catalog, or `python tools/build-catalog.py`). |
+| **No songbook chips / no songbook under the numbers / songs titled "SH" or "PLATKAR"** | The catalog predates songbooks — rebuild it once (as above). |
+| **A double-click doesn't play the song any more** | By design: a click or tap opens the song's action sheet, and **Play now** is one tap there. |
+| **Browser zoom doesn't make the stage bigger** | The stage sizes itself from the screen. Use ⚙ → Display → **Font size** (and **Lyrics size** for the lyrics alone). |
+| **The TV cuts off the edges** | ⚙ → Display → **Overscan** moves the stage in from the edges. |
+| **The control bar keeps disappearing** | It hides while a song plays. A key (other than Back), a tap or a mouse move brings it back; **C** toggles it; ⚙ → Display → **Always show playback controls** keeps it up. |
 | **Video won't seek / stops** | Seeking needs HTTP Range (206) — always serve via `tools/serve.py`, not another static server. |
-| **Mic won't enable** | It needs a click (browser gesture) + a secure context. Use `http://localhost` / `127.0.0.1` (not a LAN IP). Grant the browser permission when prompted. |
+| **Mic won't enable / Calibrate… or the Camera option is greyed out** | They need a click (browser gesture) + a secure page. Use `http://localhost` / `127.0.0.1` on the server machine, or HTTPS — not a plain LAN IP ([§9](#9-serving-to-phonestvs-on-your-network)). Grant the browser permission when prompted. Calibrate… is also off in Bluetooth mode. |
+| **Calibrate says "Could not measure"** | Nothing was saved. Turn the volume up, hold the mic about 20 cm from the speaker, keep the room quiet, and Retry. |
 | **Feedback/howling on speakers** | Use **headphones**. Otherwise keep Echo-cancellation + Noise-gate on and lower mic volume. |
+| **No background shows** | Create `data/bgv/` or `data/bgphoto/` with supported files and **reload the page**; check ⚙ → Display → Background isn't **Off**. Backgrounds never show behind a video or YouTube song. A `.mov` / HEVC clip may not play in Chrome — re-encode it to `.mp4` (H.264) or `.webm`. |
 | **Port 8080 in use** | `python tools/serve.py --port 9000`. |
-| **Phone remote won't connect** | Enable ⚙ → Remote on the host, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
+| **Phone remote won't connect** | Check ⚙ → Sources → Remote is on, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
+| **Phones show "polling" instead of "instant"** | Something between them and the server (a proxy or tunnel) is holding back the live stream. The remote still works, just with up to a second's delay; it tries the stream again after a minute. |
+| **A guest's Play now / Play next is missing or "not allowed by the host"** | ⚙ → Sources → Remote: **Guests can play a song now** is off by default; **Guests can jump the queue** is refused while **Fair play** is on. |
 | **QR code doesn't render** | The QR needs `src/vendor/qrcode.min.js` — re-run `python tools/serve.py` once to fetch it. The URL text is always shown even without the image. |
 | **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `data/soundfont.sf2`. |
-| **Run the tests** | `npm test` runs both suites — `npm run test:js` (Node, the pure functions) and `npm run test:py` (Python 3, the catalog grammar + server). Needs Node.js for the JS half. |
+| **Run the tests** | `npm test` runs both suites — `npm run test:js` (Node, `test/*.test.js`) and `npm run test:py` (Python 3, `test/test_*.py`: the catalog grammar + server). Needs Node.js for the JS half. |
 
 ---
 
 ## 12. How it works
 
 ```
-catalog.json + catalog-video.json ──► one merged, searchable list
-        │
+catalog.json + catalog-video.json + catalog-audio.json ──► one merged list
+        │                                                   └─► search: number → exact → ≈ close (a worker)
    pick a song ──► dispatch on kind
         │
-   ── MIDI ──►  fetch /kar_raw/<file>  ──► inflate (pako) ──► SpessaSynth synth ──► speakers
-        │                                                     └─► parse lyrics from the same bytes
-   ── VIDEO ─►  fetch /videos/<file> (HTTP Range 206) ──► <video> picture + offset-shifted audio
-        │
+   ── MIDI ──►  fetch /kar_raw/<file> ──► inflate (pako) ──► SpessaSynth synth ─────┐
+        │                                                    └─► lyrics parsed from the same bytes
+   ── AUDIO ─►  fetch /audio_lyrics/<file> + its lyric sidecar ──► key shift ───────┤
+        │                                                                           ├─► EQ ─► loudness ─► limiter ─► speakers
+   ── VIDEO ─►  fetch /videos/<file> (HTTP Range 206) ──► <video> picture           │
+        │                                           └──► offset-shifted sound ──────┘
    ── YOUTUBE ► official YouTube IFrame embed in a credentialless iframe (Chromium; online)
         │
-   requestAnimationFrame loop: lyric sync · pitch guide · auto-tune · seek bar · queue advance
+   requestAnimationFrame loop: lyric sync · pitch guide · scoring + verdicts · auto-tune · seek bar · queue advance
+
+   background layer (behind the lyrics): /bgv/ clips · /bgphoto/ slideshow · the camera
+   the microphone ──► voice effects ──► speakers  (never through the music EQ / loudness)
 ```
 
-Local **MIDI/video** playback is **same-origin and works offline** after setup; the optional
+Local **MIDI/audio/video** playback is **same-origin and works offline** after setup; the optional
 **YouTube search** is the one online, cross-origin feature. The server (`tools/serve.py`) sends
 the cross-origin-isolation headers the synth needs, serves HTTP Range requests so video seeking
 works, and exposes a few endpoints — `POST /api/rebuild-catalog` (⚙ rebuild button),
-`/api/youtube-search` + `/api/youtube-block` (the keyless YouTube search), and the **phone-remote
-relay** (`/api/remote/*`): an in-memory, ephemeral channel where the host posts its state and drains
-the commands guests send from `/remote` (the host stays the authoritative player). For deeper detail,
-the module reference and gotchas are documented inline in the `src/js/` source.
+`/api/youtube-search` + `/api/youtube-block` (the keyless YouTube search), `/api/backgrounds` (the
+`bgv/` + `bgphoto/` listing), `/api/catalog/compact` (the phones' compact songbook) and the
+**phone-remote relay** (`/api/remote/*`): an in-memory, ephemeral channel where the host posts its
+state, publishes each song's lyrics for the phones, and receives the commands guests send from
+`/remote` — pushed live over a server-sent event stream (`/api/remote/events`), with polling as the
+fallback. The host stays the authoritative player. For deeper detail, the module reference and
+gotchas are documented inline in the `src/js/` source.
 
 ---
 

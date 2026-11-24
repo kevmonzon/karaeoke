@@ -1,8 +1,9 @@
 # Ka-Rae-oke — offline karaoke player.
 #
 # The runtime image contains ONLY the app code (src/, minified) + ops scripts
-# (tools/). All mutable data — songs (kar_raw/), videos/, the soundfont, bgv
-# clips, and the catalogs — lives in a mounted volume at /data. See compose file.
+# (tools/). All mutable data — songs (kar_raw/, videos/, audio_lyrics/), the
+# soundfont, the stage backgrounds (bgv/ clips, bgphoto/ photos), and the
+# catalogs — lives in a mounted volume at /data. See compose file.
 #
 #   docker build -t karaeoke .
 #   docker run --rm -p 8080:8080 -v "$(pwd)/data:/data" karaeoke
