@@ -52,7 +52,7 @@ import webbrowser
 # A sibling module in tools/, imported the way the catalog builders import it: `python
 # tools/serve.py` (from any cwd) puts the script's own directory first on sys.path, and the
 # tests put tools/ there themselves. Top-level on purpose — main() chdirs into src/ later.
-from catalog_common import IGNORE_NAMES
+from catalog_common import IGNORE_NAMES, write_json_atomic
 
 HERE = os.path.dirname(os.path.abspath(__file__))   # …/tools (this script lives in tools/)
 # The static app (code). Override with KARAEOKE_APP_DIR; defaults to the project root.
@@ -72,6 +72,8 @@ AUDIO_CATALOG_PATH = os.path.join(DATA_DIR, "catalog-audio.json")
 # Shared blocklist of YouTube videoIds that can't be embedded (owner-disabled / removed). Clients
 # report them via POST /api/youtube-block; /api/youtube-search filters them out for EVERY user.
 YOUTUBE_BLOCKLIST_PATH = os.path.join(DATA_DIR, "youtube-blocklist.json")
+# How many times each song was played: POST /api/played records one, GET /api/playcounts reads all.
+PLAYCOUNTS_PATH = os.path.join(DATA_DIR, "playcounts.json")
 
 # Largest request body any endpoint here accepts. The biggest legitimate POST is a host
 # snapshot carrying the queue (a few KB); the cap exists because this is one thread per
@@ -1027,6 +1029,161 @@ def _list_backgrounds(data_dir: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Play counts — how many times each song was played (recorded only; nothing shows them yet)
+# ---------------------------------------------------------------------------
+# The client (src/js/play-counts.js) decides WHEN a play counts (30 s of real playback or a
+# natural end, once per song start) and POSTs the song id once. The server only counts.
+#
+# The file and GET /api/playcounts share one shape:
+#     {"v": 1, "songs": {"<song id>": {"n": <plays>, "last": "<ISO-8601 UTC of the last play>"}}}
+# Loaded lazily on the first read or play, then kept in memory. Writes are DEBOUNCED: a play
+# marks the table dirty and one timer writes it PLAYCOUNTS_FLUSH_SEC later, so a burst of POSTs
+# costs one write — not one rewrite of a growing file per request, which is quadratic, and this
+# endpoint is as unauthenticated as every other one here. main() flushes on a normal shutdown;
+# under Docker, `docker stop` grants a 10 s SIGTERM grace, longer than the delay.
+PLAYCOUNTS_VERSION = 1
+PLAYCOUNTS_MAX_IDS = 500_000      # distinct ids kept (the library is ~124k); a new id past it → 507
+PLAYCOUNTS_ID_MAX = 300           # characters in one song id
+PLAYCOUNTS_FLUSH_SEC = 2.0        # debounce between a play and the write that keeps it
+# "<kind>:<rest>": midi:123, midi:kar_raw/<file>, video:videos/<file>, audio:audio_lyrics/<file>,
+# youtube:<videoId>. The kind is checked for SHAPE, not against a list, so a new kind of song
+# needs no server change.
+_SONG_ID_RE = re.compile(r"[a-z][a-z0-9_-]{0,23}:.+", re.DOTALL)
+# Control characters (C0, DEL, C1) and lone surrogates. json.loads happily returns "\ud800", and
+# one such id kept in the table would make EVERY later write fail to encode as UTF-8.
+_SONG_ID_BAD_CHARS = re.compile(r"[\x00-\x1f\x7f-\x9f\ud800-\udfff]")
+
+_pc_lock = threading.Lock()        # guards the table and the flags below
+_pc_write_lock = threading.Lock()  # one writer at a time; always taken BEFORE _pc_lock
+# id → {"n", "last"}. An entry is REPLACED on every play, never mutated, so a shallow copy of the
+# dict is a consistent snapshot that can be serialised after _pc_lock is released.
+_pc_songs: dict = {}
+_pc_loaded = False
+_pc_dirty = False
+_pc_set_aside = False              # the file on disk was unreadable: keep a copy before overwriting
+_pc_timer = None
+
+
+def _valid_song_id(value) -> bool:
+    """A song id as the client builds it: a string of 1–PLAYCOUNTS_ID_MAX characters shaped
+    "<kind>:<rest>" with a non-empty rest, and no control characters (§5.22: untrusted input)."""
+    return (isinstance(value, str) and 0 < len(value) <= PLAYCOUNTS_ID_MAX
+            and _SONG_ID_RE.fullmatch(value) is not None
+            and _SONG_ID_BAD_CHARS.search(value) is None)
+
+
+def _utc_now_iso() -> str:
+    # gmtime(time.time()), not a bare gmtime(): a test's patched clock then shows up here too.
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()))
+
+
+def _pc_load_locked() -> None:
+    """Read playcounts.json once; the caller holds _pc_lock.
+
+    A missing file is an empty table. An unreadable or malformed one reads as empty too (the
+    app must keep working), but a read never touches it: the first write after a play renames
+    it to playcounts.json.corrupt (one copy kept) so a hand repair stays possible. Inside a
+    well-formed file, an entry without a valid id and a positive count is dropped on its own.
+    """
+    global _pc_songs, _pc_loaded, _pc_set_aside
+    if _pc_loaded:
+        return
+    _pc_loaded = True
+    _pc_songs = {}
+    try:
+        with open(PLAYCOUNTS_PATH, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, RecursionError) as exc:   # ValueError: bad JSON or bad UTF-8
+        _pc_set_aside = True
+        print(f"  ! playcounts.json is unreadable ({exc}); counting from zero", file=sys.stderr)
+        return
+    songs = doc.get("songs") if isinstance(doc, dict) and doc.get("v") == PLAYCOUNTS_VERSION else None
+    if not isinstance(songs, dict):
+        _pc_set_aside = True
+        print("  ! playcounts.json is not a v1 play-count file; counting from zero", file=sys.stderr)
+        return
+    for sid, entry in songs.items():
+        if not (_valid_song_id(sid) and isinstance(entry, dict)):
+            continue
+        n = entry.get("n")
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            continue
+        last = entry.get("last")
+        _pc_songs[sid] = {"n": n, "last": last if isinstance(last, str) else ""}
+
+
+def _pc_schedule_locked() -> None:
+    global _pc_timer
+    if _pc_timer is None:
+        _pc_timer = threading.Timer(PLAYCOUNTS_FLUSH_SEC, _flush_playcounts)
+        _pc_timer.daemon = True    # never holds the process open; main() flushes on the way out
+        _pc_timer.start()
+
+
+def _record_play(song_id: str):
+    """Count one play of an id that passed _valid_song_id. Returns the new count, or None when
+    the table is full and the id is new — ids already in it keep counting."""
+    global _pc_dirty
+    with _pc_lock:
+        _pc_load_locked()
+        entry = _pc_songs.get(song_id)
+        if entry is None and len(_pc_songs) >= PLAYCOUNTS_MAX_IDS:
+            return None
+        n = (entry["n"] if entry else 0) + 1
+        _pc_songs[song_id] = {"n": n, "last": _utc_now_iso()}
+        _pc_dirty = True
+        _pc_schedule_locked()
+        return n
+
+
+def _playcounts_doc() -> dict:
+    """The GET /api/playcounts body: the same document as the file."""
+    with _pc_lock:
+        _pc_load_locked()
+        songs = dict(_pc_songs)
+    return {"v": PLAYCOUNTS_VERSION, "songs": songs}
+
+
+def _flush_playcounts() -> bool:
+    """Write the table now if a play changed it (the debounce timer, shutdown, tests).
+
+    Returns False when the write failed: the table stays dirty and the next play retries.
+    """
+    global _pc_dirty, _pc_timer, _pc_set_aside
+    with _pc_write_lock:
+        with _pc_lock:
+            if _pc_timer is not None:
+                _pc_timer.cancel()     # a direct call supersedes the pending timer
+                _pc_timer = None
+            if not _pc_dirty:
+                return True
+            snapshot = dict(_pc_songs)
+            _pc_dirty = False
+            set_aside = _pc_set_aside
+        # Serialise and write OUTSIDE _pc_lock: at the cap that is about a second, and plays and
+        # reads must not queue behind the disk. _pc_write_lock keeps two writers apart.
+        try:
+            os.makedirs(os.path.dirname(PLAYCOUNTS_PATH), exist_ok=True)
+            if set_aside:
+                try:
+                    os.replace(PLAYCOUNTS_PATH, PLAYCOUNTS_PATH + ".corrupt")
+                except FileNotFoundError:
+                    pass
+                with _pc_lock:
+                    _pc_set_aside = False
+            write_json_atomic(PLAYCOUNTS_PATH, {"v": PLAYCOUNTS_VERSION, "songs": snapshot},
+                              prefix=".playcounts-")
+        except Exception as exc:  # noqa: BLE001 — the timer thread has no caller to raise to
+            with _pc_lock:
+                _pc_dirty = True
+            print(f"  ! could not write playcounts.json: {exc}", file=sys.stderr)
+            return False
+        return True
+
+
+# ---------------------------------------------------------------------------
 # HTTP server with cross-origin isolation + correct MIME types
 # ---------------------------------------------------------------------------
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -1096,6 +1253,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._handle_compact_get()
             if path == "/api/backgrounds":
                 return self._handle_backgrounds_get()
+            if path == "/api/playcounts":
+                return self._send_json(_playcounts_doc())
             # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
             # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
             if self.headers.get("Range") and self._serve_range():
@@ -1491,6 +1650,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"ok": False, "error": str(exc)[:200]})
             return
+        if path == "/api/played":
+            # One play of one song, counted. Body: {"id": "<song id>"} → {"ok", "count"}.
+            # The client decides WHEN a play counts (src/js/play-counts.js); this only counts.
+            # 507 when the table is full and the id is new: retrying cannot help, so not a 429.
+            try:
+                body = json.loads(raw or b"{}")
+            except (ValueError, RecursionError):   # RecursionError: "[[[[…" nested past the limit
+                self._send_json({"ok": False, "error": "bad json"}, 400)
+                return
+            song_id = body.get("id") if isinstance(body, dict) else None
+            if not _valid_song_id(song_id):
+                self._send_json({"ok": False, "error": "bad id"}, 400)
+                return
+            count = _record_play(song_id)
+            if count is None:
+                self._send_json({"ok": False, "error": "playcounts full"}, 507)
+            else:
+                self._send_json({"ok": True, "count": count})
+            return
         self.send_error(404)
 
     def log_message(self, fmt, *args):
@@ -1555,6 +1733,7 @@ def main() -> int:
         print("\nStopped.")
     finally:
         httpd.server_close()
+        _flush_playcounts()  # a play still inside its debounce window must outlive a Ctrl+C
     return 0
 
 
