@@ -481,6 +481,19 @@ test("overlays: the scrim and [data-ov-close] close the overlay they belong to",
   assert.deepEqual(r.stack.list(), ["song"]);
 });
 
+// M5 integration fix: the second click of a double-click on a row lands on the scrim the first
+// click's sheet put over the panel; it must not close that sheet. A single click still does.
+test("overlays: the second click of a double-click on the scrim closes nothing", () => {
+  const r = rig();
+  r.ov.wire();
+  r.ov.open("search");
+  r.ov.open("song");
+  r.el("scrim").dispatch("click", { detail: 2 });
+  assert.deepEqual(r.stack.list(), ["search", "song"], "detail 2: the sheet stays open");
+  r.el("scrim").dispatch("click", { detail: 1 });
+  assert.deepEqual(r.stack.list(), ["search"], "a single click closes the top overlay");
+});
+
 test("overlays: focus goes to initialFocus, else the first focusable, else the overlay root", () => {
   const r = rig({ register: false });
   const mixer = r.el("ov-mixer");

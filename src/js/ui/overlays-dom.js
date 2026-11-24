@@ -451,7 +451,13 @@ export function createOverlays({
       if (wired) return;
       wired = true;
       const scrim = byId("scrim");
-      if (scrim) scrim.addEventListener("click", () => { const t = stack.top(); if (t) api.close(t, "scrim"); });
+      // A click with detail > 1 is the second click of a double-click. On a song row the first
+      // click opened the song sheet, whose scrim now lies over the rest of the row: that second
+      // click must not close the sheet it just opened (M5 integration fix).
+      if (scrim) scrim.addEventListener("click", (e) => {
+        if (e && e.detail > 1) return;
+        const t = stack.top(); if (t) api.close(t, "scrim");
+      });
       doc.addEventListener("click", (e) => {
         const t = e && e.target;
         const btn = t && typeof t.closest === "function" ? t.closest("[data-ov-close]") : null;

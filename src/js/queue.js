@@ -76,6 +76,39 @@ export function createQueue({ onChange = () => {} } = {}) {
       return true;
     },
 
+    /**
+     * Put a song at the very front ("Play next") and return 0. Fair play does NOT apply: this is
+     * an explicit jump the host asked for, not a reservation taking its turn.
+     */
+    addFront(song, who = "") {
+      list.unshift(song);
+      by.unshift(who);
+      onChange();
+      return 0;
+    },
+
+    /** Move a queued song to the front ("Move to top"). The same guards as move(): an integer
+     *  in range, and index 0 is already there, so it is no change (false, no onChange). */
+    moveToFront(i) {
+      if (!Number.isInteger(i) || i <= 0 || i >= list.length) return false;
+      const [s] = list.splice(i, 1); list.unshift(s);
+      const [b] = by.splice(i, 1); by.unshift(b);
+      onChange();
+      return true;
+    },
+
+    /** Empty the queue and return how many songs it removed. An already-empty queue is no
+     *  change, so it does not fire onChange (nothing to render, persist or push). Clears in
+     *  place, like every other mutation here. */
+    clear() {
+      const n = list.length;
+      if (!n) return 0;
+      list.splice(0);
+      by.splice(0);
+      onChange();
+      return n;
+    },
+
     /** Take the next song off the front. Returns null when the queue is empty. */
     shift() {
       if (!list.length) { onChange(); return null; }

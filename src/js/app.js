@@ -49,6 +49,7 @@ import { createOverlayStack } from "./ui/overlay-stack.js";
 import { createOverlays } from "./ui/overlays-dom.js";
 import { createShell } from "./ui/shell.js";
 import { createHome } from "./ui/home.js";
+import { createSongSheet } from "./ui/song-sheet.js";
 import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
@@ -89,7 +90,7 @@ const durations = createDurationHints();
 const recap = createRecap();
 const score = createScorePresentation({ settings });
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
-let lib, settingsUI, midiMixer;  // UI modules (created at boot)
+let lib, settingsUI, midiMixer, songSheet;  // UI modules (created at boot)
 let stack, overlays, shell, home; // the stage-first shell (created at boot — see buildShell)
 let inputMode, nav, actions;     // keys and D-pad (created at boot — see buildKeys)
 // id → the element registered for that overlay, kept beside the overlays.register calls: the
@@ -104,7 +105,7 @@ let remoteHost;                  // host↔phone relay driver (created at boot)
 // persists and pushes to the phones through this one callback.
 const queue = createQueue({
   onChange() {
-    lib.renderQueue(queue.list, queue.listBy);
+    renderQueuePanel();
     saveSession();
     if (remoteHost) remoteHost.push();
   },
@@ -153,12 +154,20 @@ async function boot() {
   audioFile.onError = (why) => onMediaError("audio", why);
 
   lib = createLibraryUI({
-    // A row's double-click / Enter plays it; the Songs panel has done its job, so it closes.
+    // The pre-M5 row path (double-click / Enter plays). With onActivate below no row calls it;
+    // it stays so the list keeps a meaning for "play" if onActivate is ever dropped.
     onPlay: (s) => { playNow(s); closeOverlay("search"); },
     onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: (s) => libraryView.toggleFavorite(s), isFavorite: (s) => libraryView.isFavorite(s),
     showSource: () => settings.get("library.showSource"),
+    // P23 (M5): a click, a tap or Enter on a row body opens the song sheet. ★ / ＋ on a song row
+    // and ✕ on a queue row keep their direct actions; Space still selects, "+" still queues.
+    onActivate: (song, rowEl) => openSheet(song, rowEl, "library", +rowEl.dataset.index),
+    onQueueActivate: (index, song, rowEl) => openSheet(song, rowEl, "queue", index),
   });
+  // The one "what do you want to do with this song?" sheet. It only renders and reports the
+  // choice; onSheetAction carries it out (the queue, the player and the overlays are ours).
+  songSheet = createSongSheet({ el: $("ov-song"), onAction: onSheetAction });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onEraseAll: eraseAllData,
     onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => overlays.open("recap"),
@@ -243,8 +252,9 @@ function buildShell() {
   });
   reg("queue", {
     el: $("ov-queue"),
-    // Queue rows are not focusable yet (their ✕ is): start on Close, so Enter can't remove a song.
-    initialFocus: () => first($("ov-queue"), ".ov-close"),
+    // The first queue row (a roving list since M5: Enter on it opens the song sheet, never a
+    // removal), else Close. Pointer users get no ring from this (:focus-visible).
+    initialFocus: () => (lib.focusQueueRow(0) ? document.activeElement : first($("ov-queue"), ".ov-close")),
     onOpen: remeasure,
   });
   reg("mixer", { el: $("ov-mixer"), initialFocus: () => first($("midi-mixer"), "input, button") });
@@ -253,7 +263,9 @@ function buildShell() {
     initialFocus: () => (keysMode() && first($("settings-panel"), ".set-cat:not(.filtered-out) > summary")) || $("set-search"),
     onOpen: settingsUI.onOpen,
   });
-  reg("song", { el: $("ov-song") });
+  // A sheet opens above a panel without closing it; Back closes it; focus starts on its first
+  // action (openSheet renders the buttons before it opens the overlay).
+  reg("song", { el: $("ov-song"), initialFocus: () => songSheet.firstButton() });
   reg("adjust", { el: $("ov-adjust") });
   reg("recap", { el: $("recap"), initialFocus: () => $("recap-close"), onOpen: () => recap.render() });
   reg("calibrate", { el: $("ov-calibrate") });
@@ -322,6 +334,8 @@ function openFromHome(id) {
 // Installed from buildShell, so the keys work while the catalogue is still loading.
 // ---------------------------------------------------------------------------
 const DIALOGS = new Set(["recap", "calibrate", "confirm"]);
+// The song sheet is modal too: a panel shortcut must not open (or swap) a panel beneath it.
+const sheetOrDialogOnTop = () => { const t = stack.top(); return DIALOGS.has(t) || t === "song"; };
 // A single-line text field: it releases ArrowUp / ArrowDown (a text field owns only Left/Right).
 const LINE_TYPES = /^(text|search|url|email|tel|password)$/;
 const isLineField = (el) => !!el && el.tagName === "INPUT" && LINE_TYPES.test(el.type);
@@ -370,13 +384,14 @@ function buildKeys() {
       return true;
     },
     openSearch: () => {
-      if (DIALOGS.has(stack.top())) return false;   // a dialog is on top: not under it
+      if (sheetOrDialogOnTop()) return false;       // a dialog / the song sheet is on top: not under it
       if (overlays.isOpen("search")) { $("search").focus(); return true; }
       overlays.open("search");
       return true;
     },
     openQueue: () => {
-      if (DIALOGS.has(stack.top())) return false;
+      // Under the song sheet this would swap the panel the sheet was opened from.
+      if (sheetOrDialogOnTop()) return false;
       overlays.open("queue");                       // already open → a no-op (open() only touches it)
       return true;
     },
@@ -395,7 +410,8 @@ function routeKey(e) {
   const a = document.activeElement;
   const ctx = {
     typing: !!a && ((/^(INPUT|TEXTAREA)$/.test(a.tagName) && !/^(range|checkbox|radio|button|color)$/.test(a.type)) || !!a.isContentEditable),
-    // A5: only song rows are rows in M4 (the queue's ✕ buttons stay ordinary buttons until M5).
+    // A5: only SONG rows own Space / "+" (select / queue). A queue row (a roving list since M5)
+    // has no meaning for either, so Space there stays play/pause — keep this `.song` only.
     inList: !!(a && a.closest && a.closest(".song")),
     inSearch: !!(a && a.closest && a.closest("#ov-search")),
     modal: DIALOGS.has(stack.top()),
@@ -854,6 +870,36 @@ function enqueue(song, by = "") {
 function removeFromQueue(i) { queue.removeAt(i); }
 // Move a queued song from one position to another (used by the phone remote's reorder).
 function reorderQueue(from, to) { queue.move(from, to); }
+
+// The Queue panel: the list, plus its "Clear all" button, which only shows with something to
+// clear. Every queue change comes through here (queue.onChange; loadSession, because a restore
+// is silent).
+function renderQueuePanel() {
+  lib.renderQueue(queue.list, queue.listBy);
+  const clr = $("queue-clear");
+  if (!clr) return;
+  const hide = !queue.length;
+  // Hiding a focused button drops focus to <body> inside an open panel (the queue ran dry, or
+  // Clear all just emptied it): hand it to the panel's Close first.
+  if (hide && !clr.hidden && document.activeElement === clr) {
+    const close = $("ov-queue") && $("ov-queue").querySelector(".ov-close");
+    if (close) close.focus({ preventScroll: true });
+  }
+  clr.hidden = hide;
+}
+
+// "Clear all" — behind the confirm dialog (its initial focus is Cancel; Back = Cancel).
+async function clearQueueAsk() {
+  const n = queue.length;
+  if (!n) return;
+  const ok = await overlays.confirm({
+    title: "Clear the queue?",
+    text: `${n} ${n === 1 ? "song" : "songs"} will be removed.`,
+    okLabel: "Clear",
+  });
+  if (ok && queue.clear() > 0) setStatus("Queue cleared");
+}
+
 function advanceQueue() {
   const taken = queue.shift();
   if (taken) playNow(taken.song, taken.by);
@@ -869,6 +915,103 @@ function advanceQueue() {
     shell.setIdle(true);
     setStageKind("");
   }
+}
+
+// ---------------------------------------------------------------------------
+// The song sheet (M5, plan §5.4, P23). A tap, a click or Enter on a song row or a queue row
+// opens ONE sheet above the panel (song-sheet.js renders it and reports the choice). Every
+// action closes the sheet; "Play now" also closes the panel; the others leave the panel open
+// with focus back on the row the sheet came from.
+// ---------------------------------------------------------------------------
+const songTitle = (s) => (s && (s.name || s.code)) || "a song";
+
+/** `index`: the row the sheet came from — a song-list row, or a queue position. */
+function openSheet(song, rowEl, mode, index) {
+  if (!song || !songSheet) return;
+  // show() FIRST: the overlay's initial focus is the sheet's first button, so it must exist.
+  songSheet.show(song, {
+    mode, index,
+    length: mode === "queue" ? queue.length : 0,
+    isFavorite: libraryView.isFavorite(song),
+  });
+  overlays.open("song", { opener: rowEl });
+}
+
+/**
+ * Where a queued song is NOW, or -1 when it is gone. The queue can change under an open sheet
+ * (a phone adds or removes a song, a song ends and the queue moves on), so the index the sheet
+ * was opened with may name a different song by the time a button is pressed — and a stale
+ * index must never act on the wrong song (§5.22). The same position if it still holds this
+ * song, else this song's nearest position (it can be queued twice).
+ */
+function resolveQueueIndex(index, id) {
+  if (queue.matches(index, id)) return index;
+  let best = -1;
+  queue.list.forEach((s, j) => {
+    if (s.id === id && (best < 0 || Math.abs(j - index) < Math.abs(best - index))) best = j;
+  });
+  return best;
+}
+
+function onSheetAction(id, song, { mode, index } = {}) {
+  // Close first: overlays-dom hands focus back to the row (the opener) before the action
+  // re-renders anything, so the list's own focus restore follows the song from there.
+  closeOverlay("song");
+  if (!song) return;
+  if (mode === "queue") { queueSheetAction(id, song, index); return; }
+  // Reserve and Play next write their line BEFORE acting: with nothing playing they start the
+  // song at once, and the play path's own "Loading: …" / "Now playing: …" should then win.
+  switch (id) {
+    case "reserve":
+      setStatus(`Reserved: ${songTitle(song)}`);
+      enqueue(song);                       // fair play, the auto-start guard: as for ＋
+      break;
+    case "next":
+      setStatus(`Up next: ${songTitle(song)}`);
+      queue.addFront(song, "");            // an explicit jump: fair play does not apply
+      if (!current && !loadingSong) advanceQueue();   // enqueue's auto-start guard (§5.29 rule 4)
+      break;
+    case "now":
+      playNow(song);
+      closeOverlay("search");              // a song was taken from the panel: it has done its job
+      return;
+    case "favorite":
+      libraryView.toggleFavorite(song);
+      break;
+    default: break;                        // cancel
+  }
+  // Back on the row, if it still holds this song (a re-render — a late YouTube append,
+  // un-starring in Favorites — can move it). Else overlays-dom's restore stands.
+  if (overlays.isOpen("search") && lib.getList()[index]?.id === song.id) lib.focusRow(index);
+}
+
+function queueSheetAction(id, song, index) {
+  const i = resolveQueueIndex(index, song.id);
+  if (i < 0) {
+    if (id !== "cancel") setStatus("That song is no longer in the queue");
+    return;
+  }
+  let focusAt = i;
+  switch (id) {
+    case "now": {
+      const by = queue.listBy[i] || "";
+      queue.removeAt(i);
+      playNow(song, by);
+      closeOverlay("queue");
+      return;
+    }
+    case "top": if (queue.moveToFront(i)) focusAt = 0; break;
+    case "up": if (queue.move(i, i - 1)) focusAt = i - 1; break;
+    case "down": if (queue.move(i, i + 1)) focusAt = i + 1; break;
+    case "remove":
+      queue.removeAt(i);
+      focusAt = Math.min(i, queue.length - 1);   // the row that took its place; -1 = emptied
+      break;
+    default: break;                              // cancel
+  }
+  // Focus stays on the moved song (after Remove, on the row that took its place). An emptied
+  // queue leaves focus where the re-render put it: the panel's Close.
+  if (focusAt >= 0 && overlays.isOpen("queue")) lib.focusQueueRow(focusAt);
 }
 
 // ---------------------------------------------------------------------------
@@ -997,7 +1140,7 @@ function loadSession() {
   const { queue: songs } = session.restore();
   // Only touch the queue when there IS one: an empty restore must not clobber whatever the
   // boot sequence has already put there, or re-render the panel for nothing.
-  if (songs.length) { queue.restore(songs); lib.renderQueue(queue.list, queue.listBy); }
+  if (songs.length) { queue.restore(songs); renderQueuePanel(); }
 }
 function pushRecent(song) {
   session.push(song);
@@ -1674,6 +1817,7 @@ function wireUI() {
     setPlayIcon();
   };
   $("btn-next").onclick = () => skipCurrent();
+  $("queue-clear").onclick = () => { clearQueueAsk(); };   // the Queue panel's "Clear all"
 
   // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
   // background tab while the AudioContext keeps playing — so a song that ended while the host

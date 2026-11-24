@@ -158,6 +158,9 @@ body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
 .ov-panel > .numpad, .ov-panel > .queue-actions, .ov-panel > .remote-qr { flex: none; }
 /* The Queue panel keeps the old queue column's inset around its QR card, list and actions. */
 #ov-queue > :not(.ov-head) { margin-inline: var(--s-4); }
+/* Clear all (M5): a full-size touch target at the foot of the queue. */
+.queue-actions { padding-block: var(--s-3) var(--s-4); }
+.queue-actions .reset-btn { min-height: var(--hit); }
 
 /* Key hints (◄►▲▼ move · OK choose · Back close): text, shown only in D-pad mode (M4). */
 .key-hints { display: none; }
