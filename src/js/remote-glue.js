@@ -15,6 +15,7 @@
  */
 import { pickRemoteBaseUrl, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "./remote-host.js";
 import { Catalog } from "./catalog.js";
+import { adjustLabel } from "./remote-adjust.js";
 
 export const HOST_ROOM_KEY = "karaeoke.remote.host.v1";
 const ROOM_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // no ambiguous glyphs (no O/0, I/1)
@@ -128,6 +129,14 @@ export function createRemoteGlue({
     setStatus(text);
   }
   const notAllowed = (by) => refuse(`${by || "A guest"}: not allowed by the host`);
+
+  /** A guest's volume / key / tempo / melody / offset change, on the TV's toast with their name
+   *  ("Kai: Volume 80%") — Rae, 2026-11-25. The phone toasts the same words (remote-adjust.js). */
+  function announce(by, path, value) {
+    const now = getNowPlaying();
+    const text = adjustLabel(path, value, { get: (p) => settings.get(p), key: now ? now.key : null });
+    if (text) setStatus(`${nickname(by) || "A guest"}: ${text}`);
+  }
 
   /** Optional reservation cap — the digital form of "don't hog the mic". 0 = off; the host ("") is never capped. */
   function overCap(by) {
@@ -274,7 +283,10 @@ export function createRemoteGlue({
           if (Number.isFinite(cmd.position)) actions.seek(cmd.position);
           break;
         case "volume":
-          if (Number.isFinite(cmd.value)) actions.setVolume(cmd.value);
+          if (Number.isFinite(cmd.value)) {
+            actions.setVolume(cmd.value);
+            announce(cmd.by, "audio.volume", Math.max(0, Math.min(1, cmd.value)));
+          }
           break;
         case "setting": {
           // Two gates, not one: the PATH must be allowlisted and the VALUE must be in range.
@@ -283,6 +295,7 @@ export function createRemoteGlue({
           const v = clampRemoteSetting(cmd.path, cmd.value);
           if (v === undefined) break;          // wrong type / NaN / unknown path → ignore
           actions.applySetting(cmd.path, v);
+          announce(cmd.by, cmd.path, v);
           break;
         }
       }

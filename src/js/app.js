@@ -1712,6 +1712,9 @@ const remoteGlue = createRemoteGlue({
     // Live score, so the room can watch the number climb on their own phones. Null unless the
     // song is actually being scored (MIDI + mic + score.enabled) — see scoring.js.
     score: scorer && mic.enabled && settings.get("score.enabled") ? scorer.liveScore() : null,
+    // The song's detected (root) key, so a phone can show "D maj → E maj" beside its Key ± (Rae,
+    // 2026-11-25). Null when none is known: video / YouTube / audio songs, or detection off.
+    key: currentKey && currentKey.source !== "none" ? { pc: currentKey.keyPc, mode: currentKey.mode } : null,
     // Which lyric document describes this song (remote-glue lifts it to the snapshot's top
     // level). Inside this getter on purpose: §5.29 rule 2 allows exactly one.
     songRev,

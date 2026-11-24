@@ -461,7 +461,7 @@ browser.
 The detected **melody channel** has five volume levels — **Off, 25%, 50%, 75%, 100%** — up to learn
 a song, off to perform. **F2** (or **M**, or the Blue key) steps to the
 next level; ⚙ → Singing → Score → *Guide vocal (melody)* → **Melody volume** picks one, and **Solo**
-isolates the tune. The **Melody** toggle on the phone remote turns it off and back on at its level.
+isolates the tune. The phone remote's **Melody − ＋** steps through the same five levels.
 
 ### 🔊 Sound (the music)
 Under ⚙ → **Music**:
@@ -541,15 +541,20 @@ on the stage** whether the stage shows it *When idle* (default), *Always* — du
 small code beside the pitch guide at exactly the guide's height (top-right, under the song title, when
 the guide is off or hidden) — or *Never*). Guests scan the QR with their phones (same network) to open **`/remote`**.
 Scanning auto-connects; anyone typing the URL by hand enters the **room code** shown on screen.
+The first time a phone joins a room it asks **"What name should we use?"** (prefilled with the last
+name it used); the name goes on the songs it reserves and on the TV's messages.
 
 The phone downloads only a **compact copy of the songbook** (a couple of megabytes even for a very
 large library) and gets **instant updates**: a tap reaches the TV in a fraction of a second over a
 live event stream. If something on the network holds that stream back, the phone falls back to
 checking once a second by itself and tries the stream again a minute later. The Songs panel's Queue
 tab (with the room code) and ⚙ → Phones & party → Remote show the state (**Phones: instant / connecting… / polling**), and so does the phone's **You** tab. Five tabs:
-- **Now** — the current song with restart, play/pause, next, seek, **key / tempo / volume** (tempo
-  is a −/＋ stepper), a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from
-  their phone (on brings it back at the level the host's 🎵 button set), the live score, and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
+- **Now** — the current song with play/pause and next, its progress (a bar to watch — guests don't
+  seek), and **− value ＋** steppers like the TV's status line: **Volume** in steps of 10 %, **Key**
+  with the song's key beside it (*D maj → E maj* when transposed; video / YouTube / audio songs show
+  just the number), **Tempo**, and **🎵 Melody** Off · 25 · 50 · 75 · 100 %. Every change shows as a
+  message on the phone **and on the TV, with the guest's name** ("Kai: Volume 80%"). Plus the live
+  score and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
 - **🎤 Lyrics** — the current song's lyrics **on your own phone**, in time with the room, in the
   same **Stage** layout as the TV (or **Scroll** — pick it on the You tab). Both draw the TV's look —
   white outlined text, the wipe to the sung colour, singer colours and orange backing vocals — in the
@@ -558,8 +563,9 @@ tab (with the room code) and ⚙ → Phones & party → Remote show the state (*
   lyrics baked into the picture, so the tab says so. If your phone reads a touch early or late, nudge
   it with the **Sync nudge** slider at the bottom — it only moves *your* screen (the **You** tab's
   lyric offset moves everyone's).
-- **Search** — the TV's own search: numbers across every songbook, exact matches, then **≈** close
-  matches; plus optional 🌐 YouTube. **Tap a song** for **Reserve**, **Play next** and **Play now** —
+- **Search** — with the field empty, **every song**, in the same order as the TV's Songs panel
+  (scroll the whole songbook); type for the TV's own search: numbers across every songbook, exact
+  matches, then **≈** close matches; plus optional 🌐 YouTube. **Tap a song** for **Reserve**, **Play next** and **Play now** —
   the last two only when the host allows them (see below). Typing a number finds that song number.
 - **Queue** — the live queue with an "added by" name and a rough **"~7 min"** wait for each song,
   plus move up / down, remove, and **⤒ Play next** (when the host allows jumping the queue).

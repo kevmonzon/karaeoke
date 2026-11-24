@@ -43,11 +43,14 @@ import { parseLyricsDoc } from "./lyrics-doc.js";
 import { syncClock, clockTime } from "./sync-clock.js";
 import { queueEta, formatEta } from "./queue-order.js";
 import { REACTIONS } from "./reactions.js";
+import { stepVolume, stepMelody, adjustLabel, keyText, fmtSemis } from "./remote-adjust.js";
+import { melodyLevel, melodyLevelLabel } from "./music-fx.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", audio: "🎵", video: "🎞️", youtube: "🌐" };
 const PREFS_KEY = "karaeoke.remote.v1";
-const SEARCH_LIMIT = 150;   // exact-tier rows rendered (the phone's list is not virtualised)
+const SEARCH_LIMIT = 150;   // exact-tier rows of a typed search (the empty field lists every song)
+const NAMED_ROOMS_MAX = 20; // rooms this phone has already been asked its name for (most recent kept)
 const FUZZY_BELOW = 20;     // close matches only while the exact tier is shorter (host: search.fuzzyBelow)
 
 // --- device-local state (persisted on the phone) ---------------------------
@@ -56,6 +59,7 @@ let prefs = {
   lyricLines: 4,       // visible lyric lines on THIS phone, scroll style (the host keeps its own)
   lyricScale: 1,       // lyric text multiplier on THIS phone (0.7–1.8)
   lyricStyle: "stage", // "stage" (the videoke rows, as on the TV) | "scroll" (the column)
+  namedRooms: [],      // room codes whose name prompt this phone has answered (Rae, 2026-11-25)
 };
 // --- songbook ----------------------------------------------------------------
 const catalog = new Catalog();
@@ -71,7 +75,6 @@ let lastEventAt = -Infinity; // performance.now()/1000 of the last FRESH host vi
 let lastPushAt = 0;      // performance.now() of the last push event: a poll sent before it is stale
 let lastNotice = "";     // the host notice already toasted
 let ytOn = false;        // include YouTube results in search
-let seeking = false;     // true while the user drags the seek slider (don't fight them)
 let pollTimer = null;    // the fallback poll — runs only while push is not healthy
 let uiTimer = null;      // smooth-progress ticker (cleared on leave)
 let activeTab = "now";
@@ -110,6 +113,7 @@ async function boot() {
   wireLyrics();
   wireSearch();
   wireSheet();
+  wireNamePrompt();
   wireSettings();
   wireReactions();
   wireGate();
@@ -223,6 +227,42 @@ function enterRoom(code) {
   syncPolling();
   acquireWakeLock();
   if (!uiTimer) uiTimer = setInterval(uiTick, 250);   // smooth now-playing progress between events
+  if (needsName(code)) askName();
+}
+
+// ---------------------------------------------------------------------------
+// Name prompt (Rae, 2026-11-25: "on first connect to the room - ask what name to use"; picked "each
+// new room"): the first time this phone enters a room code it asks, prefilled with the last name
+// used; a reconnect or reload in the same room does not ask again. A name is required — an empty
+// one would read as the HOST's own reservation ("" is the host in fair play, §5.25).
+// ---------------------------------------------------------------------------
+function needsName(code) {
+  return !(Array.isArray(prefs.namedRooms) && prefs.namedRooms.includes(code));
+}
+function askName() {
+  const input = $("name-input");
+  input.value = prefs.nickname || "";
+  $("name-go").disabled = !input.value.trim();
+  $("name-gate").hidden = false;
+  input.focus();
+  input.select();
+}
+function wireNamePrompt() {
+  const input = $("name-input");
+  input.oninput = () => { $("name-go").disabled = !input.value.trim(); };
+  $("name-form").onsubmit = (e) => {
+    e.preventDefault();
+    const name = input.value.replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!name) return;
+    prefs.nickname = name;
+    const rooms = (Array.isArray(prefs.namedRooms) ? prefs.namedRooms : []).filter((r) => r !== room);
+    prefs.namedRooms = [...rooms, room].slice(-NAMED_ROOMS_MAX);
+    savePrefs();
+    $("s-nick").value = name;
+    $("name-gate").hidden = true;
+    input.blur();
+    showToast(`Hi, ${name}!`, 1500);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -541,7 +581,9 @@ function showTab(name) {
   activeTab = name;
   for (const p of document.querySelectorAll(".panel")) p.classList.toggle("active", p.id === `tab-${name}`);
   for (const b of document.querySelectorAll(".tabbar .tab")) b.classList.toggle("active", b.dataset.tab === name);
-  if (name === "search") $("r-search").focus();
+  // The search tab opens on the full song list (Rae, 2026-11-25) — no keyboard popping up over it;
+  // tap the field to type. The list was display:none, so measure and draw it now.
+  if (name === "search") renderVirtual(true);
   if (name === "queue") renderQueue();
   // Lyrics are fetched + animated ONLY while their tab is on screen (no wasted fetch/rAF).
   syncLyricLoop();
@@ -568,52 +610,57 @@ function wireNow() {
     }
     cmd({ type: "next" });
   };
-  $("now-restart").onclick = () => {
-    if (!effNow()) return;
-    optSet("position", 0); uiTick(); refreshClock();
-    cmd({ type: "restart" });
-  };
-  const seek = $("now-seek");
-  seek.oninput = () => { seeking = true; };
-  seek.onchange = () => {
-    seeking = false;
-    const now = effNow();
-    if (now && now.duration > 0) {
-      const pos = (seek.value / 1000) * now.duration;
-      optSet("position", pos); uiTick(); refreshClock();   // lyrics jump with the slider
-      cmd({ type: "seek", position: pos });
-    }
-  };
-  $("now-vol").onchange = (e) => {
-    const v = +e.target.value / 100;
-    optSet("set:audio.volume", v); renderNow();
-    cmd({ type: "volume", value: v });
-  };
+  // No ⏮ and no seeking from a phone (Rae, 2026-11-25): the bar above is progress only.
+  $("now-vol-down").onclick = () => stepVol(-1);
+  $("now-vol-up").onclick = () => stepVol(1);
   $("now-key-down").onclick = () => stepKey(-1);
   $("now-key-up").onclick = () => stepKey(1);
   $("now-tempo-down").onclick = () => stepTempo(-0.05);
   $("now-tempo-up").onclick = () => stepTempo(0.05);
-  // Melody (guide-vocal channel) — an On/Off toggle mirroring the host's 🎵 transport button.
-  // MIDI-only host-side (a no-op on video/YouTube); shown always, like the Key control.
-  $("now-melody-toggle").onclick = () => {
-    const muted = !!setVal("guide.vocal.mute", false);
-    optSet("set:guide.vocal.mute", !muted); renderNow();
-    cmd({ type: "setting", path: "guide.vocal.mute", value: !muted });
-  };
+  // Melody (guide vocal): Off · 25 · 50 · 75 · 100 %, the TV status line's − + (MIDI songs only on
+  // the host; shown always, like Key). One level is two settings; Off leaves the volume alone.
+  $("now-melody-down").onclick = () => stepMelodyLevel(-1);
+  $("now-melody-up").onclick = () => stepMelodyLevel(1);
+}
+
+// Each step toasts here; the TV toasts the same words with this guest's name (remote-adjust.js).
+function adjusted(path, value) {
+  const now = effNow();
+  const text = adjustLabel(path, value, { get: (p) => setVal(p, undefined), key: now ? now.key : null });
+  if (text) showToast(text, 1500);
+}
+
+function stepVol(dir) {
+  const next = stepVolume(+setVal("audio.volume", 0.9), dir);
+  optSet("set:audio.volume", next); renderNow();
+  cmd({ type: "volume", value: next });
+  adjusted("audio.volume", next);
 }
 
 function stepKey(delta) {
   const next = Math.max(-12, Math.min(12, setVal("audio.key", 0) + delta));
-  optSet("set:audio.key", next);
-  $("now-key-val").textContent = fmtKey(next);
+  optSet("set:audio.key", next); renderNow();
   cmd({ type: "setting", path: "audio.key", value: next });
+  adjusted("audio.key", next);
 }
 
 function stepTempo(delta) {
   const next = Math.round(Math.max(0.5, Math.min(1.5, setVal("audio.tempo", 1) + delta)) * 100) / 100; // clamp + avoid fp drift
-  optSet("set:audio.tempo", next);
-  $("now-tempo-val").textContent = `${next.toFixed(2)}×`;
+  optSet("set:audio.tempo", next); renderNow();
   cmd({ type: "setting", path: "audio.tempo", value: next });
+  adjusted("audio.tempo", next);
+}
+
+function stepMelodyLevel(dir) {
+  const { settings } = stepMelody(setVal("guide.vocal.volume", 1), setVal("guide.vocal.mute", false), dir);
+  // Volume first, then mute: the host applies a drain in order, so an un-mute lands on the new level.
+  for (const key of ["volume", "mute"]) {
+    if (!(key in settings)) continue;
+    optSet(`set:guide.vocal.${key}`, settings[key]);
+    cmd({ type: "setting", path: `guide.vocal.${key}`, value: settings[key] });
+  }
+  renderNow();
+  adjusted("guide.vocal.mute", settings.mute);
 }
 
 function renderNow() {
@@ -625,18 +672,20 @@ function renderNow() {
   const sc = $("now-score");
   if (sc) sc.textContent = now && now.score != null ? `★ ${now.score}` : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
-  $("now-restart").disabled = !now;
-  // reflect the effective key/tempo/volume (optimistic if the guest just changed it, else the host mirror)
+  // reflect the effective key/tempo/volume/melody (optimistic if the guest just changed it, else the host mirror)
   const vol = Math.round(setVal("audio.volume", 0.9) * 100);
-  if (document.activeElement !== $("now-vol")) $("now-vol").value = vol;
   $("now-vol-val").textContent = `${vol}%`;
+  $("now-vol-down").disabled = vol <= 0;
+  $("now-vol-up").disabled = vol >= 100;
   $("now-tempo-val").textContent = `${(+setVal("audio.tempo", 1)).toFixed(2)}×`;
-  $("now-key-val").textContent = fmtKey(setVal("audio.key", 0));
-  // melody (guide vocal): On/Off toggle
-  const melodyMuted = !!setVal("guide.vocal.mute", false);
-  const mt = $("now-melody-toggle");
-  mt.classList.toggle("off", melodyMuted);
-  mt.textContent = melodyMuted ? "Off" : "On";
+  const semis = setVal("audio.key", 0);
+  $("now-key-val").textContent = fmtSemis(semis);
+  // The song's root key, and where Key ± takes it: "D maj → E maj" (blank when the TV knows none).
+  $("now-key-name").textContent = keyText(semis, now ? now.key : null);
+  const level = melodyLevel(setVal("guide.vocal.volume", 1), setVal("guide.vocal.mute", false));
+  $("now-melody-val").textContent = melodyLevelLabel(level);
+  $("now-melody-down").disabled = level <= 0;
+  $("now-melody-up").disabled = level >= 4;
   uiTick();
 }
 
@@ -644,14 +693,17 @@ function renderNow() {
 function uiTick() {
   renderConn();
   const now = effNow();
-  const seek = $("now-seek");
+  const bar = $("now-seek");
+  const fill = $("now-seek-fill");
   if (!now || !(now.duration > 0)) {
-    if (!seeking) seek.value = 0;
+    fill.style.width = "0%"; bar.setAttribute("aria-valuenow", "0");
     $("now-cur").textContent = "0:00"; $("now-dur").textContent = "0:00";
     return;
   }
   const pos = Math.max(0, Math.min(now.duration, effPos(now)));
-  if (!seeking) seek.value = Math.round((pos / now.duration) * 1000);
+  const pct = (pos / now.duration) * 100;
+  fill.style.width = `${pct.toFixed(2)}%`;
+  bar.setAttribute("aria-valuenow", String(Math.round(pct)));
   $("now-cur").textContent = fmt(pos);
   $("now-dur").textContent = fmt(now.duration);
 }
@@ -891,6 +943,11 @@ function wireSearch() {
   // Enter: search now and drop the keyboard so the results are visible.
   input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(deb); runSearch(input.value); input.blur(); } };
   $("r-yt").onclick = () => { ytOn = !ytOn; $("r-yt").classList.toggle("on", ytOn); runSearch(input.value); };
+  // The list is virtual: draw the rows that scroll into view (one frame at a time).
+  let raf = 0;
+  const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderVirtual(false); }); };
+  document.querySelector(".rmain").addEventListener("scroll", redraw, { passive: true });
+  window.addEventListener("resize", () => renderVirtual(true));
 }
 
 function refreshSearch() { runSearch($("r-search").value); }
@@ -910,7 +967,13 @@ function phoneTiers(q) {
 function runSearch(raw) {
   const q = String(raw || "").trim();
   const gen = ++searchGen;
-  if (!q) { results = { q, rows: [], close: [], yt: [], looking: false }; renderResults(); return; }
+  // An empty field lists every song, in the TV's order (Rae, 2026-11-25: "list all songs like in
+  // main screen" — the host's All tab with no query is catalog.songs itself, §5.37).
+  if (!q) {
+    results = { q, rows: songbook === "ready" ? catalog.songs : [], close: [], yt: [], looking: false };
+    renderResults();
+    return;
+  }
   const tiers = phoneTiers(q);
   const rows = tiers.rows.slice(0, SEARCH_LIMIT);
   // Tier 3 — close matches (typos), only for a short exact tier and a word of 4+ letters.
@@ -951,20 +1014,69 @@ function setSearchHint(text) {
 
 // Exact rows, then the close rows ("≈"), then YouTube — appended rows never move the ones above.
 function renderResults() {
-  const ul = $("r-results");
-  ul.innerHTML = "";
   const { q, rows, close, yt, looking } = results;
-  const frag = document.createDocumentFragment();
-  for (const s of rows) frag.appendChild(songRow(s, false));
-  for (const s of close) frag.appendChild(songRow(s, true));
-  for (const s of yt) frag.appendChild(songRow(s, false));
-  ul.appendChild(frag);
   const n = rows.length + close.length + yt.length;
   if (n) setSearchHint("");
   else if (songbook === "off") setSearchHint(ytOn && q ? "No matches." : "The songbook isn't available — the controls still work.");
-  else if (songbook === "loading") setSearchHint(q ? "Loading the songbook…" : "Type to search the songbook.");
-  else if (!q) setSearchHint("Type to search the songbook.");
+  else if (songbook === "loading") setSearchHint("Loading the songbook…");
+  else if (!q) setSearchHint("The songbook is empty.");
   else setSearchHint(looking ? "Looking for close spellings…" : "No matches.");
+  const scroller = document.querySelector(".rmain");
+  if (activeTab === "search" && scroller) scroller.scrollTop = 0;   // a new list starts at its top
+  renderVirtual(true);
+}
+
+// --- the virtual list (Rae, 2026-11-25: every song, 120k+, on a phone) ---------------------
+// The <ul> is as tall as all its rows; only the rows inside the scroller's view (plus a few either
+// side) exist, absolutely placed by index × the measured row height. The scroller is .rmain, the
+// page's own scroll box, so the search bar and the rows above the list scroll away as before.
+const OVERSCAN = 8;
+let vRowH = 0;
+let vDrawn = new Map();    // index → <li> currently in the DOM
+
+function vCount() { return results.rows.length + results.close.length + results.yt.length; }
+/** Row i of the list: [song, isCloseMatch]. */
+function vItem(i) {
+  const { rows, close, yt } = results;
+  if (i < rows.length) return [rows[i], false];
+  i -= rows.length;
+  if (i < close.length) return [close[i], true];
+  return [yt[i - close.length], false];
+}
+
+/** The window of rows [first, last] that is on screen, for n rows of height h. Pure. */
+function visibleRange(listTop, viewH, h, n, overscan = OVERSCAN) {
+  if (!(n > 0) || !(h > 0)) return [0, -1];
+  const first = Math.max(0, Math.floor(-listTop / h) - overscan);
+  const last = Math.min(n - 1, Math.ceil((viewH - listTop) / h) + overscan);
+  return first > last ? [0, -1] : [first, last];
+}
+
+function renderVirtual(reset) {
+  const ul = $("r-results");
+  if (reset) { ul.replaceChildren(); vDrawn = new Map(); }
+  const n = vCount();
+  if (activeTab !== "search" || !n) { if (!n) ul.style.height = "0px"; return; }   // hidden: showTab redraws
+  if (reset || !vRowH) {
+    // Measure one real row (the Text-size choice changes it) before placing any.
+    const probe = songRow(...vItem(0));
+    ul.appendChild(probe);
+    vRowH = probe.getBoundingClientRect().height || 57;
+    probe.remove();
+  }
+  ul.style.height = `${n * vRowH}px`;
+  const scroller = document.querySelector(".rmain");
+  const listTop = ul.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  const [first, last] = visibleRange(listTop, scroller.clientHeight, vRowH, n);
+  for (const [i, li] of vDrawn) if (i < first || i > last) { li.remove(); vDrawn.delete(i); }
+  for (let i = first; i <= last; i++) {
+    if (vDrawn.has(i)) continue;
+    const li = songRow(...vItem(i));
+    li.style.top = `${i * vRowH}px`;
+    li.style.height = `${vRowH}px`;
+    ul.appendChild(li);
+    vDrawn.set(i, li);
+  }
 }
 
 // A row: kind icon · title / artist · [≈]. No number column: the phone shows no song numbers
@@ -1229,7 +1341,6 @@ function fmt(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 }
-function fmtKey(k) { k = +k || 0; return k > 0 ? `+${k}` : `${k}`; }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function el(tag, cls, text) {
   const e = document.createElement(tag);

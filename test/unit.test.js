@@ -1623,8 +1623,10 @@ test("remoteGlue: every command type reaches its action, once", () => {
   glue.applyCommand({ type: "next" });
   glue.applyCommand({ type: "seek", position: 42 });
   glue.applyCommand({ type: "volume", value: 1.5 });
+  // "status": a guest's volume change is also toasted on the TV with their name (Rae, 2026-11-25).
   assert.deepEqual(calls.map((c) => c[0]),
-    ["enqueue", "remove", "reorder", "react", "play", "pause", "next", "seek", "volume"]);
+    ["enqueue", "remove", "reorder", "react", "play", "pause", "next", "seek", "volume", "status"]);
+  assert.equal(calls.at(-1)[1], "A guest: Volume 100%", "the toast shows the clamped value");
   assert.equal(calls.find((c) => c[0] === "seek")[1], 42);
   assert.equal(calls.find((c) => c[0] === "enqueue")[2], "Rae");
 });
@@ -1648,7 +1650,20 @@ test("remoteGlue: a guest setting is gated on BOTH the path and the value", () =
   glue.applyCommand({ type: "setting", path: "__proto__", value: 1 });
   glue.applyCommand({ type: "setting", path: 42, value: 1 });
   glue.applyCommand({ type: "setting", path: "audio.key", value: "loud" });
-  assert.deepEqual(calls, [["setting", "audio.volume", 0.5], ["setting", "audio.volume", 1]]);
+  // Each applied change is toasted on the TV; a refused one says nothing (Rae, 2026-11-25).
+  assert.deepEqual(calls, [
+    ["setting", "audio.volume", 0.5], ["status", "A guest: Volume 50%"],
+    ["setting", "audio.volume", 1], ["status", "A guest: Volume 100%"],
+  ]);
+});
+
+test("remoteGlue: the TV's toast names the guest and says what changed", () => {
+  const { glue, calls } = glueHarness({ settings: { "guide.vocal.volume": 0.5, "guide.vocal.mute": false } });
+  glue.applyCommand({ type: "setting", path: "audio.key", value: 2, by: "Kai" });
+  glue.applyCommand({ type: "setting", path: "audio.tempo", value: 1.05, by: "Kai" });
+  glue.applyCommand({ type: "setting", path: "guide.vocal.volume", value: 0.5, by: "Kai" });
+  const said = calls.filter((c) => c[0] === "status").map((c) => c[1]);
+  assert.deepEqual(said, ["Kai: Key +2", "Kai: Tempo 1.05×", "Kai: Melody 50%"]);
 });
 
 test("remoteGlue: the reservation cap refuses an over-quota guest with a visible reason", () => {

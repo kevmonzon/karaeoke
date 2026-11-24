@@ -51,6 +51,9 @@ export const REMOTE_SETTING_RANGES = Object.assign(Object.create(null), {
   "audio.tempo":      { type: "num",  min: 0.5,   max: 1.5 },
   "audio.volume":     { type: "num",  min: 0,     max: 1 },   // 0–100 % (Rae, 2026-11-24)
   "guide.vocal.mute": { type: "bool" },
+  // The melody's level from a phone (Rae, 2026-11-25: "same as controls from main screen
+  // (25-50-75-100-mute)"): the phone steps Off · 25 · 50 · 75 · 100 % like the TV's status line.
+  "guide.vocal.volume": { type: "num",  min: 0,     max: 1 },
 });
 
 /** The allowlisted paths — the mirrored-to-phones subset AND what a guest may write. */

@@ -556,8 +556,9 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   assert.deepEqual(Object.keys(mirrored).sort(), [...REMOTE_SETTABLE, ...REMOTE_READONLY_MIRROR].sort());
   for (const p of ["remote.liveDigits", "keypad.enabled"]) assert.equal(p in mirrored, false, p);
 
-  // Not settable: the allowlist and its ranges are exactly what they were before M7.
-  assert.deepEqual(REMOTE_SETTABLE_PATHS, ["lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume", "guide.vocal.mute"]);
+  // Not settable: the allowlist is what it was before M7, plus the melody's level (Rae, 2026-11-25:
+  // the phone steps Off · 25 · 50 · 75 · 100 % like the TV).
+  assert.deepEqual(REMOTE_SETTABLE_PATHS, ["lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume", "guide.vocal.mute", "guide.vocal.volume"]);
   for (const p of REMOTE_READONLY_MIRROR) {
     assert.equal(REMOTE_SETTABLE.has(p), false, p);
     assert.equal(clampRemoteSetting(p, true), undefined, p);

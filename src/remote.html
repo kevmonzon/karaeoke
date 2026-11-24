@@ -29,6 +29,19 @@
     </div>
   </div>
 
+  <!-- Name prompt (Rae, 2026-11-25: "on first connect to the room - ask what name to use"): shown
+       the first time this phone enters a given room, prefilled with the last name used. -->
+  <div id="name-gate" class="gate" hidden>
+    <form id="name-form" class="gate-card">
+      <div class="gate-brand">📱 Ka-<span>Rae</span>-oke</div>
+      <div class="gate-title">What name should we use?</div>
+      <div class="gate-sub">Shown on the songs you reserve and on the TV</div>
+      <input id="name-input" type="text" autocomplete="nickname" spellcheck="false" maxlength="24"
+             placeholder="Your name" aria-label="Your name" />
+      <button id="name-go" class="gate-go" type="submit">Join</button>
+    </form>
+  </div>
+
   <header class="rhead">
     <div class="rbrand">📱 Ka-<span>Rae</span>-oke</div>
     <div id="conn" class="conn"><span class="dot"></span><span id="conn-label">connecting…</span></div>
@@ -43,26 +56,37 @@
         <div id="now-artist" class="now-artist"></div>
         <!-- Live score, mirrored from the host while a MIDI song is being scored. -->
         <div id="now-score" class="now-score" aria-live="polite"></div>
+        <!-- Progress only (Rae, 2026-11-25: "slider is read only"): guests watch the song's
+             position; nobody seeks from a phone. -->
         <div class="seek">
-          <input id="now-seek" type="range" min="0" max="1000" value="0" aria-label="Seek" />
+          <div id="now-seek" class="seekbar" role="progressbar" aria-label="Song position"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="now-seek-fill" class="seek-fill"></span></div>
           <div class="seek-times"><span id="now-cur">0:00</span><span id="now-dur">0:00</span></div>
         </div>
+        <!-- No ⏮ (Rae, 2026-11-25: "remove back previous button"). -->
         <div class="now-controls">
-          <button id="now-restart" class="ctl" aria-label="Restart the song" title="Restart">⏮</button>
           <button id="now-playpause" class="ctl primary" aria-label="Play/pause">▶</button>
           <button id="now-next" class="ctl" aria-label="Next">⏭</button>
         </div>
+        <!-- − value + for each, like the TV's status line; every change also toasts here and on the
+             TV (remote-adjust.js). Volume moves in 10s; Melody is Off · 25 · 50 · 75 · 100. -->
         <div class="now-mix">
-          <label class="mrow"><span>🔊 Volume <em id="now-vol-val">90%</em></span>
-            <input id="now-vol" type="range" min="0" max="100" value="90" aria-label="Volume" /></label>
-          <div class="mrow"><span>🎚 Key <em id="now-key-val">0</em></span>
+          <div class="mrow"><span>🔊 Volume</span>
+            <span class="stepper"><button id="now-vol-down" aria-label="Volume down">–</button>
+            <em id="now-vol-val" class="sval">90%</em>
+            <button id="now-vol-up" aria-label="Volume up">+</button></span></div>
+          <div class="mrow"><span class="mlbl">🎚 Key <small id="now-key-name" class="keyname"></small></span>
             <span class="stepper"><button id="now-key-down" aria-label="Key down">–</button>
+            <em id="now-key-val" class="sval">0</em>
             <button id="now-key-up" aria-label="Key up">+</button></span></div>
-          <div class="mrow"><span>⏩ Tempo <em id="now-tempo-val">1.00×</em></span>
+          <div class="mrow"><span>⏩ Tempo</span>
             <span class="stepper"><button id="now-tempo-down" aria-label="Tempo down">–</button>
+            <em id="now-tempo-val" class="sval">1.00×</em>
             <button id="now-tempo-up" aria-label="Tempo up">+</button></span></div>
           <div class="mrow"><span>🎵 Melody</span>
-            <button id="now-melody-toggle" class="gv-toggle" aria-label="Toggle melody">On</button></div>
+            <span class="stepper"><button id="now-melody-down" aria-label="Melody down">–</button>
+            <em id="now-melody-val" class="sval">100%</em>
+            <button id="now-melody-up" aria-label="Melody up">+</button></span></div>
         </div>
         <!-- Crowd noise: the videoke box's Applause button, one per guest. -->
         <div id="react-row" class="react-row" aria-label="Send a reaction"></div>
@@ -96,8 +120,10 @@
                placeholder="Search songs · number · artist" aria-label="Search" />
         <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
       </div>
-      <ul id="r-results" class="song-list"></ul>
-      <p id="r-search-hint" class="empty">Type to search the songbook.</p>
+      <!-- Every song while the field is empty (Rae, 2026-11-25: "list all songs like in main
+           screen"), the matches while typing. Virtual: only the rows on screen exist. -->
+      <ul id="r-results" class="song-list vlist" role="list"></ul>
+      <p id="r-search-hint" class="empty">Loading the songbook…</p>
     </section>
 
     <!-- Tab 4: Queue -->
