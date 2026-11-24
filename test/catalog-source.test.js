@@ -161,6 +161,28 @@ test("adopt rebuilds every index", async () => {
   assert.equal(c.byId.size + c.byCode.size + c.bySourceCode.size, 0);
 });
 
+// M7 integration (the phone, plan R31): adopt can defer the code maps — most of its time on a
+// 124k-song catalogue — and they are built on first use, with the same answers as an eager adopt.
+test("adopt with deferCodeIndex builds the code maps on first use, with the same answers", async () => {
+  const c = await loadCatalogs({ "/catalog.json": MIDI, "/catalog-audio.json": AUDIO });
+  const songs = c.songs.slice();
+  const eager = new Catalog(); eager.adopt(songs);
+  const lazy = new Catalog(); lazy.adopt(songs, { deferCodeIndex: true });
+  assert.equal(lazy.bySourceCode.size + lazy.byCode.size, 0, "nothing built yet");
+  assert.equal(lazy.getById(songs[0].id), songs[0], "ids are indexed at once");
+  for (const code of ["5", "7", "9", "404"]) {
+    for (const src of ["all", "SH", "PLATKAR"]) {
+      assert.deepEqual(lazy.lookupCode(code, src), eager.lookupCode(code, src), `${code}/${src}`);
+    }
+    assert.equal(lazy.get(code), eager.get(code));
+  }
+  assert.equal(lazy.bySourceCode.size, eager.bySourceCode.size, "built once, completely");
+  const first = new Catalog(); first.adopt(songs, { deferCodeIndex: true });
+  assert.equal(first.get("7"), eager.get("7"), "get() alone builds the maps");
+  const again = new Catalog(); again.adopt(songs, { deferCodeIndex: true }); again.ensureCodeIndex(); again.ensureCodeIndex();
+  assert.equal(again.lookupCode("7").length, eager.lookupCode("7").length, "ensureCodeIndex twice indexes once");
+});
+
 test("adopt does not re-tag records that have an id", () => {
   const c = new Catalog();
   const prepared = [

@@ -52,6 +52,7 @@ export class Catalog {
     this.byId = new Map();   // `${kind}:${code}` → record (unambiguous identity)
     this.bySourceCode = new Map(); // `${source}:${code}` → every record, catalogue order
     this._byCodeAll = new Map();   // code → every record of every source, catalogue order
+    this._codeIndexPending = false; // adopt(…, {deferCodeIndex}) left the three code maps unbuilt
   }
 
   /**
@@ -74,6 +75,7 @@ export class Catalog {
     this.byCode.clear();
     this.byId.clear();
     this._clearCodeIndex();
+    this._codeIndexPending = false;
     for (const s of this.songs) {
       // Duplicate dial codes are allowed (several files can share a code). The FIRST record
       // keeps the plain `kind:code` id (stable for saved sessions/favorites); a later collision
@@ -92,8 +94,13 @@ export class Catalog {
    * may be a file-path disambiguation that re-tagging would undo. Any other record is
    * tagged as load() would (its own `kind`, else "midi"). The first record keeps an id
    * that two pre-tagged records share. @returns the number of songs.
+   *
+   * `deferCodeIndex: true` (the phone, M7) leaves byCode / bySourceCode / the every-code map
+   * unbuilt — about 3/4 of adopt()'s time on a 124k-song catalogue — until the first get() or
+   * lookupCode(), or an explicit ensureCodeIndex() (the phone schedules one right after its first
+   * paint). Default: built at once, as before.
    */
-  adopt(songs) {
+  adopt(songs, { deferCodeIndex = false } = {}) {
     this.songs = Array.isArray(songs) ? songs.filter((s) => s && typeof s === "object") : [];
     this.byCode.clear();
     this.byId.clear();
@@ -106,9 +113,17 @@ export class Catalog {
         if (this.byId.has(s.id)) s.id = `${s.kind}:${s.file || s.name}`;
         this.byId.set(s.id, s);
       }
-      this._indexCode(s);
+      if (!deferCodeIndex) this._indexCode(s);
     }
+    this._codeIndexPending = !!deferCodeIndex;
     return this.songs.length;
+  }
+
+  /** Build the code maps now if adopt() deferred them (a no-op otherwise). */
+  ensureCodeIndex() {
+    if (!this._codeIndexPending) return;
+    this._codeIndexPending = false;
+    for (const s of this.songs) this._indexCode(s);
   }
 
   /**
@@ -118,6 +133,7 @@ export class Catalog {
    * number through normalizeCode() first. Returns a fresh array ([] when nothing matches).
    */
   lookupCode(code, source = "all") {
+    this.ensureCodeIndex();
     const key = String(code ?? "");
     if (!key) return [];
     const hits = (source == null || source === "all")
@@ -142,7 +158,7 @@ export class Catalog {
   }
 
   /** Look up by dial code (first match; MIDI wins on a collision). */
-  get(code) { return this.byCode.get(String(code)); }
+  get(code) { this.ensureCodeIndex(); return this.byCode.get(String(code)); }
 
   /** Look up by stable id (`${kind}:${code}`) — unambiguous across KAR/VID. */
   getById(id) { return this.byId.get(String(id)); }
