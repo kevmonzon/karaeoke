@@ -65,6 +65,14 @@ export class MicEngine {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
+  /** Why the microphone cannot be used (Q6): an insecure page (a TV box on http://<LAN-IP>) has no
+   *  navigator.mediaDevices at all, which is not the browser's fault. */
+  get unavailableReason() {
+    return globalThis.isSecureContext === false
+      ? "Open the app on https or localhost to use the microphone"
+      : "Microphone not supported in this browser";
+  }
+
   _constraints() {
     const g = (k) => this.settings.get("mic." + k);
     return {
@@ -79,7 +87,7 @@ export class MicEngine {
 
   async enable() {
     if (this.enabled) return true;
-    if (!this.available) { this.onStatus("Microphone not supported in this browser"); return false; }
+    if (!this.available) { this.onStatus(this.unavailableReason); return false; }
     const ctx = await this.audio.ensureContext();
     try { await ctx.resume(); } catch (_) {}
 
@@ -299,4 +307,109 @@ export class MicEngine {
     // reverb
     N.reverbWet.gain.setTargetAtTime(g("reverb.enabled") ? g("reverb.mix") : 0, t, 0.02);
   }
+
+  // ---- M9: latency calibration (plan §5.17) -------------------------------------------------
+  // Added at the end of the class so the line references in the plan (F27) stay valid.
+
+  /** getUserMedia needs a secure context (https, or http://localhost / 127.0.0.1 — §5.6). */
+  get secure() {
+    return globalThis.isSecureContext === true;
+  }
+
+  /**
+   * A raw microphone tap for calibration: a SECOND getUserMedia stream with echo cancellation,
+   * noise suppression and auto-gain all OFF, on the app's shared context (the calibration clicks
+   * are scheduled on the same context, so block times and click times share one clock), routed
+   * only into the "capture" worklet → a zero-gain GainNode → destination (the pull that makes the
+   * worklet run; nothing reaches the speakers). The main mic graph is not touched.
+   *
+   * If the second stream is refused while the main mic is on, the main mic is disabled, the tap
+   * opened, and the main mic re-enabled by stop(). `path` says which ran: "second" | "paused-main".
+   *
+   * @returns {Promise<{ctx: AudioContext, sampleRate: number, path: "second"|"paused-main",
+   *   onBlock(fn: (block: {time: number, samples: Float32Array}) => void): () => void,
+   *   stop(): Promise<void>}>}
+   *   onBlock returns an unsubscribe function. stop() is idempotent; it resolves once the main mic
+   *   is back (paused-main path) — callers need not await it.
+   */
+  async openRawTap() {
+    if (!this.available) throw new Error(this.unavailableReason);
+    const ctx = await this.audio.ensureContext();
+    try { await ctx.resume(); } catch (_) {}
+    await this.audio.ensureWorkletModule(CAPTURE_URL);
+
+    const constraints = {
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false,
+    };
+    let stream = null;
+    let path = "second";
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      if (!this.enabled) throw e;
+      // Some browsers refuse a second capture while the first is open: pause the main mic.
+      path = "paused-main";
+      this.disable();
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e2) {
+        await this.enable();       // leave the user's mic as it was
+        throw e2;
+      }
+    }
+
+    let src = null, node = null, sink = null;
+    const subs = new Set();
+    const sampleRate = ctx.sampleRate;
+    let stopped = false;
+    let stopping = null;
+    const stop = () => {
+      if (stopping) return stopping;
+      stopped = true;
+      subs.clear();
+      try { if (node) { node.port.onmessage = null; node.port.postMessage("stop"); } } catch (_) {}
+      for (const n of [src, node, sink]) { try { if (n) n.disconnect(); } catch (_) {} }
+      try { stream.getTracks().forEach((t) => t.stop()); } catch (_) {}
+      stopping = path === "paused-main" && !this.enabled
+        ? this.enable().then(() => {}, () => {})
+        : Promise.resolve();
+      return stopping;
+    };
+
+    try {
+      src = ctx.createMediaStreamSource(stream);
+      node = new AudioWorkletNode(ctx, "capture", { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+      sink = ctx.createGain();
+      sink.gain.value = 0;
+      node.port.onmessage = (e) => {
+        const d = e && e.data;
+        if (stopped || !d || !d.samples) return;
+        const block = { time: d.frame / sampleRate, samples: d.samples };
+        for (const fn of subs) { try { fn(block); } catch (_) {} }
+      };
+      src.connect(node);
+      node.connect(sink);
+      sink.connect(ctx.destination);
+    } catch (e) {
+      await stop();
+      throw e;
+    }
+
+    return {
+      ctx,
+      sampleRate,
+      path,
+      onBlock(fn) {
+        if (typeof fn !== "function" || stopped) return () => {};
+        subs.add(fn);
+        return () => subs.delete(fn);
+      },
+      stop,
+    };
+  }
 }
+
+// The calibration capture worklet (M9). Declared after the class so the F27 line numbers above
+// stay put; it is only read when openRawTap() runs, long after the module has evaluated.
+const CAPTURE_URL = "./js/worklets/capture.js";

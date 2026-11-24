@@ -281,8 +281,15 @@ export class PitchGuide {
     return best >= 0 && t <= a[best].end ? a[best].note : null;
   }
 
-  /** Draw. micMidi = live detected note (float) or null. */
-  update(t, micMidi = null) {
+  /** Draw. micMidi = live detected note (float) or null.
+   *  `micShiftSec` (the mic latency, seconds; plan §5.17) draws the MIC side — this frame's trail
+   *  point and the pitch dot — that much EARLIER, at the melody time the scorer judges this frame
+   *  against (it reads the melody at gt − latency), and the dot's on-pitch colour is judged
+   *  against the note at that time too. 0 (the default), negative or non-finite = no shift. */
+  update(t, micMidi = null, opts = {}) {
+    const ms = opts && opts.micShiftSec;
+    const shift = Number.isFinite(ms) && ms > 0 ? ms : 0;
+    const tm = t - shift;   // where the voice heard now lands on the melody timeline
     const ctx = this.ctx;
     if (!this.w) this.resize();
     ctx.clearRect(0, 0, this.w, this.h);
@@ -331,7 +338,7 @@ export class PitchGuide {
       return s;
     };
     const isClose = (m) => {
-      const target = this.targetNoteAt(t);
+      const target = this.targetNoteAt(tm);
       if (target == null) return false;
       let pc = (((m - target) % 12) + 12) % 12;
       if (pc > 6) pc = 12 - pc;
@@ -340,9 +347,9 @@ export class PitchGuide {
 
     // record + draw the soft vocal trail (aligned to the melody timeline)
     const trailOn = this.settings.get("guide.trail");
-    if (this.trail.length && t < this.trail[this.trail.length - 1].t - 0.1) this.trail.length = 0; // seek-back
+    if (this.trail.length && tm < this.trail[this.trail.length - 1].t - 0.1) this.trail.length = 0; // seek-back
     while (this.trail.length && this.trail[0].t < t - win) this.trail.shift(); // prune to window
-    if (trailOn && micMidi != null && isFinite(micMidi)) this.trail.push({ t, midi: fold(micMidi) });
+    if (trailOn && micMidi != null && isFinite(micMidi)) this.trail.push({ t: tm, midi: fold(micMidi) });
     if (trailOn && this.trail.length > 1) this._drawTrail(t, win, xFor, nowX);
 
     // now line
@@ -350,12 +357,12 @@ export class PitchGuide {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(nowX, 0); ctx.lineTo(nowX, this.h); ctx.stroke();
 
-    // singer pitch dot
+    // singer pitch dot — at the head of the trail (the now line when there is no shift)
     if (micMidi != null && isFinite(micMidi)) {
       ctx.fillStyle = isClose(micMidi) ? "#5dff9b" : "#ffffff";
       ctx.shadowColor = "rgba(255,255,255,.5)"; ctx.shadowBlur = 8;
       ctx.beginPath();
-      ctx.arc(nowX, this._yFor(fold(micMidi)), 7, 0, Math.PI * 2);
+      ctx.arc(shift ? xFor(tm) : nowX, this._yFor(fold(micMidi)), 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     }

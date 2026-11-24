@@ -1,1 +1,103 @@
-/* scoring.css — filled in M9 (per-note verdicts and the scoring surfaces). Empty until then. */
+/* scoring.css — the M9 scoring surfaces (plan §5.15): the per-note verdict chip (#verdict) and
+   the score card's verdict tallies (#sc-verdicts) and difficulty (#sc-difficulty).
+   Loaded after the other sheets. Sizes in --u, colours from the --v-* tokens (tokens.css, both
+   themes, APCA-checked on --bg — hence the chip's near-opaque --bg ground). No width breakpoints.
+   score-presentation.js writes the classes: `.verdict.show.v-<verdict>.pop-a|b`, `.scv.v-<verdict>`. */
+
+/* ---- Verdict colours (shared by the chip and the card's tallies) ------------------------- */
+.v-perfect   { --v-c: var(--v-perfect); }
+.v-excellent { --v-c: var(--v-excellent); }
+.v-great     { --v-c: var(--v-great); }
+.v-good      { --v-c: var(--v-good); }
+.v-miss      { --v-c: var(--v-miss); }
+
+/* ---- The verdict chip -------------------------------------------------------------------
+   #verdict lives in .lyrics-wrap (the lyric area's positioned box), next to #line-bonus.
+   Default spot (guide off, or a mode that hides the guide): top-centre of the lyric area,
+   where the line-bonus chip also sits — above the rows, never on the one being sung (the scroll
+   view centres its column with the current line at 44%; the stage view's rows sit at the bottom
+   with the count-in above them). Not interactive; never announced (aria-hidden in index.html). */
+.verdict {
+  position: absolute; z-index: 3;   /* the HUD: over the lyrics, under the score card (z 4) */
+  left: 50%; top: calc(12 / 16 * var(--u));
+  transform: translateX(-50%);
+  padding: calc(3 / 16 * var(--u)) calc(11 / 16 * var(--u));
+  border-radius: var(--r-pill);
+  border: 1px solid color-mix(in srgb, var(--v-c, var(--text)) 55%, transparent);
+  background: var(--overlay-bg-soft);
+  color: var(--v-c, var(--text));
+  font: 800 calc(15 / 16 * var(--u))/1.2 var(--font-sans);
+  letter-spacing: .06em; white-space: nowrap;
+  opacity: 0; pointer-events: none; user-select: none;
+  transition: opacity var(--dur-base) var(--ease);   /* the fade-out */
+}
+.verdict.show { opacity: 1; transition-duration: var(--dur-fast); }   /* the fade-in */
+.verdict.v-perfect { box-shadow: 0 0 calc(14 / 16 * var(--u)) color-mix(in srgb, var(--v-perfect) 40%, transparent); }
+
+/* "Both" feedback with the guide off: while a line chip is up the verdict steps down beneath it
+   (#line-bonus: 12/16 top + its 14/16 type at line-height 1.4 + 4/16 padding × 2 + 1px × 2). */
+.line-bonus.show ~ .verdict {
+  top: calc(12 / 16 * var(--u) + 0.875 * 1.4 * var(--u) + 8 / 16 * var(--u) + 2px + var(--s-1));
+}
+
+/* Guide on: centred on the pitch guide's "now" line (melody.js NOW_FRAC = 28% of the guide's
+   width; the guide and .lyrics-wrap share the flow's width and left edge), straddling the
+   guide's bottom edge — the upper half lies in the guide's 14px bottom pad, under the lowest
+   note lane, so it covers neither the notes being sung nor the lyrics. The offsets mirror
+   style.css: .pitch-guide margin-bottom --s-2; .chords = .chord-view 2.2em at 1.15 --u plus
+   margin-bottom --s-2. Change those and these follow. */
+body.guide-on:not(.video-mode):not(.youtube-mode):not(.audio-mode) .verdict {
+  top: auto; left: 28%;
+  bottom: calc(100% + var(--s-2));
+  transform: translate(-50%, 50%);
+}
+body.guide-on.chords-on:not(.video-mode):not(.youtube-mode):not(.audio-mode) .verdict {
+  bottom: calc(100% + var(--s-2) + 2.2 * 1.15 * var(--u) + var(--s-2));
+}
+
+/* A full-stage card owns the moment: no chip over the title card or the score card. */
+.title-card.show ~ .verdict.show,
+.score-card.show ~ .verdict.show { opacity: 0; }
+
+/* Pop in. The independent `scale` property, so it never fights each position's translate.
+   pop-a / pop-b are the same keyframes under two names: swapping restarts the animation.
+   Reduced motion: no scaling at all — the chip only fades (and the token layer zeroes the
+   fade, so it simply appears and disappears). */
+@media (prefers-reduced-motion: no-preference) {
+  .verdict.show.pop-a { animation: verdict-pop-a 260ms var(--ease) both; }
+  .verdict.show.pop-b { animation: verdict-pop-b 260ms var(--ease) both; }
+}
+@keyframes verdict-pop-a { 0% { scale: .6; } 60% { scale: 1.12; } 100% { scale: 1; } }
+@keyframes verdict-pop-b { 0% { scale: .6; } 60% { scale: 1.12; } 100% { scale: 1; } }
+
+/* ---- The score card: verdict tallies + difficulty --------------------------------------- */
+/* Five "LABEL count" pairs, each in its verdict colour; wraps to two rows on a narrow stage. */
+.sc-verdicts {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline;
+  gap: calc(2 / 16 * var(--u)) calc(14 / 16 * var(--u));
+  max-width: 100%; margin-top: calc(6 / 16 * var(--u));
+  font-size: calc(15 / 16 * var(--u)); line-height: 1.2; font-weight: 700;
+}
+.sc-verdicts .scv { white-space: nowrap; color: var(--v-c, var(--text)); }
+.sc-verdicts .scv-l { font-size: .78em; letter-spacing: .08em; }
+.sc-verdicts .scv-n { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* "Easy" / "Normal" / "Hard" — a quiet tag under the band. */
+.sc-difficulty {
+  margin-top: calc(2 / 16 * var(--u));
+  padding: calc(2 / 16 * var(--u)) calc(10 / 16 * var(--u));
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  color: var(--text-muted);
+  font-size: calc(12 / 16 * var(--u)); line-height: 1.2; font-weight: 700; letter-spacing: .04em;
+}
+
+/* Author `display: flex` would beat the UA's [hidden] rule — hide explicitly. */
+.sc-verdicts[hidden], .sc-verdicts:empty,
+.sc-difficulty[hidden], .sc-difficulty:empty { display: none; }
+
+/* The card is 50vh tall with overflow hidden, and the hero number alone can take most of it.
+   With the tallies on it, cap the number to the viewport height so the song line and the last
+   rows stay inside the card's padding (same clamp as style.css's .sc-score, plus the cap). */
+.score-card:has(> .sc-verdicts:not([hidden]):not(:empty)) .sc-score {
+  font-size: min(clamp(calc(72 / 16 * var(--u)), calc(18vw * var(--scale)), calc(220 / 16 * var(--u))), 23vh);
+}
