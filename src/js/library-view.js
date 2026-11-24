@@ -122,11 +122,14 @@ function filterKey({ sources, kinds } = {}) {
  * @param {{ready:boolean, query:Function}} [deps.searchClient]  the close-match index (search-client.js)
  * @param {() => boolean} [deps.getFuzzy]     LIVE: search.fuzzy
  * @param {number | (() => number)} [deps.fuzzyBelow]  close matches only while the exact list is shorter
+ * @param {() => boolean} [deps.showAllTab]   M8: make the Songs panel's All tab the active one; true
+ *   when that switched tabs (the switch draws the All tab itself, from the field's text)
  */
 export function createLibraryView({
   catalog, settings, getLib, setStatus, youtubeSupported,
   getQueueIds, getRecentIds, getRecentSongs, warmYoutube = () => {}, storage,
   searchClient = null, getFuzzy = () => false, fuzzyBelow = DEFAULT_FUZZY_BELOW,
+  showAllTab = () => false,
 }) {
   const favoritesStore = jsonStore(FAVORITES_KEY, [], storage);
   const youtubeStore = jsonStore(YOUTUBE_KEY, {}, storage);
@@ -498,6 +501,34 @@ export function createLibraryView({
     runSearch(query) {
       renderSearchResults(query, null);
       scheduleYoutubeSearch(query);
+    },
+    /** The search field's text right now (#search), "" without the field. */
+    get query() {
+      const field = $("search");
+      return field ? field.value : "";
+    },
+    /**
+     * M8: put `text` in the search field as if it had been typed there — a stage digit, the
+     * number pad, a guest's live digits — and run the search at once (no debounce: the caller
+     * cancels any pending one). `by` is the guest typing: "📱 <by>" beside the field, hidden for
+     * "" (the host). A number is a song search, so the All tab is made active (from Artists or
+     * Rankings) and Recent / Favorites are left, as typing does. Focus is never moved here.
+     */
+    typeDigits(text, { by = "" } = {}) {
+      const value = String(text ?? "");
+      const field = $("search");
+      if (field) field.value = value;
+      const clear = $("search-clear");
+      if (clear) clear.classList.toggle("show", !!value);
+      const who = $("search-who");
+      const name = String(by ?? "").trim();
+      if (who) {
+        who.textContent = name ? `📱 ${name}` : "";
+        who.hidden = !name;
+      }
+      this.leaveSpecialViews();
+      if (showAllTab()) return;            // the tab switch drew the All tab from the field's text
+      this.runSearch(value);
     },
     scheduleYoutubeSearch,
     cancelYoutubeSearch() { clearTimeout(ytSearchTimer); },

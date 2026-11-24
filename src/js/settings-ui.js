@@ -119,6 +119,9 @@ const SETTINGS_SCHEMA = [
   { id: "set-search-fuzzy", path: "search.fuzzy", type: "check" },
   { id: "set-enter-action", path: "search.enterAction", type: "select" },
   { id: "set-show-source", path: "library.showSource", type: "check" },
+  // song numbers (M8): number keys open the search; a digit-opened panel's idle clear
+  { id: "set-keypad", path: "keypad.enabled", type: "check" },
+  { id: "set-keypad-idle", path: "keypad.idleSec", type: "range", fmt: (v) => `${+v} s` },
   // remote control (phones) — QR on the queue panel (and the stage, per qrOnStage) opens /remote
   { id: "set-remote", path: "remote.enabled", type: "check" },
   { id: "set-qr-stage", path: "remote.qrOnStage", type: "select" },
@@ -127,6 +130,8 @@ const SETTINGS_SCHEMA = [
   { id: "set-remote-push", path: "remote.push", type: "check" },
   { id: "set-guest-playnow", path: "remote.guestPlayNow", type: "check" },
   { id: "set-guest-priority", path: "remote.guestPriority", type: "check" },
+  // M8: a guest's number pad types live into this screen's search
+  { id: "set-live-digits", path: "remote.liveDigits", type: "check" },
 ];
 
 // Synonyms so intuitive words find a control whose visible label doesn't contain
@@ -173,11 +178,14 @@ const SEARCH_KEYWORDS = {
   "set-search-fuzzy": "fuzzy typo spelling misspelled approximate similar search",
   "set-enter-action": "enter key return reserve queue play now search",
   "set-show-source": "songbook source sh platkar tjmedia midi chip number",
+  "set-keypad": "keypad number pad digits song number code dial remote keys 0 9 123",
+  "set-keypad-idle": "keypad number digits idle timeout clear close seconds",
   "set-remote": "phone qr code queue guest party mobile control",
   "set-remote-url": "phone qr url tunnel address host",
   "set-remote-push": "phone instant push realtime latency polling stream sse fast",
   "set-guest-playnow": "phone guest play now stop interrupt singer permission",
   "set-guest-priority": "phone guest play next priority jump front queue permission",
+  "set-live-digits": "phone guest keypad number pad digits live typing mirror nickname",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
   "set-score": "points rating videoke sing grade",

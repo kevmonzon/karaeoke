@@ -160,7 +160,7 @@
       <div id="home-qr" class="home-qr" role="img" aria-label="Scan to control from your phone"></div>
       <div id="home-room" class="home-room"></div>
       <nav id="home-tiles" class="home-tiles" aria-label="Menu"></nav>
-      <div id="home-hints" class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose</div>
+      <div id="home-hints" class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose<span id="home-hint-digits"> · 0–9 song number</span></div>
     </div>
 
     <!-- HUD: the small remote QR chip (remote.qrOnStage = "always") and the offset toast. -->
@@ -630,6 +630,10 @@
           <span>Guests can jump the queue</span>
           <input id="set-guest-priority" type="checkbox" />
         </label>
+        <label class="row toggle">
+          <span>Show guests' number typing on screen</span>
+          <input id="set-live-digits" type="checkbox" />
+        </label>
         <div class="hint sub">Shows a QR on the queue panel (and on the stage: <strong>When idle</strong> = the home screen only, <strong>Always</strong> = also a small corner code during a song); phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. A guest's jump to the front of the queue is refused while fair play is on. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
       </section>
 
@@ -651,7 +655,16 @@
           <span>Show songbook on each row</span>
           <input id="set-show-source" type="checkbox" />
         </label>
+        <label class="row toggle">
+          <span>Number keys open the song search</span>
+          <input id="set-keypad" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Clear an untouched song number after <em id="set-keypad-idle-val">8 s</em></span>
+          <input id="set-keypad-idle" type="range" min="3" max="30" step="1" value="8" />
+        </label>
         <div class="hint sub">Close matches are marked ≈ and listed after the exact ones.</div>
+        <div class="hint sub">A number pressed on the stage opens Songs with it in the search, listing every songbook's song with that number; Enter takes the top one. A number left alone in a panel it opened clears and closes by itself.</div>
         <div class="hint sub">Showing <em id="list-count">0</em> songs</div>
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
         <div id="rebuild-status" class="hint sub"></div>

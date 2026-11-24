@@ -249,6 +249,21 @@ html[data-input="keys"] .key-hints:empty { display: none; }
 .ov-toast.open { opacity: 1; }
 body[data-panel="right"] .ov-toast { left: calc((100vw - var(--panel-pad)) / 2); }
 
-/* ---- Not before M8 --------------------------------------------------------------
-   #btn-numpad, #numpad and #search-who carry `hidden` until M8 fills them; the global
-   [hidden] rule in stage.css keeps them out even though .pill-btn.icon sets a display. */
+/* ---- Guest digits (M8) ----------------------------------------------------------------
+   #search-who names the guest whose phone is typing into the Songs field ("📱 Kai"). It shows
+   only while a guest owns the field; the global [hidden] rule keeps it (and #btn-numpad while
+   keypad.enabled is off) out. The pressed 123 button is .pill-btn.active (style.css); the pad
+   itself is sheet.css's numpad block. */
+.search-who {
+  flex: none; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: var(--s-1) var(--s-2); border-radius: calc(20 / 16 * var(--u));
+  background: var(--chip-on-bg); color: var(--chip-on-ink);
+  font-size: calc(12 / 16 * var(--u)); font-weight: 700;
+}
+/* "123" is three characters: the round single-glyph .pill-btn.icon crams it edge to edge, so this
+   one is a pill (same height) with a smaller bold label. */
+#btn-numpad {
+  width: auto; padding: 0 calc(10 / 16 * var(--u));
+  font-size: calc(12 / 16 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums;
+}

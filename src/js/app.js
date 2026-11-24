@@ -59,6 +59,7 @@ import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
+import { applyPadKey, digitsOnly, createNumpad } from "./ui/numpad.js";
 
 const $ = (id) => document.getElementById(id);
 // What an empty song list should SAY. A bare white panel is indistinguishable from a broken
@@ -88,6 +89,13 @@ const libraryView = createLibraryView({
   searchClient,
   getFuzzy: () => settings.get("search.fuzzy"),
   fuzzyBelow: () => settings.get("search.fuzzyBelow"),
+  // M8: a number typed by a digit key, the pad or a guest is a song search — the All tab. The
+  // switch (onBrowseTab) draws that tab from the field's text, so typeDigits does not draw again.
+  showAllTab: () => {
+    if (browseTab() === "all") return false;
+    showBrowseTab("all");
+    return true;
+  },
 });
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
@@ -229,6 +237,7 @@ async function boot() {
   applyTheme();          // color theme: dark / light / auto (follows the OS)
   applyOverscan();       // TV overscan inset → --overscan
   applyKeyHints();
+  applyKeypad();         // the "123" button + the home hint follow keypad.enabled
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
 
@@ -298,6 +307,7 @@ function buildShell() {
       return $("search");
     },
     onOpen: remeasure,
+    onClose: () => { digitOpened = false; },   // M8: only an open panel can be "opened by a digit"
   });
   reg("queue", {
     el: $("ov-queue"),
@@ -538,9 +548,10 @@ function buildKeys() {
     showBar: () => shell.poke(),
   });
   // A handler returns false for "not handled" (the key goes through); anything else = handled.
-  // `digit` (M8) and `bgNext` (M11) have no handler yet, so their keys are never swallowed.
+  // `bgNext` (M11) has no handler yet, so its key is never swallowed.
   actions = createActions({
     back: () => goBack(),
+    digit: (d) => digitKey(d),                       // M8: a digit opens Songs with it in the search
     playPause: (arg) => playPauseKey(arg),
     next: () => nextKey(),
     restart: () => { if (!restartSong()) return false; showAdjust("Restart"); return true; },
@@ -574,6 +585,7 @@ function buildKeys() {
   });
   document.addEventListener("keydown", routeKey);
   wireTypeToSearch();
+  wireDigits();
   wireMediaSession();
 }
 
@@ -738,6 +750,228 @@ function wireTypeToSearch() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Song numbers (M8, plan §4.3 "Digits", §5.3, §5.12). The search field IS the number entry —
+// no buffer, no resolver, no sheet of its own: a digit on the stage opens Songs with it in the
+// field, the "123" pad types into the field, a guest's live digits type into it from a phone, and
+// M2's number tier lists every songbook's match. Enter / the pad's ⏎ take the top hit (takeTopHit).
+// ---------------------------------------------------------------------------
+// The Songs panel was opened by a digit (local or a guest's): only such a panel idle-closes, and
+// only while it holds nothing but digits. A word typed, or the user moving onto a row, clears it.
+let digitOpened = false;
+let lastSearchInput = 0;    // ms of the last key / pointer inside #ov-search, or a guest's digit
+// Whose text the field holds: null = the host's (or nobody's); a string = the nickname of the
+// guest whose live digits these are ("" for a guest without one). A local key or pointer in the
+// panel takes the field over; a different guest's digit starts from an empty field.
+let digitGuest = null;
+let numpad = null;          // ui/numpad.js on #numpad, created on the first press of #btn-numpad
+let focusedLast = null;     // the last element that took focus anywhere (see wireDigits)
+
+const keypadOn = () => !!settings.get("keypad.enabled");
+const digitChar = (d) => (/^[0-9]$/.test(String(d)) ? String(d) : null);
+const isRow = (el) => !!(el && el.closest && el.closest(".song"));
+
+/** Put `text` in the search field and run the search now. `by` = the guest typing ("" = host). */
+function typeIntoSearch(text, by = "") {
+  cancelSearchDebounce();   // a keystroke's pending render must not draw the older text over this
+  libraryView.typeDigits(text, { by });
+}
+
+/** The host takes the field over: a guest's nickname goes, their next digit starts afresh. */
+function takeOverDigits() {
+  if (digitGuest === null) return;
+  digitGuest = null;
+  const who = $("search-who");
+  if (who) { who.hidden = true; who.textContent = ""; }
+}
+
+function focusSearchField() {
+  const f = $("search");
+  if (!f) return;
+  f.focus({ preventScroll: true });
+  const n = f.value.length;
+  try { f.setSelectionRange(n, n); } catch { /* not a text type */ }
+}
+
+/**
+ * The key router's `digit`: a digit on the stage, or in the Songs panel away from its field
+ * (in the field it is typing; on a row type-to-search takes it). Closed → open Songs (a user
+ * activation: its history entry, its initial focus) with the digit in the field and the caret
+ * after it, marked digit-opened. Open → focus the field and append. False lets the key through:
+ * number keys off, or the song sheet / a dialog on top (its buttons, not the field beneath).
+ */
+function digitKey(d) {
+  if (!keypadOn() || sheetOrDialogOnTop()) return false;
+  const ch = digitChar(d);
+  if (ch === null || !$("search")) return false;
+  lastSearchInput = Date.now();
+  takeOverDigits();
+  if (!overlays.isOpen("search")) {
+    overlays.open("search");
+    if (!overlays.isOpen("search")) return false;
+    typeIntoSearch(ch);
+    focusSearchField();
+    // Marked AFTER the open and the render: the panel's initial focus (keys: a row) is not the
+    // user moving onto a row.
+    digitOpened = true;
+    return true;
+  }
+  typeIntoSearch(libraryView.query + ch);
+  focusSearchField();
+  return true;
+}
+
+/**
+ * A guest's live digit (remote-glue, after its remote.liveDigits gate). Closed → open Songs with
+ * NO user activation: no history entry and no focus move (§4.2 rule 4); the host's Back still
+ * closes it. The guest's nickname shows beside the field.
+ */
+function remoteDigit(d, by) {
+  if (!keypadOn()) return;
+  const ch = digitChar(d);
+  if (ch === null) return;
+  const who = String(by ?? "");
+  let opened = false;
+  if (!overlays.isOpen("search")) {
+    overlays.open("search", { activated: false });
+    if (!overlays.isOpen("search")) return;
+    opened = true;
+  }
+  const base = digitGuest === who ? libraryView.query : "";   // someone else's text is not theirs to extend
+  digitGuest = who;
+  lastSearchInput = Date.now();
+  typeIntoSearch(base + ch, who);
+  if (opened) digitOpened = true;   // after the render (a panel swap may have put focus on a row)
+}
+
+/** A guest's ⌫ ("del") or clear ("clear"): only the guest whose text the field holds edits it,
+ *  in place (an edit never opens the panel). */
+function remoteDigitEdit(by, op) {
+  if (!keypadOn()) return;
+  const who = String(by ?? "");
+  if (digitGuest !== who) return;
+  lastSearchInput = Date.now();
+  typeIntoSearch(op === "clear" ? "" : applyPadKey(libraryView.query, "del").value, who);
+}
+
+/**
+ * A guest's ⏎: the top hit of THEIR number, in their name — a reservation, or played at once only
+ * when the host allows guest Play now (`playIfIdle`, remote-glue's call) and the stage is idle.
+ * remote-glue has applied the per-guest cap. Nothing when the field is not this guest's (the host
+ * took it over, another guest is typing, an idle clear emptied it): their top hit is not on screen.
+ * True when a song was taken (remote-glue ignores the result today).
+ */
+function remoteDigitCommit(by, { playIfIdle = false } = {}) {
+  if (!keypadOn()) return false;
+  const who = String(by ?? "");
+  if (digitGuest !== who || !libraryView.query.trim()) return false;
+  flushSearch();
+  const song = libraryView.topHit();
+  if (!song) return false;
+  if (playIfIdle && !current && !loadingSong) playNow(song, who);
+  else {
+    setStatus(`Reserved for ${who || "a guest"}: ${songTitle(song)}`);   // before: an idle stage starts it, and its line wins
+    enqueue(song, who);
+  }
+  takeOverDigits();                 // the field is nobody's now; the nickname goes
+  clearSearch({ focus: false });    // the host's focus stays where it is
+  if (digitOpened) closeOverlay("search");
+  return true;
+}
+
+/** The 1 s idle check (§4.3 "Digits" 2): a digit-opened panel holding only digits (or emptied
+ *  back to nothing) with no key, tap or guest digit in it for keypad.idleSec clears and closes. */
+function checkDigitIdle() {
+  if (!digitOpened) return;
+  if (!overlays.isOpen("search")) { digitOpened = false; return; }
+  if (stack.top() !== "search") return;          // the song sheet / a dialog is up: not idle
+  const q = libraryView.query;
+  if (q.trim() && !digitsOnly(q)) { digitOpened = false; return; }
+  const sec = Number(settings.get("keypad.idleSec"));
+  const idleMs = (Number.isFinite(sec) ? Math.min(30, Math.max(3, sec)) : 8) * 1000;
+  if (Date.now() - lastSearchInput < idleMs) return;
+  digitOpened = false;
+  takeOverDigits();
+  if (q) clearSearch({ focus: false });
+  closeOverlay("search");
+}
+
+/** #btn-numpad: show / hide the pad docked under the list (its open state lives for the page). */
+function toggleNumpad() {
+  const el = $("numpad");
+  if (!el) return;
+  if (!numpad) {
+    numpad = createNumpad({ el, onKey: onPadKey });
+    numpad.render();
+  }
+  if (numpad.visible) numpad.hide(); else numpad.show();
+  syncNumpadButton();
+  requestAnimationFrame(() => lib.refresh());    // the list's viewport just grew or shrank
+}
+function syncNumpadButton() {
+  const btn = $("btn-numpad");
+  if (!btn) return;
+  const on = !!numpad && numpad.visible;
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.classList.toggle("active", on);
+}
+
+/** A pad key: digits and ⌫ edit the field (focus stays on the pad key pressed); ⏎ = Enter. */
+function onPadKey(key) {
+  const field = $("search");
+  if (!field) return;
+  lastSearchInput = Date.now();
+  takeOverDigits();
+  const { value, enter } = applyPadKey(field.value, key);
+  if (enter) { takeTopHit(); return; }
+  if (value !== field.value) typeIntoSearch(value);
+}
+
+/** keypad.enabled: the "123" button and the home hint; off also ends any digit entry. */
+function applyKeypad() {
+  const on = keypadOn();
+  const btn = $("btn-numpad");
+  if (btn) btn.hidden = !on;
+  const hint = $("home-hint-digits");
+  if (hint) hint.hidden = !on;
+  if (on) return;
+  if (numpad && numpad.visible) {
+    numpad.hide();
+    syncNumpadButton();
+    if (lib) requestAnimationFrame(() => lib.refresh());
+  }
+  digitOpened = false;
+  takeOverDigits();
+}
+
+// Installed with the key router (buildKeys), so digits work while the catalogue loads.
+function wireDigits() {
+  const panel = $("ov-search"), field = $("search");
+  if (!panel || !field) return;
+  // Capture phase: a key a widget prevents (the list's arrows, the field's Enter) still counts.
+  const local = (e) => {
+    lastSearchInput = Date.now();
+    takeOverDigits();                                   // a local key or tap: the field is the host's
+    if (digitOpened && isRow(e.target)) digitOpened = false;   // working the rows: browsing
+  };
+  panel.addEventListener("keydown", local, true);
+  panel.addEventListener("pointerdown", local, true);
+  // Focus moving onto a row (from anything that is not a row) clears the mark. A row the list
+  // re-focuses after a re-render came from a row, so a guest's digits never clear it.
+  document.addEventListener("focusin", (e) => {
+    const t = e.target;
+    if (digitOpened && isRow(t) && panel.contains(t) && !isRow(focusedLast)) digitOpened = false;
+    focusedLast = t;
+  }, true);
+  // A non-digit typed into the field: a word search, never idle-closed.
+  field.addEventListener("input", () => {
+    if (digitOpened && field.value.trim() && !digitsOnly(field.value)) digitOpened = false;
+  });
+  const btn = $("btn-numpad");
+  if (btn) btn.addEventListener("click", toggleNumpad);
+  setInterval(checkDigitIdle, 1000);
+}
+
 // Hardware media keys when the page is not focused (lock screen, another window): the same
 // actions as the keys. Every piece is optional and guarded — headless browsers lack some.
 function wireMediaSession() {
@@ -885,6 +1119,11 @@ function onSettingChanged(path) {
   if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*" || path === "ui.overscanPct") applyOverscan();
   if (path === "*" || path === "ui.keyHints") applyKeyHints();
+  if (path === "*" || path.startsWith("keypad.")) {
+    applyKeypad();
+    // keypad.enabled is mirrored to the phones (their pad hides; live digits stop): tell them now.
+    if (path === "keypad.enabled" && remoteHost && remoteHost.running) remoteHost.push();
+  }
   if (path === "*") settingsUI.syncSettingsUI();
 }
 
@@ -1258,6 +1497,12 @@ const remoteGlue = createRemoteGlue({
     },
     restart: () => restartSong(),
     bgNext: () => {},                                 // the background picker arrives in M11
+    // M8: a guest's live digits drive this screen's search (remote-glue applied remote.liveDigits
+    // and, for the commit, queue.maxPerGuest; playIfIdle = the host allows guest Play now).
+    digit: (d, by) => remoteDigit(d, by),
+    digitDelete: (by) => remoteDigitEdit(by, "del"),
+    digitClear: (by) => remoteDigitEdit(by, "clear"),
+    digitCommit: (by, opts) => remoteDigitCommit(by, opts),
   },
 });
 
@@ -2005,6 +2250,58 @@ function flushSearch() {
 }
 function cancelSearchDebounce() { clearTimeout(searchDeb); searchDeb = null; }
 
+/**
+ * Empty the search field and show what an empty field shows: the whole library on All (leaving
+ * Recent / Favorites), every artist on Artists; on Rankings only the field clears. `focus` puts
+ * the caret back in the field (the ✕ button, Enter); a guest's ⏎ or an idle clear must not move
+ * the host's focus.
+ */
+function clearSearch({ focus = true } = {}) {
+  const search = $("search");
+  search.value = "";
+  $("search-clear").classList.remove("show");
+  cancelSearchDebounce();              // a keystroke's pending render must not redraw the old text
+  libraryView.cancelYoutubeSearch();
+  const tab = browseTab();
+  if (tab === "artists") libraryView.showArtists("");
+  else if (tab === "all") {
+    libraryView.leaveSpecialViews();
+    libraryView.renderAll();
+  }                                    // Rankings: the list is hidden; only the field clears
+  if (focus) search.focus();
+}
+
+/**
+ * Take the top hit — Enter in the search field AND the number pad's ⏎ (M8): one function, so the
+ * two can never drift (M2, §5.33). A key typed inside the 120 ms debounce has not rendered yet,
+ * so it flushes first: the top hit belongs to the text as typed. Rankings has no list (the text
+ * is a song search, on All). The artist list: open the top artist (the field keeps its text, so
+ * "← Artists" comes back to the same filtered list; the panel stays). Else the list's first song
+ * by search.enterAction ("auto" reserves while a song plays or loads, plays when idle), then the
+ * field clears and the panel closes. False when there was nothing to take.
+ */
+function takeTopHit() {
+  flushSearch();
+  if (browseTab() === "rankings") showBrowseTab("all");
+  if (browseTab() === "artists" && libraryView.view === "artists") {
+    const a = libraryView.topArtist();
+    if (!a) return false;
+    openArtist(a.key);
+    return true;
+  }
+  const song = libraryView.topHit();
+  if (!song) return false;
+  if (enterDecision(settings.get("search.enterAction"), !!(current || loadingSong)) === "reserve") {
+    enqueue(song);
+    setStatus(`Reserved: ${song.name || song.code || "a song"}`);
+  } else {
+    playNow(song);
+  }
+  if ($("search").value) clearSearch();   // clear the field and show the whole library again
+  closeOverlay("search");                 // a song was taken from the panel: it has done its job
+  return true;
+}
+
 function wireUI() {
   const search = $("search");
   const clearBtn = $("search-clear");
@@ -2028,19 +2325,7 @@ function wireUI() {
     debounceSearch(() => libraryView.renderSearchResults(q, null)); // instant local (drops any YouTube rows)
     libraryView.scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
-  clearBtn.onclick = () => {
-    search.value = "";
-    toggleClear();
-    cancelSearchDebounce();              // a keystroke's pending render must not redraw the old text
-    libraryView.cancelYoutubeSearch();
-    const tab = browseTab();
-    if (tab === "artists") libraryView.showArtists("");
-    else if (tab === "all") {
-      libraryView.leaveSpecialViews();
-      libraryView.renderAll();
-    }                                    // Rankings: the list is hidden; only the field clears
-    search.focus();
-  };
+  clearBtn.onclick = () => clearSearch();
   // Recent and Favorites are views of the All tab: from another tab they switch to it, and
   // onBrowseTab("all") draws them (showAll).
   $("btn-recent").onclick = () => {
@@ -2080,32 +2365,10 @@ function wireUI() {
   search.onkeydown = (e) => {
     if (e.isComposing) return;
     if (e.key === "Enter") {
-      flushSearch();
-      // Rankings has no list: the text is a song search, on the All tab (drawn by onBrowseTab).
-      if (browseTab() === "rankings") showBrowseTab("all");
-      // The artist list: Enter opens the top artist; the field keeps its text (so "← Artists"
-      // comes back to the same filtered list) and the panel stays open.
-      if (browseTab() === "artists" && libraryView.view === "artists") {
-        const a = libraryView.topArtist();
-        if (!a) return;
-        e.preventDefault();
-        openArtist(a.key);
-        return;
-      }
-      const song = libraryView.topHit();
-      if (!song) return;
-      // Prevented: the panel is about to close and hand focus back to its opener, and an
-      // unprevented Enter would go on to activate that button too.
-      e.preventDefault();
-      // search.enterAction — "auto" reserves while a song is playing or loading, plays when idle.
-      if (enterDecision(settings.get("search.enterAction"), !!(current || loadingSong)) === "reserve") {
-        enqueue(song);
-        setStatus(`Reserved: ${song.name || song.code || "a song"}`);
-      } else {
-        playNow(song);
-      }
-      if (search.value) clearBtn.onclick();   // clear the field and show the whole library again
-      closeOverlay("search");                 // a song was taken from the panel: it has done its job
+      // Prevented when it took something: the panel is about to close and hand focus back to
+      // its opener, and an unprevented Enter would go on to activate that button too. Nothing
+      // to take → the key goes on, as before.
+      if (takeTopHit()) e.preventDefault();
     } else if (search.value && keyToAction(e, { typing: true })?.action === "back") {
       // Back step 1 (Escape, BrowserBack, a TV remote's Back): a field with text clears first;
       // the next Back closes the panel.

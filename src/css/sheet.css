@@ -123,3 +123,47 @@
   .sheet-actions button:active { transform: scale(.98); }
   html[data-input="keys"] .sheet-actions button:focus-visible { transform: scale(1.04); }
 }
+
+/* ---- numpad ---------------------------------------------------------------------------
+   The Songs panel's on-screen number pad (#numpad.numpad, M8; ui/numpad.js renders twelve
+   <button data-key> into it): 1 2 3 / 4 5 6 / 7 8 9 / ⌫ 0 ⏎, docked under the list
+   (overlays.css keeps it flex: none). Every key is at least --hit tall; the pad stops growing at
+   about 22 units wide and centres in a wide panel (padding, not a breakpoint). ⏎ is the brand
+   fill (it takes the top hit, like Enter in the field); ⌫ is quiet. `hidden` wins through the
+   global [hidden] rule in stage.css. Tokens only, so both themes follow. */
+#numpad {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s-2);
+  padding: var(--gap) max(var(--pad), calc((100% - 22 * var(--u)) / 2));
+  border-top: 1px solid var(--border-soft);
+}
+#numpad button {
+  display: flex; align-items: center; justify-content: center;
+  min-width: 0; min-height: var(--hit); margin: 0;
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: var(--t-h2); font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer; touch-action: manipulation;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+              filter var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+#numpad button[data-key="del"] {
+  background: transparent; border-color: var(--border-soft); color: var(--text-muted);
+}
+#numpad button[data-key="enter"] {
+  background: var(--brand); border-color: transparent; color: var(--brand-ink);
+}
+
+@media (hover: hover) {
+  #numpad button:hover { border-color: var(--brand-2); }
+  #numpad button[data-key="del"]:hover { background: var(--surface-1); color: var(--text); }
+  #numpad button[data-key="enter"]:hover { border-color: transparent; filter: brightness(1.08); }
+}
+
+/* Press feedback and the D-pad grow the sheet's buttons get (M4). Neither under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  #numpad button:active { transform: scale(.96); }
+  html[data-input="keys"] #numpad button:focus-visible { transform: scale(1.04); }
+}
