@@ -129,18 +129,19 @@ body.video-mode .queue-bar, body.youtube-mode .queue-bar {
 
 /* 3 — home: the idle stage (P4). Brand, "Select a song" and the room QR (the tiles were removed —
    Rae, 2026-11-24). It fades in when body[data-idle="true"]; the bottom keeps the footer's
-   height (--foot-h) clear. Landscape: the prompt left, the QR right. */
+   height (--foot-h) clear. Landscape: the prompt left, the QR right — the prompt spans the QR and
+   room-code rows and sits at their vertical centre (Rae, 2026-11-25: "select a song, look off
+   center vertically"; it used to hang from the QR's top edge). */
 .home {
   position: absolute; inset: 0; z-index: 3;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr) auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto minmax(0, 1fr) auto;
   grid-template-areas:
     "brand  brand"
     ".      ."
     "prompt qr"
-    ".      qr"
-    ".      room"
+    "prompt room"
     ".      ."
     "hints  hints";
   align-items: start;
@@ -157,7 +158,13 @@ body[data-idle="true"] .home {
 }
 .home-brand { grid-area: brand; font-weight: 800; letter-spacing: .3px; font-size: var(--t-h2); }
 .home-brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
-.home-prompt { grid-area: prompt; font-size: var(--t-h1); font-weight: 800; letter-spacing: -.01em; line-height: 1.15; }
+/* ×2 (Rae, 2026-11-25: "increase the size by x2"), capped by the screen width so "Select a song"
+   stays one line on a narrow phone. */
+.home-prompt {
+  grid-area: prompt; align-self: center;
+  font-size: min(calc(2 * var(--t-h1)), 11vw); font-weight: 800; letter-spacing: -.01em; line-height: 1.15;
+  text-wrap: balance;
+}
 /* The room QR + code: only while the phone remote is on, and not when ⚙ says "never"
    (body[data-qr] mirrors remote.qrOnStage). An empty box (no QR library) stays hidden. */
 .home-qr {
@@ -388,6 +395,7 @@ body[data-panel="right"] .ytplayer { width: calc(100% - var(--panel-pad)); }
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto auto auto minmax(0, 1fr) auto;
     grid-template-areas: "brand" "." "prompt" "qr" "room" "." "hints";
+    /* a column: the prompt is one row of the centred stack, not spanning the QR */
   }
   .home-prompt { text-align: center; }
   .home-qr { margin-inline-start: 0; margin-top: var(--pad); width: min(calc(10 * var(--u)), 26vh); }
