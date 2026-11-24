@@ -1,1 +1,125 @@
-/* sheet.css — filled in M5 (the song-actions sheet). Empty until then. */
+/* ============================================================================
+ * sheet.css — the INSIDE of the song-actions sheet (#ov-song, M5).
+ *
+ * overlays.css owns the container (.ov-sheet): docked right at full height in landscape,
+ * a bottom sheet in portrait, its motion, and the focus ring every button gets. This file
+ * styles only what song-sheet.js renders into it:
+ *
+ *   .sheet-head      kind chip · number (.sheet-code, the songbook .src-chip under it) ·
+ *                    .sheet-meta (.sheet-title, .sheet-artist) — the song row's order and type
+ *   .sheet-actions   one full-width <button data-act> per action, one per line
+ *
+ * The first action is the primary (brand fill); "Remove" reads as destructive (red border +
+ * tint, the label stays full --text like the confirm dialog's .danger); "Cancel" is quiet.
+ * Sizes are multiples of --u; every button is at least --hit tall. Colours are tokens only.
+ * ========================================================================== */
+
+/* ---- Header -------------------------------------------------------------------------- */
+.sheet-head {
+  flex: none;
+  display: flex; align-items: center; gap: calc(12 / 16 * var(--u));
+  min-width: 0;
+  padding: var(--pad) var(--pad) var(--gap);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* The kind icon: the same tinted chip the song rows put behind the glyph (style.css), a size up. */
+.sheet-head .kind {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(36 / 16 * var(--u)); height: calc(36 / 16 * var(--u));
+  border-radius: var(--r-pill);
+  font-size: calc(20 / 16 * var(--u)); line-height: 1;
+  background: color-mix(in srgb, var(--text-muted) 14%, transparent);
+}
+.sheet-head .kind.kar { background: color-mix(in srgb, var(--brand-2) 20%, transparent); }
+.sheet-head .kind.vid { background: color-mix(in srgb, var(--brand) 20%, transparent); }
+.sheet-head .kind.aud { background: color-mix(in srgb, var(--gold) 22%, transparent); }
+.sheet-head .kind.yt  { background: color-mix(in srgb, var(--bad) 18%, transparent); }
+
+/* Number column: the dial number in tabular figures with the songbook chip under it. */
+.sheet-num {
+  flex: none;
+  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
+  gap: calc(3 / 16 * var(--u));
+  line-height: 1.2;
+}
+.sheet-code {
+  color: var(--text-muted); font-size: var(--t-body); font-weight: 600;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+/* The songbook chip — the look of a row's .src-chip (style.css scopes that one to .song). */
+.sheet-head .src-chip {
+  color: var(--text-muted); font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em;
+  white-space: nowrap; line-height: 1.4;
+  padding: 0 var(--s-1); border: 1px solid var(--border); border-radius: var(--r-pill);
+}
+
+/* Title and artist: they wrap (a long title is the one thing worth reading here), up to three
+   and two lines, then ellipsize; an unbroken string breaks anywhere rather than overflow. */
+.sheet-meta {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column; gap: calc(2 / 16 * var(--u));
+}
+.sheet-title, .sheet-artist {
+  margin: 0; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+}
+.sheet-title {
+  color: var(--text); font-size: var(--t-h3); font-weight: 700; line-height: 1.25;
+  -webkit-line-clamp: 3; line-clamp: 3;
+}
+.sheet-artist {
+  color: var(--text-muted); font-size: var(--t-body); line-height: 1.3;
+  -webkit-line-clamp: 2; line-clamp: 2;
+}
+
+/* ---- Actions ------------------------------------------------------------------------- */
+.sheet-actions {
+  flex: none;
+  display: flex; flex-direction: column; gap: calc(10 / 16 * var(--u));
+  padding: var(--pad);
+}
+.sheet-actions button {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; min-width: 0; min-height: var(--hit); margin: 0;
+  padding: calc(8 / 16 * var(--u)) var(--pad);
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; font-size: var(--t-body); font-weight: 600; line-height: 1.2;
+  text-align: center; overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+              filter var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+/* Primary: the first action (Reserve in a song row's sheet, Play now in a queue row's). Not
+   when Cancel is the only one left. */
+.sheet-actions button:first-child:not([data-act="cancel"]) {
+  background: var(--brand); color: var(--brand-ink); border-color: transparent; font-weight: 700;
+}
+/* Destructive: red border + tint; the words carry the meaning (red text on this ground is thin). */
+.sheet-actions button[data-act="remove"] {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+}
+/* Quiet: no fill, a soft edge, set a little apart from the rest. */
+.sheet-actions button[data-act="cancel"] {
+  background: transparent; border-color: var(--border-soft);
+  margin-top: calc(4 / 16 * var(--u));
+}
+
+@media (hover: hover) {
+  .sheet-actions button:hover { border-color: var(--brand-2); }
+  .sheet-actions button:first-child:not([data-act="cancel"]):hover { border-color: transparent; filter: brightness(1.08); }
+  .sheet-actions button[data-act="remove"]:hover {
+    border-color: var(--bad); background: color-mix(in srgb, var(--bad) 28%, transparent);
+  }
+  .sheet-actions button[data-act="cancel"]:hover { background: var(--surface-1); }
+}
+
+/* Press feedback, and the D-pad grow overlays.css gives other overlay buttons (the side padding
+   leaves room for the grown button and its ring). Neither under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .sheet-actions button:active { transform: scale(.98); }
+  html[data-input="keys"] .sheet-actions button:focus-visible { transform: scale(1.04); }
+}
