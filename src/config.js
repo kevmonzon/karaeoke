@@ -67,6 +67,28 @@ export const DEFAULT_CONFIG = {
     volume: 0.9, // 0–1
     tempo: 1.0, // playback rate, 0.5–1.5
     key: 0, // semitone transpose, -12..+12
+
+    // M10 (plan §5.18): the Key control leaves a MIDI song's drum channel alone, so a key change
+    // no longer swaps the kit's instruments. true = transpose the drums too (the old behaviour).
+    transposeDrums: false,
+
+    // The MIDI songs' own reverb and chorus, 0–4: 0 off · 1 low · 2 normal (as authored, the
+    // pre-M10 sound) · 3 high · 4 max. Synth only (audio / video songs carry their own effects).
+    reverb: 2,
+    chorus: 2,
+
+    // The music's 10-band EQ (31 Hz … 16 kHz), for MIDI, audio and video songs (not YouTube, which
+    // can't be processed; never the microphone). preset: "flat" (the EQ is bypassed — the pre-M10
+    // path) | "warm" | "bright" | "vocal" | "bass" | "small" (small speakers) | "tv" (TV speakers) |
+    // "custom" (uses `gains`). gains = ten dB values, −12…+12, used only by "custom".
+    eq: { preset: "flat", gains: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+
+    // Even out song loudness (plan §5.20): each song's music level is learned while it plays and
+    // stored per song (karaeoke.loudness.v1); its next play starts at the gain that brings it to
+    // `targetDb` (−9…+6 dB). On a first play the gain eases toward the target as the song goes.
+    // targetDb = the music's mean level, in dB of mean-square, −30…−12. −24 is where a typical
+    // song already sits, so evening out leaves the typical song's volume where it was.
+    loudness: { enabled: true, targetDb: -24 },
   },
 
   // Key detection + display.

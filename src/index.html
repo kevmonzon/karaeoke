@@ -452,9 +452,59 @@
       <details class="set-cat" data-cat="music">
         <summary>🎵 Music</summary>
       <section>
-        <h4>MIDI mode</h4>
+        <h4>Sound</h4>
+        <label class="row">
+          <span>Reverb <em id="set-music-reverb-val">Normal</em></span>
+          <input id="set-music-reverb" type="range" min="0" max="4" step="1" value="2" />
+        </label>
+        <label class="row">
+          <span>Chorus <em id="set-music-chorus-val">Normal</em></span>
+          <input id="set-music-chorus" type="range" min="0" max="4" step="1" value="2" />
+        </label>
+        <div class="hint sub">The MIDI songs' own reverb and chorus. <strong>Normal</strong> plays them as written.</div>
+        <label class="row">
+          <span>Equalizer</span>
+          <select id="set-eq-preset">
+            <option value="flat">Flat</option>
+            <option value="warm">Warm</option>
+            <option value="bright">Bright</option>
+            <option value="vocal">Vocal</option>
+            <option value="bass">Bass boost</option>
+            <option value="small">Small speakers</option>
+            <option value="tv">TV speakers</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <div id="set-eq-custom" class="eq-custom" hidden>
+          <label class="row"><span>31 Hz <em id="set-eq-0-val">0 dB</em></span><input id="set-eq-0" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>62 Hz <em id="set-eq-1-val">0 dB</em></span><input id="set-eq-1" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>125 Hz <em id="set-eq-2-val">0 dB</em></span><input id="set-eq-2" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>250 Hz <em id="set-eq-3-val">0 dB</em></span><input id="set-eq-3" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>500 Hz <em id="set-eq-4-val">0 dB</em></span><input id="set-eq-4" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>1 kHz <em id="set-eq-5-val">0 dB</em></span><input id="set-eq-5" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>2 kHz <em id="set-eq-6-val">0 dB</em></span><input id="set-eq-6" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>4 kHz <em id="set-eq-7-val">0 dB</em></span><input id="set-eq-7" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>8 kHz <em id="set-eq-8-val">0 dB</em></span><input id="set-eq-8" type="range" min="-12" max="12" step="1" value="0" /></label>
+          <label class="row"><span>16 kHz <em id="set-eq-9-val">0 dB</em></span><input id="set-eq-9" type="range" min="-12" max="12" step="1" value="0" /></label>
+        </div>
+        <div class="hint sub">Shapes the music of MIDI, audio and video songs to the room and the speakers (not YouTube, and never the microphone). <strong>Custom</strong> shows ten bands.</div>
+        <label class="row toggle">
+          <span>Even out song loudness</span>
+          <input id="set-loudness" type="checkbox" />
+        </label>
+        <label class="row">
+          <span>Loudness target <em id="set-loudness-target-val">-24 dB</em></span>
+          <input id="set-loudness-target" type="range" min="-30" max="-12" step="1" value="-24" />
+        </label>
+        <div class="hint sub">Each song's level is learned while it plays; the next time, it starts at the target, so a quiet song and a loud one sound alike. On a first play the level eases in as the song goes. Not YouTube.</div>
+      </section>
+
+      <section>
+        <h4>MIDI</h4>
         <label class="row toggle"><span>Channel mixer</span><input id="set-midimode" type="checkbox" /></label>
         <div class="hint sub">Adds a Mixer button to the playback controls: volume, mute/solo and live levels per channel for the current MIDI song. MIDI songs only.</div>
+        <label class="row toggle"><span>Transpose drums with the key <em class="muted">(old behaviour)</em></span><input id="set-transpose-drums" type="checkbox" /></label>
+        <div class="hint sub">Off: a Key change leaves the drum kit alone. On: the drums move with the key too, as before.</div>
       </section>
 
       <section>

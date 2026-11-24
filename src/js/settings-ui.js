@@ -21,6 +21,12 @@ import { calibrateUnavailable } from "./ui/calibrate-ui.js";
 const $ = (id) => document.getElementById(id);
 const pct = (v) => `${Math.round(v * 100)}%`;
 const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0)} MB`;
+// M10: the music reverb / chorus level (0–4) by name, and an EQ band's gain. A stored value off the
+// scale (a hand-edited or imported setting) shows as its number; a missing band shows as 0 dB.
+const FX_LEVEL_NAMES = ["Off", "Low", "Normal", "High", "Max"];
+const fxLevelLabel = (v) => FX_LEVEL_NAMES[v] ?? `${v}`;
+const dbLabel = (v) => { const n = Number(v) || 0; return `${n > 0 ? "+" : ""}${n} dB`; };
+const EQ_BAND_COUNT = 10;   // music-fx.js EQ_BANDS (31 Hz … 16 kHz); the rows are in index.html
 
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
@@ -58,6 +64,17 @@ const SETTINGS_SCHEMA = [
   { id: "set-stage-interlude", path: "lyrics.stage.interlude", type: "check" },
   // midi mode (channel mixer band)
   { id: "set-midimode", path: "midiMode.enabled", type: "check" },
+  // M10 music sound (plan §5.18–§5.20): drums and the key, the synth's reverb / chorus, the music
+  // EQ (ten Custom bands, shown only while the preset is Custom) and evening out song loudness
+  { id: "set-transpose-drums", path: "audio.transposeDrums", type: "check" },
+  { id: "set-music-reverb", path: "audio.reverb", type: "range", fmt: fxLevelLabel },
+  { id: "set-music-chorus", path: "audio.chorus", type: "range", fmt: fxLevelLabel },
+  { id: "set-eq-preset", path: "audio.eq.preset", type: "select" },
+  // One row per band, each a nested array path: settings.set("audio.eq.gains.3", v) writes index 3
+  // of the stored array in place (settings.js walks the dot path into arrays as it does objects).
+  ...Array.from({ length: EQ_BAND_COUNT }, (_, i) => ({ id: `set-eq-${i}`, path: `audio.eq.gains.${i}`, type: "range", fmt: dbLabel })),
+  { id: "set-loudness", path: "audio.loudness.enabled", type: "check" },
+  { id: "set-loudness-target", path: "audio.loudness.targetDb", type: "range", fmt: (v) => `${+v} dB` },
   // key detection
   { id: "set-key-auto", path: "key.autoDetect", type: "check" },
   { id: "set-key-badge", path: "key.showBadge", type: "check" },
@@ -164,7 +181,13 @@ const SEARCH_KEYWORDS = {
   "set-stage-outline": "stroke border thickness",
   "set-stage-countdown": "count in countdown 4 3 2 1 go dots intro",
   "set-stage-interlude": "instrumental break interlude gap",
-  "set-midimode": "channel mixer volume mute solo vu levels",
+  "set-midimode": "midi mode channel mixer volume mute solo vu levels",
+  "set-transpose-drums": "drums drum kit percussion transpose key change pitch old behaviour behavior midi",
+  "set-music-reverb": "music reverb hall room echo space ambience effect midi synth",
+  "set-music-chorus": "music chorus thicken width effect midi synth",
+  "set-eq-preset": "eq equalizer equaliser tone bass treble boost warm bright vocal clarity speakers tv small custom bands frequency sound",
+  "set-loudness": "loudness volume normalize normalise even out level quiet loud match songs gain auto",
+  "set-loudness-target": "loudness volume target level normalize normalise db gain",
   "set-key-auto": "transpose signature",
   "set-key-badge": "transpose signature",
   "set-chords": "guitar chord lane strum",
@@ -417,9 +440,19 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     syncSettingsUI();
   }
 
+  // M10: the ten Custom EQ bands show only while the preset is Custom (plan §5.19). They sit in a
+  // plain <div hidden>: a .row's own display:flex would beat the UA's [hidden] rule on the rows.
+  function updateEqCustom() {
+    const wrap = $("set-eq-custom");
+    if (wrap) wrap.hidden = settings.get("audio.eq.preset") !== "custom";
+  }
+
   function wireSettings() {
     autoBind();
     wireSearch();
+    // autoBind's own listener ran first (registered first), so the setting is already stored.
+    const eqPreset = $("set-eq-preset");
+    if (eqPreset) eqPreset.addEventListener("change", updateEqCustom);
 
     // --- action buttons (not settings) ---
     $("rebuild-catalog").onclick = async () => {
@@ -530,6 +563,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
 
   function syncSettingsUI() {
     autoSync();
+    updateEqCustom();
     updateMicBtn();
     updateCalibrateBtn();
     updateCacheStatus();

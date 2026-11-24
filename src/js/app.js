@@ -20,6 +20,8 @@
 
 import { Catalog } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
+import { EQ_BANDS, eqGainsFor } from "./music-fx.js";
+import { createLoudnessMeter, createLoudnessStore, gainForDb, followGainDb } from "./loudness.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
 import { AudioFileEngine } from "./audiofile.js";
@@ -105,6 +107,10 @@ const durations = createDurationHints();
 const recap = createRecap();
 const score = createScorePresentation({ settings });
 const rankings = createRankings();   // the leaderboard (karaeoke.rankings.v1), one row per scored song
+// M10 (plan §5.20): each song's learned music loudness (karaeoke.loudness.v1) and the meter that
+// learns it while the song plays. Driven by the loudness controller below (loudnessBegin / tick).
+const loudStore = createLoudnessStore();
+const loudMeter = createLoudnessMeter();
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer, songSheet;  // UI modules (created at boot)
 let browseUI;                    // the Songs panel's tabs / chips / sort / rankings (created at boot)
@@ -243,6 +249,10 @@ async function boot() {
   applyKeypad();         // the "123" button + the home hint follow keypad.enabled
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
+  // M10: hand the engine the music-bus settings now. It keeps them until its context and synth
+  // exist, so an audio or video song played before any MIDI song (no ensureEngine) gets the EQ.
+  audio.setTransposeDrums(!!settings.get("audio.transposeDrums"));
+  applyMusicFx();
 
   try {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
@@ -1069,7 +1079,20 @@ function stageLyricOptions() {
   return { ...s, smooth: settings.get("lyrics.smooth") };
 }
 
-function applyAudioSettings() {
+// The M10 music-bus settings (plan §5.18–§5.20). They change only from the ⚙ panel, while the
+// transport's volume / tempo / key fire on every step of a drag — so each half re-applies only
+// for its own paths ("*" = a reset or the engine coming up: both).
+const MUSIC_FX_PATH = /^audio\.(transposeDrums|reverb|chorus|eq|loudness)(\.|$)/;
+
+function applyAudioSettings(path = "*") {
+  const all = path === "*";
+  // Drums follow the key only when asked (plan §5.18). The engine STORES the flag and its
+  // applyTranspose passes it on, so loadSong's own re-assert keeps it for the next song. Set
+  // before the transpose below, which then applies with it.
+  if (all || path === "audio.transposeDrums") audio.setTransposeDrums(!!settings.get("audio.transposeDrums"));
+  if (all || /^audio\.(reverb|chorus|eq)(\.|$)/.test(path)) applyMusicFx();
+  if (all || path.startsWith("audio.loudness.")) applyLoudnessSettings();
+  if (!all && MUSIC_FX_PATH.test(path)) return;   // the transport half below is not theirs
   const vol = settings.get("audio.volume");
   const tempo = settings.get("audio.tempo");
   // Volume + tempo apply to whichever engine plays; transpose/key is MIDI-only.
@@ -1085,13 +1108,123 @@ function applyAudioSettings() {
   if (audioFile) { audioFile.setVolume(vol); audioFile.setTempo(tempo); audioFile.setKey(settings.get("audio.key")); }
 }
 
+// The music bus (plan §5.19): the synth's reverb / chorus master levels (0–4, 2 = as authored) and
+// the ten-band EQ, which the engine bypasses while the gains are flat. The engine keeps each
+// value, so a call before the soundfont has loaded still holds once it has — and the EQ needs no
+// synth at all: audio and video songs pass through it too (YouTube cannot; the mic never does).
+function applyMusicFx() {
+  audio.setReverbLevel(settings.get("audio.reverb"));
+  audio.setChorusLevel(settings.get("audio.chorus"));
+  audio.setEq(eqGainsFor(settings.get("audio.eq.preset"), eqCustomGains()));
+}
+
+// The Custom bands as a plain ten-slot array. settings.js replaces a stored array whole (its
+// deep-merge never merges arrays index-wise), so a stored list can only be short or holey if it was
+// hand-edited or imported; eqGainsFor turns any missing / non-number slot into 0 dB.
+function eqCustomGains() {
+  const g = settings.get("audio.eq.gains");
+  return Array.from({ length: EQ_BANDS.length }, (_, i) => (g == null ? 0 : g[i]));
+}
+
+// ---------------------------------------------------------------------------
+// Loudness (M10, plan §5.20) — even out the music's level from song to song.
+//   · Each play* (MIDI / audio / video) calls loudnessBegin(song) once the song owns the stage:
+//     the meter resets; a song with a learned level gets its gain at once (gainForDb); a first
+//     play starts at 0 dB and the follower eases it toward the target as the song goes.
+//   · loudnessLive() marks the music as really started — the title-card hold is not measured.
+//   · tick() feeds the meter at most every LOUD_SAMPLE_MS while the song plays (not paused).
+//   · endOfSong stores the song's level once LOUD_LEARN_SEC of music were measured.
+// The meter reads the bus BEFORE the EQ and the loudness gain, divided by the volume² (audio.js),
+// so neither the EQ, the correction itself nor the Volume control leaks into what is learned.
+// YouTube is skipped (its sound never reaches the bus): gain 0, nothing measured. Off → gain 0,
+// nothing measured or stored. Only the state below is written here — never the playback state.
+// ---------------------------------------------------------------------------
+const LOUD_SAMPLE_MS = 100;   // meter cadence (the follower steps with it)
+const LOUD_MAX_DT_SEC = 0.25; // one sample never stands for more (a throttled frame, a hidden tab)
+const LOUD_LEARN_SEC = 30;    // music measured before a song's level is worth storing
+const loud = {
+  songId: null,    // the song being measured / corrected (null = none, or a YouTube song)
+  storedDb: null,  // its learned level when it began (null = a first play → the follower)
+  gainDb: 0,       // the correction applied now
+  live: false,     // its music has really started (not loading, not behind the title card)
+  lastMs: 0,       // the last meter sample (performance.now; 0 = re-anchor on the next frame)
+};
+const loudnessOn = () => !!settings.get("audio.loudness.enabled");
+const loudnessTarget = () => {
+  const t = Number(settings.get("audio.loudness.targetDb"));
+  return Number.isFinite(t) ? Math.max(-30, Math.min(-12, t)) : -24;
+};
+
+// A new song takes the stage (each play*, after its stale checks): reset and pick the start gain.
+function loudnessBegin(song) {
+  loudMeter.reset();
+  loud.live = false;
+  loud.lastMs = 0;
+  // Which Volume the meter divides out (audio.js, plan R12): an audio / video song's key-shift
+  // chain, else the synth's. (The synth's own volume is only kept current once it is ready.)
+  const kind = song && song.kind;
+  if (kind === "audio") audio.setActiveSource("chain", audioFile);
+  else if (kind === "video") audio.setActiveSource("chain", video);
+  else if (kind !== "youtube") audio.setActiveSource("synth");
+  loud.songId = song && kind !== "youtube" && song.id ? song.id : null;
+  loud.storedDb = loud.songId ? loudStore.get(loud.songId) : null;
+  // gainForDb(null, …) is 0: a first play starts flat and follows.
+  loud.gainDb = loud.songId && loudnessOn() ? gainForDb(loud.storedDb, loudnessTarget()) : 0;
+  audio.setLoudnessGainDb(loud.gainDb);
+}
+
+// The song's music has started (`gen` still current). The gain is re-sent: a video's chain only
+// joins the shared context as it plays, so the engine may just now have its bus.
+function loudnessLive(song) {
+  if (!song || loud.songId !== song.id) return;
+  loud.live = true;
+  loud.lastMs = 0;
+  audio.setLoudnessGainDb(loud.gainDb);
+}
+
+// Off → 0 dB now (and tick stops measuring). On, or a new target: a learned song re-derives its
+// gain; a first play keeps its current gain and the follower heads for the (new) target.
+function applyLoudnessSettings() {
+  let g = 0;
+  if (loud.songId && loudnessOn()) g = loud.storedDb != null ? gainForDb(loud.storedDb, loudnessTarget()) : loud.gainDb;
+  loud.gainDb = g;
+  audio.setLoudnessGainDb(g);
+}
+
+// Called by tick() every frame; it does its work at most every LOUD_SAMPLE_MS.
+function loudnessTick() {
+  if (!loud.live || !loud.songId || !current || current.id !== loud.songId || media.paused || !loudnessOn()) {
+    loud.lastMs = 0;   // a pause or a stretch with nothing to measure is not measured time
+    return;
+  }
+  const now = performance.now();
+  if (!loud.lastMs) { loud.lastMs = now; return; }
+  const elapsed = now - loud.lastMs;
+  if (elapsed < LOUD_SAMPLE_MS) return;
+  loud.lastMs = now;
+  const dt = Math.min(LOUD_MAX_DT_SEC, elapsed / 1000);
+  loudMeter.add(audio.readMusicMeanSquare(), dt);
+  if (loud.storedDb == null) {   // a first play: ease toward the target (held while silent)
+    const g = followGainDb(loud.gainDb, loudMeter.db, loudnessTarget(), dt);
+    if (g !== loud.gainDb) { loud.gainDb = g; audio.setLoudnessGainDb(g, LOUD_SAMPLE_MS); }
+  }
+}
+
+// The song reached its natural end (endOfSong, before clearStage drops `current`).
+function loudnessEnd(song) {
+  if (song && loud.songId === song.id && loudnessOn() && loudMeter.seconds >= LOUD_LEARN_SEC && loudMeter.db != null) {
+    loudStore.set(song.id, loudMeter.db);
+  }
+  loud.live = false;
+}
+
 // The list is showing a search (the All tab, not Recent / Favorites): a setting that changes what
 // a search returns re-runs it then, and only then.
 const showingSearch = () => libraryView.view === "songs" && !libraryView.recentMode && !libraryView.favoritesMode;
 
 function onSettingChanged(path) {
   if (path === "*" || path.startsWith("lyrics.")) applyVisualSettings();
-  if (path === "*" || path.startsWith("audio.")) applyAudioSettings();
+  if (path === "*" || path.startsWith("audio.")) applyAudioSettings(path);   // incl. the M10 music bus
   if (path.startsWith("mic.")) {
     // AEC/NS/AGC are getUserMedia constraints → need a fresh stream
     if (/echoCancellation|noiseSuppression|autoGainControl/.test(path)) mic.reacquire();
@@ -1826,9 +1959,11 @@ async function playVideo(song, gen = playGen) {
   video.load(url);
   setStageKind("video");
   songLoaded(song);            // no await above this line: the play cannot be stale yet
+  loudnessBegin(song);         // M10: this song's loudness gain (learned, or 0 and follow)
   setStatus(`Now playing: ${song.code} — ${song.name}`);
   await video.play();
   if (stalePlay(gen)) return;  // a newer song took over while the picture was loading
+  loudnessLive(song);
   setPlayIcon();
 }
 
@@ -1883,10 +2018,12 @@ async function playAudio(song, gen = playGen) {
   await loadAudioLyrics(song, gen); // fetch + parse the sidecar into the lyric surface
   if (stalePlay(gen)) return;
   songLoaded(song);
+  loudnessBegin(song);         // M10: this song's loudness gain (learned, or 0 and follow)
   showTitleCard(song);
   setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
   await audioFile.play();
   if (stalePlay(gen)) return;
+  loudnessLive(song);
   setPlayIcon();
 }
 
@@ -1958,6 +2095,7 @@ async function playYoutube(song, gen = playGen) {
   youtube.load(song.videoId);
   setStageKind("youtube");
   songLoaded(song);            // no await above this line: the play cannot be stale yet
+  loudnessBegin(song);         // M10: YouTube never reaches the music bus — gain 0, not measured
   setStatus(`Now playing: ${song.name}`);
   await youtube.play();
   if (stalePlay(gen)) return;
@@ -2045,6 +2183,7 @@ async function playMidi(song, gen = playGen) {
   }
   setStageKind("midi");
   songLoaded(song);    // lyrics are in and the sequencer took the file (its length follows in tick)
+  loudnessBegin(song); // M10: this song's loudness gain (learned, or 0 and follow)
 
   pushRecent(song);    // only once the song has actually loaded — a failed load isn't "played"
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
@@ -2057,6 +2196,7 @@ async function playMidi(song, gen = playGen) {
   const startPlayback = async () => {
     if (stalePlay(gen)) return;   // title-card hold outlived by a newer song pick
     await audio.play();
+    if (!stalePlay(gen)) loudnessLive(song);   // M10: measured from here — never the hold
     setPlayIcon();
     setTimeout(applyGuideVocal, 350); // re-apply once the new song's channels are live
   };
@@ -2094,6 +2234,7 @@ function endOfSong() {
   if (res && verdictFeed) res.verdicts = verdictFeed.tally();
   recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
   logRanking(res);                                          // one leaderboard row (M6) — needs current too
+  loudnessEnd(current);                                     // M10: learn its loudness — needs current too
   score.resetLineBonus();
   clearStage();
   if (res) {
@@ -2278,6 +2419,7 @@ function tick() {
       $("time-dur").textContent = fmt(d);
       durations.note(current, d);   // learn this song's length for the phones' queue ETA
     }
+    loudnessTick();   // M10: the loudness meter + first-play follower (at most every 100 ms)
     // End-of-song detection lives in songHasEnded() so the hidden-tab watchdog below can
     // run the SAME predicate. Deliberately outside the `d > 0` block: a MIDI song reports
     // through `ended`, and gating on duration hid that case when duration never arrived.
@@ -2688,6 +2830,7 @@ function clearStage() {
   // audio.play() with `current` already null — the song plays on with no title and no lyrics,
   // and nothing can end it because the rAF loop's `current && media` branch is skipped.
   clearTimeout(playDelayTimer);
+  loud.live = false;           // M10: nothing on the stage → nothing to measure
   document.body.classList.remove("video-mode"); // leave the clean video stage
   document.body.classList.remove("youtube-mode");
   document.body.classList.remove("audio-mode");
