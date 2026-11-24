@@ -60,6 +60,7 @@
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
       <symbol id="i-mixer" viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><path d="M4 15h4M10 8h4M16 13h4"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M6 5.5 15.5 12 6 18.5z" fill="currentColor"/><path d="M18.5 5.5v13"/></symbol>
       <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></symbol>
       <symbol id="i-bg" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17.5 10 12l4 4 2.5-2.5 3 3"/></symbol>
     </defs>
@@ -178,6 +179,9 @@
         <div class="st-line st-song">
           <span id="st-songs" class="st-item st-songs">Loading…</span>
           <span id="st-now" class="st-item st-now" hidden></span>
+          <!-- Next song (Rae, 2026-11-25: "add a next song button in status.status") — the N key's
+               action, shown while a song is loaded. -->
+          <button id="st-next" class="st-btn st-next" title="Next song (N)" aria-label="Next song" hidden><svg class="icon" aria-hidden="true"><use href="#i-next"></use></svg></button>
         </div>
         <div class="st-line st-ctls">
           <span class="st-item st-step"><span class="st-lbl">Vol</span><button id="st-volume-down" class="st-btn" aria-label="Volume down"><svg class="icon" aria-hidden="true"><use href="#i-minus"></use></svg></button><span id="st-volume" class="st-val">90</span><button id="st-volume-up" class="st-btn" aria-label="Volume up"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></span>

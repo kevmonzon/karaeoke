@@ -273,6 +273,8 @@ body[data-bg="on"] .stage-foot, body.video-mode .stage-foot, body.youtube-mode .
   font: inherit; cursor: pointer;
 }
 .st-btn .icon { width: .85em; height: .85em; }
+/* Next song: beside the now-playing title, a little larger than the − + steps. */
+.st-btn.st-next { width: calc(1.6 * var(--u)); height: calc(1.6 * var(--u)); color: var(--text); }
 @media (hover: hover) { .st-btn:hover { border-color: var(--brand-2); color: var(--text); } }
 /* Melody has no meaning without a MIDI melody: dimmed (still settable for the next song). */
 body.video-mode .st-step:has(#st-melody), body.youtube-mode .st-step:has(#st-melody),

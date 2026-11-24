@@ -2996,6 +2996,8 @@ function updateStatusLine() {
     const title = current ? [current.name || "(untitled)", current.artistName].filter(Boolean).join(" — ") : "";
     putText("st-now", current ? `${isPlaying() ? "▶" : "❚❚"} ${title}` : "");
   }
+  const next = $("st-next");
+  if (next && next.hidden !== !current) next.hidden = !current;
   putText("st-volume", String(Math.round(volumeNow() * 100)));
   putText("st-key", statusKeyText());
   putText("st-tempo", `${(Number(settings.get("audio.tempo")) || 1).toFixed(2)}×`);
@@ -3018,6 +3020,7 @@ function wireFooter() {
   on("st-melody-up", () => stepMelodyBy(1));
   on("st-offset-down", () => nudgeOffset(-10));
   on("st-offset-up", () => nudgeOffset(10));
+  on("st-next", () => nextKey());   // the N key's action: skip, toast "Next: …" (Rae, 2026-11-25)
   // The seek bar: press or drag anywhere along the bottom edge.
   const track = $("seek-track");
   if (!track) return;

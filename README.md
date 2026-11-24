@@ -356,11 +356,12 @@ D-pad drives the whole app.
 Full list in [§8](#8-keyboard-shortcuts).
 
 ### The status line, the corner buttons and the seek bar
-There is no playback bar: play, pause, next and restart come from the keys (**Space**, **N**, **P**,
-the media keys), a TV remote, or a phone.
+There is no playback bar: play, pause and restart come from the keys (**Space**, **P**, the media
+keys), a TV remote, or a phone; **next** has those too (**N**) plus a button on the status line.
 - **The status line** (bottom-left, small caps) is two lines: the song — the song count while
   nothing plays (**No catalogue** if the song list failed to load), or **▶ Title — Artist** (❚❚ when
-  paused) — and under it five values, each between
+  paused) followed by a **⏭ Next song** button (the **N** key: skip to the next queued song) — and
+  under it five values, each between
   a **−** and a **+**:
   - **VOL** 0–100 (steps of 5)
   - **KEY** the song's key (**F**, **Am**), **F → G** once transposed; **+2** for a song with no
