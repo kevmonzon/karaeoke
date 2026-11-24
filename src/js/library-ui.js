@@ -10,6 +10,11 @@
  * The queue list is short and fully rendered, but it is a roving-tabindex list too (M5): one
  * row is the tab stop, the arrows move it, and focus stays on the same song across a rebuild.
  *
+ * The same <ul id="song-list"> also draws ARTIST rows (M6, renderRows rowKind "artist"): one
+ * row per artist, same height, same virtual window, same roving tabindex and edges. A list can
+ * mix the two: an item whose `key` is BACK_ROW is drawn as an artist-kind row ("← Artists")
+ * wherever it sits, so one artist's songs are a song list with a back row at index 0.
+ *
  * Pure UI: it renders song/queue data and calls back into the player for
  * play/queue actions. Local state is only the selected + now-playing song (and each list's
  * roving row).
@@ -55,6 +60,14 @@ export function measureRow(listEl) {
 
 const OVERSCAN = 5;      // extra rows above/below the viewport
 const PAGE = 10;         // rows per PageUp / PageDown
+
+/**
+ * The key of the "← Artists" row (M6). An item `{ key: BACK_ROW }` is drawn as an artist-kind
+ * row in ANY list and activates through onArtist(BACK_ROW). The NUL prefix keeps it apart from
+ * every real artistKey (library-browse.js folds names; its own unknown bucket is "\0unknown").
+ */
+export const BACK_ROW = "\u0000back";
+const BACK_LABEL = "← Artists";
 
 /**
  * What one key does on a focused list row (pure). The list OWNS its movement keys, except at
@@ -147,16 +160,19 @@ const hasCode = (s) => s.code !== "" && s.code != null;
  *        on a queue row body. The ✕ never activates the row.
  * @param {(dir:"up"|"down"|"left"|"right")=>void} [cb.onEdge]  optional: an arrow left the SONG list
  *        at an edge (listKeyPlan). The key is NOT prevented, so the key router still moves focus.
- * @returns {{ renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh, focusRow, focusQueueRow }}
+ * @param {(key:string, rowEl)=>void} [cb.onArtist]  optional (M6): Enter, a click or a tap on an
+ *        artist-kind row (an artist, or the BACK_ROW). Never the song sheet; ★ / ＋ do not exist there.
+ * @returns {{ renderRows, renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh, focusRow, focusQueueRow }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null, onQueueActivate = null, onEdge = null }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null, onQueueActivate = null, onEdge = null, onArtist = null }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
   const rowH = () => measureRow(viewport);
   // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
   // by the `--vlist-h` CSS var (set in renderList). That keeps the <ul>'s only real children the
   // <li> rows — valid list semantics (a spacer <div> child would break ul→li structure for a11y).
 
-  let songs = [];
+  let songs = [];          // the rendered ITEMS: songs, or artists ({key, name, count}), or a mix
+  let rowKind = "song";    // "song" | "artist": what a plain item is drawn as (renderRows)
   let selectedSong = null;
   let nowPlaying = null;
   let emptyState = null;   // {title, hint} shown when `songs` is empty — see renderWindow
@@ -184,9 +200,47 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   // and re-size the scroll extent with it (not only the window of rows).
   window.addEventListener("resize", () => { clearRowCache(); setScrollHeight(); renderWindow(); });
 
+  // An item is drawn as an artist-kind row when the list is an artist list, or when it is the
+  // back row (which may head a song list: one artist's songs).
+  const isArtistItem = (it) => rowKind === "artist" || (!!it && it.key === BACK_ROW);
+  function makeRow(it, i, h) {
+    return isArtistItem(it) ? makeArtistRow(it, i, h) : makeSongRow(it, i, h);
+  }
+
+  // An artist row: the SAME <li class="song"> box and two-line body as a song row (so measureRow,
+  // the window maths and the focus ring are the song row's), with the name over its song count.
+  // No ★ / ＋ (an artist is not a song); Enter / click / tap → onArtist(key), never the sheet.
+  function makeArtistRow(a, i, h) {
+    const back = !!a && a.key === BACK_ROW;
+    const li = document.createElement("li");
+    li.className = "song artist-row" + (back ? " back-row" : "");
+    li.style.top = `${i * h}px`;
+    li.tabIndex = i === focusIndex ? 0 : -1;   // roving tabindex, as for songs
+    li.dataset.index = i;
+    li.innerHTML =
+      `<span class="kind artist-ico" aria-hidden="true"></span>` +
+      `<span class="num"></span>` +
+      `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
+    li.querySelector(".kind").textContent = back ? "←" : "👤";
+    const n = a && Number.isFinite(a.count) ? a.count : null;
+    const counted = n == null ? "" : `${n.toLocaleString()} song${n === 1 ? "" : "s"}`;
+    li.querySelector(".title").textContent = back ? BACK_LABEL : ((a && a.name) || "");
+    // The back row says whose songs these are (a.artist), when it is told.
+    li.querySelector(".artist").textContent = back
+      ? [a && a.artist, counted].filter(Boolean).join(" · ")
+      : counted;
+    li.onclick = (ev) => {
+      if (ev && ev.detail > 1) return;     // the 2nd click of a double-click lands on the NEXT list
+      focusIndex = i;
+      paintRowStates();
+      if (onArtist && a) onArtist(a.key, li);
+    };
+    return li;
+  }
+
   // A row: kind icon · number (the songbook chip under it) · title / artist · [≈] · ★ · ＋.
   // The number column is a fixed width so titles line up; the chip shares it, costing no width.
-  function makeRow(s, i, h) {
+  function makeSongRow(s, i, h) {
     const close = !!closeSet && closeSet.has(s);
     const li = document.createElement("li");
     li.className = "song" + (close ? " close-match" : "") +
@@ -343,6 +397,17 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       if (plan.move != null) moveFocus(plan.move);
       return;
     }
+    // An artist-kind row (an artist, or the back row): Enter opens it; Space is prevented so it
+    // neither scrolls the list nor reaches the router as play/pause; "+" means nothing here.
+    if (row && isArtistItem(songs[i])) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        focusIndex = i;
+        paintRowStates();
+        if (onArtist) onArtist(songs[i].key, row);
+      } else if (e.key === " ") e.preventDefault();
+      return;
+    }
     switch (e.key) {
       case "Enter":
         if (!row) break;
@@ -370,20 +435,45 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   }
 
   /**
-   * @param {{title:string, hint?:string}} [empty] what to say when the list comes back empty
-   * @param {{closeSet?: Set<object>}} [opts]  closeSet: the rows to mark "≈" (close matches)
+   * Show `items` in the one virtual list (M6).
+   *   rowKind "song"  : songs — exactly the pre-M6 renderList. An item whose `key` is BACK_ROW is
+   *                     drawn as an artist-kind row wherever it sits (one artist's songs = a back
+   *                     row at index 0, then songs).
+   *   rowKind "artist": `{key, name, count}` items, one artist row each.
+   * Either way: the same row height (measureRow), the same window (viewport + overscan + the
+   * roving row), the same roving tabindex and listKeyPlan edges. getList() returns `items`.
+   * @param {object[]} items
+   * @param {{rowKind?: "song"|"artist", empty?: {title:string, hint?:string}|null, closeSet?: Set<object>|null}} [o]
+   *        empty: what to say when the list comes back empty · closeSet: the song rows to mark "≈"
    */
-  function renderList(newSongs, empty, { closeSet: marks = null } = {}) {
-    songs = newSongs;
+  function renderRows(items, { rowKind: kind = "song", empty = null, closeSet: marks = null } = {}) {
+    songs = Array.isArray(items) ? items : [];
+    rowKind = kind === "artist" ? "artist" : "song";
     emptyState = empty || null;
-    closeSet = marks;
+    closeSet = rowKind === "song" ? marks : null;
     focusIndex = 0;          // a new result set starts at the top
     pendingFocus = false;    // …but never steals focus from whatever the user is typing in
     setScrollHeight();
     viewport.scrollTop = 0;
     renderWindow();
-    const lc = $("list-count");
-    if (lc) lc.textContent = songs.length.toLocaleString();
+    // The ⚙ hint "Showing N songs" counts SONGS: an artist list leaves it as it was, and a back
+    // row is not a song.
+    if (rowKind === "song") {
+      const lc = $("list-count");
+      if (lc) {
+        const n = songs.length && songs[0] && songs[0].key === BACK_ROW ? songs.length - 1 : songs.length;
+        lc.textContent = n.toLocaleString();
+      }
+    }
+  }
+
+  /**
+   * The pre-M6 entry point, now a thin wrapper: a song list.
+   * @param {{title:string, hint?:string}} [empty] what to say when the list comes back empty
+   * @param {{closeSet?: Set<object>}} [opts]  closeSet: the rows to mark "≈" (close matches)
+   */
+  function renderList(newSongs, empty, { closeSet: marks = null } = {}) {
+    renderRows(newSongs, { rowKind: "song", empty: empty || null, closeSet: marks });
   }
 
   // Re-measure the row height and repaint — when the Songs panel opens (it was display:none,
@@ -566,6 +656,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   queueEl();   // listen from the start (the static #queue-list exists before the first render)
 
   return {
+    renderRows, // M6: songs, artists, or a back row + songs, in the one virtual list
     renderList,
     renderQueue,
     getSelectedSong: () => selectedSong,

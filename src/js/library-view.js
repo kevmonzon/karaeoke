@@ -14,10 +14,21 @@
  * search worker — close matches (typos), appended below and marked "≈". The close tier is a
  * reply that can arrive after the list moved on, so it carries the render it was asked for and
  * is dropped when any newer render happened, exactly like the YouTube append.
+ *
+ * M6 (browse): every song list on the All tab — the three tiers, the whole library, Favorites,
+ * Recent — goes through the songbook / kind chips (applyFilters), and a non-Relevance sort orders
+ * the merged tiers as ONE list (the "≈" marks are song objects, so they survive it). The Artists
+ * tab is two more views of the same virtual list: the artist index (built lazily, cached per
+ * catalogue array + chip set) and one artist's songs under a "← Artists" row. `view` says which
+ * of those is showing ("songs" | "artists" | "artist" | "none" while the Rankings tab hides the
+ * list); every list still goes through one render generation, so a late close-tier or YouTube
+ * reply can never draw songs over the artist list.
  */
 import { jsonStore } from "./store.js";
 import { Catalog, resolveSongRef, SOURCES, normalizeCode } from "./catalog.js";
-import { orderNumberMatches, mergeTiers } from "./search-core.js";
+import { orderNumberMatches, mergeTiers, MAX_CLOSE } from "./search-core.js";
+import { applyFilters, sortSongs, buildArtistIndex, songsByArtist, filterArtists, UNKNOWN_ARTIST, UNKNOWN_ARTIST_LABEL } from "./library-browse.js";
+import { BACK_ROW } from "./library-ui.js";
 
 export const FAVORITES_KEY = "karaeoke.favorites.v1";
 export const YOUTUBE_KEY = "karaeoke.youtube.v1";
@@ -76,6 +87,26 @@ export function enterDecision(enterAction, busy) {
 }
 
 const DEFAULT_FUZZY_BELOW = 20;
+// With a chip on, the close tier asks the index for more than it shows: the cap is applied AFTER
+// the chips, or a songbook filter would throw away most of the 200 the index returns.
+const WIDE_CLOSE = 1000;
+const ALL_CACHE_MAX = 8;      // filtered / sorted whole-library lists kept (per catalogue array)
+const ARTIST_CACHE_MAX = 4;   // artist indexes kept (per catalogue array), keyed by the chip set
+
+const FILTERED_EMPTY = Object.freeze({ title: "No songs match these filters", hint: "Turn a chip off, or tap All." });
+
+/** Pure: "1 song", "12,345 songs", "2 artists". */
+export function countLabel(n, noun) {
+  const k = Math.max(0, Number(n) || 0);
+  return `${k.toLocaleString()} ${noun}${k === 1 ? "" : "s"}`;
+}
+
+/** A stable key for a chip set: the same chips in any order give the same key. "" = no filter. */
+function filterKey({ sources, kinds } = {}) {
+  const part = (set) => (set && set.size ? [...set].sort().join(",") : "");
+  const s = part(sources), k = part(kinds);
+  return s || k ? `${s}|${k}` : "";
+}
 
 /**
  * @param {object} deps
@@ -112,12 +143,74 @@ export function createLibraryView({
   let indexOf = null;                 // Map song → its index in catalog.songs (the worker's ids)
   let indexedSongs = null;            // …for this catalog.songs array (a reload replaces the array)
 
+  // --- browse state (M6) — handed in by app.js (setBrowse) from the browse UI, never persisted ---
+  let filters = { sources: new Set(), kinds: new Set() };   // empty Set = no filter on that axis
+  let sortMode = "relevance";
+  let view = "songs";                 // "songs" (All tab) | "artists" | "artist" (one artist) | "none"
+  let artistFilter = "";              // the typed artist filter the artist list was drawn with
+  let artistShown = null;             // the artist whose songs are showing (view "artist")
+  const allCache = new Map();         // `${filterKey}#${sort}` → the whole library, filtered + sorted
+  let allCacheSongs = null;           // …for this catalog.songs array
+  const artistCache = new Map();      // filterKey → buildArtistIndex(the filtered library)
+  let artistCacheSongs = null;        // …for this catalog.songs array
+
   const lib = () => getLib();
+  const filtering = () => filterKey(filters) !== "";
+  const sorting = () => !!sortMode && sortMode !== "relevance";
+  // The chips. applyFilters returns the SAME array when nothing filters; skipping the call then is
+  // the same answer for free.
+  const narrow = (rows) => (filtering() ? applyFilters(rows, filters) : rows);
+  const order = (rows) => (sorting() ? sortSongs(rows, sortMode) : rows);
 
   /** Every list goes through here, so a close tier still in flight knows it was overtaken. */
   function show(rows, empty, opts) {
     renderGen++;
     lib().renderList(rows, empty, opts);
+  }
+
+  /** The artist list and one artist's songs (renderRows), through the same render generation. */
+  function showRows(items, opts) {
+    renderGen++;
+    lib().renderRows(items, opts);
+  }
+
+  /**
+   * The whole library as the chips and the sort say — every song (catalog.songs), not the first
+   * 100,000 that catalog.search("") returns (that cap hid every audio song, which sits at the end
+   * of the array, so the Audio chip would have shown nothing). No chip and Relevance → the array
+   * itself, no copy. Otherwise the filtered / sorted copy is cached per (catalog.songs, chip set,
+   * sort): sorting 121k songs costs a few hundred ms once, then a chip toggle back is free.
+   */
+  function allSongs() {
+    const songs = catalog.songs;
+    if (!filtering() && !sorting()) return songs;
+    if (allCacheSongs !== songs) { allCache.clear(); allCacheSongs = songs; }
+    const key = `${filterKey(filters)}#${sorting() ? sortMode : "relevance"}`;
+    let rows = allCache.get(key);
+    if (rows) { allCache.delete(key); allCache.set(key, rows); return rows; }   // most recent last
+    rows = order(narrow(songs));
+    if (allCache.size >= ALL_CACHE_MAX) allCache.delete(allCache.keys().next().value);
+    allCache.set(key, rows);
+    return rows;
+  }
+
+  /** The artist index of the filtered library, built on first use, cached per (songs, chips). */
+  function artistIndex() {
+    const songs = catalog.songs;
+    if (artistCacheSongs !== songs) { artistCache.clear(); artistCacheSongs = songs; }
+    const key = filterKey(filters);
+    let index = artistCache.get(key);
+    if (index) return index;
+    index = buildArtistIndex(narrow(songs));
+    if (artistCache.size >= ARTIST_CACHE_MAX) artistCache.delete(artistCache.keys().next().value);
+    artistCache.set(key, index);
+    return index;
+  }
+
+  /** What an empty list says: the chips' fault when the unfiltered list had rows. */
+  function emptyFor(query, unfiltered, rows) {
+    if (!rows.length && filtering() && unfiltered && unfiltered.length) return FILTERED_EMPTY;
+    return emptyHint(query);
   }
 
   // --- favorites ------------------------------------------------------------
@@ -165,31 +258,54 @@ export function createLibraryView({
    * once the search worker answers. YouTube rows always come last. Resolves when the close
    * step is settled; nothing awaits it in the app, so it never rejects.
    */
-  function renderSearchResults(query, ytRecords) {
+  function renderSearchResults(query, ytRecords, { announce = false } = {}) {
+    view = "songs";
+    // YouTube rows have no songbook and no library kind: any chip drops them (applyFilters).
+    const yt = ytRecords && ytRecords.length ? narrow(ytRecords) : ytRecords;
+    // The empty query is the whole library (filtered + sorted, cached) — no tiers to compute.
+    if (!String(query ?? "").trim()) {
+      const rows = allSongs();
+      show(mergeSearchRows(rows, yt), emptyFor("", catalog.songs, rows));   // emptyHint("") = EMPTY_LIBRARY
+      if (announce) say(rows.length);
+      return;
+    }
     const tiers = searchTiers({ catalog, query, sources: SOURCES });
-    const wanted = closeWanted(query, tiers);
-    // A re-render of the same search (the YouTube append, a fuzzy toggle) reuses the close
-    // tier it already has — re-asking would drop it for a frame and move the YouTube rows.
-    if (wanted && lastClose && lastClose.query === query && lastClose.songs === catalog.songs) {
-      showWithClose(tiers.rows, lastClose.close, ytRecords, query);
+    const rows = order(narrow(tiers.rows));
+    const wanted = closeWanted(query, tiers, rows);
+    // A re-render of the same search (the YouTube append, a fuzzy toggle, a chip) reuses the close
+    // tier it already has — re-asking would drop it for a frame and move the YouTube rows. A tier
+    // asked for without chips is too narrow to reuse once a chip is on (see WIDE_CLOSE).
+    if (wanted && lastClose && lastClose.query === query && lastClose.songs === catalog.songs
+        && (lastClose.wide || !filtering())) {
+      showWithClose(rows, lastClose.close, yt, query, announce);
       return;
     }
     const asking = wanted && !!searchClient && searchClient.ready;
     // Nothing exact but close matches on the way: say so, rather than flash "No matches" first.
-    const looking = asking && !tiers.rows.length && !(ytRecords && ytRecords.length);
-    show(mergeSearchRows(tiers.rows, ytRecords), looking ? lookingHint(query) : emptyHint(query));
+    const looking = asking && !rows.length && !(yt && yt.length);
+    show(mergeSearchRows(rows, yt), looking ? lookingHint(query, tiers.rows) : emptyFor(query, tiers.rows, rows));
+    if (announce) say(rows.length);
     if (!asking) return;
-    return appendClose(renderGen, query, tiers.rows, ytRecords, looking);
+    return appendClose(renderGen, query, tiers.rows, rows, yt, looking, announce);
   }
 
-  function lookingHint(query) {
-    return { title: `No exact matches for "${String(query).trim()}"`, hint: "Looking for close spellings…" };
+  /** The status line's count for a list a browse control just changed. */
+  function say(n, noun = "song") { setStatus(countLabel(n, noun)); }
+
+  // `exact` = the exact tier before the chips: when it had rows, the chips emptied the list.
+  function lookingHint(query, exact = []) {
+    const title = filtering() && exact.length
+      ? "No songs match these filters"
+      : `No exact matches for "${String(query).trim()}"`;
+    return { title, hint: "Looking for close spellings…" };
   }
 
-  function closeWanted(query, tiers) {
+  // `rows` = the exact tier as SHOWN (after the chips): a songbook chip that leaves three exact
+  // rows on screen wants the close tier as much as a query that only found three.
+  function closeWanted(query, tiers, rows = tiers.rows) {
     const below = Number(typeof fuzzyBelow === "function" ? fuzzyBelow() : fuzzyBelow);
     return !!getFuzzy() && !tiers.numeric && String(query ?? "").trim() !== ""
-      && tiers.rows.length < (Number.isFinite(below) ? below : DEFAULT_FUZZY_BELOW);
+      && rows.length < (Number.isFinite(below) ? below : DEFAULT_FUZZY_BELOW);
   }
 
   /** catalog.songs index of each song — what the worker's hits and `exclude` speak in. */
@@ -202,31 +318,46 @@ export function createLibraryView({
     return indexOf;
   }
 
-  async function appendClose(gen, query, rows, ytRecords, looking) {
+  // `exact` = the exact tier before the chips (what the index must skip, by catalogue index);
+  // `rows` = the exact tier as shown (filtered, sorted).
+  async function appendClose(gen, query, exact, rows, ytRecords, looking, announce) {
     const songs = catalog.songs;       // the hits index THIS list; a reload during the wait drops them
     const at = songIndex();
     const exclude = [];
-    for (const s of rows) { const i = at.get(s); if (i !== undefined) exclude.push(i); }
+    for (const s of exact) { const i = at.get(s); if (i !== undefined) exclude.push(i); }
+    const wide = filtering();
     let hits = null;
-    try { hits = await searchClient.query(query, { exclude }); } catch (e) {
+    try { hits = await searchClient.query(query, wide ? { exclude, limit: WIDE_CLOSE } : { exclude }); } catch (e) {
       console.error("Close-match search failed:", e);
     }
-    // A newer render, or a reloaded catalogue, overtook this reply: the newer list stands.
+    // A newer render (a keystroke, a chip, a sort, another tab), or a reloaded catalogue,
+    // overtook this reply: the newer list stands.
     if (gen !== renderGen || catalog.songs !== songs) return;
     const close = [];
     if (hits) {                        // null = the client dropped it (a rebuild, a failed worker)
       for (const h of hits) { const s = songs[h.i]; if (s) close.push(s); }
-      lastClose = { query, songs, close };
+      lastClose = { query, songs, close, wide };
     }
-    if (close.length) showWithClose(rows, close, ytRecords, query);
-    else if (looking) show(mergeSearchRows(rows, ytRecords), emptyHint(query));   // nothing close after all
+    if (close.length) showWithClose(rows, close, ytRecords, query, announce);
+    else if (looking) show(mergeSearchRows(rows, ytRecords), emptyFor(query, exact, rows));   // nothing close after all
   }
 
-  /** Exact rows, then the close rows (appended, never above), then YouTube; "≈" on the close ones. */
-  function showWithClose(rows, close, ytRecords, query) {
-    const merged = mergeTiers(rows, close);
-    if (merged.length === rows.length) { show(mergeSearchRows(rows, ytRecords), emptyHint(query)); return; }
-    show(mergeSearchRows(merged, ytRecords), emptyHint(query), { closeSet: new Set(merged.slice(rows.length)) });
+  /**
+   * Exact rows, then the close rows, then YouTube; "≈" on the close ones. Relevance: the close
+   * rows are appended, never above. Another sort: exact + close are sorted as ONE list — the
+   * closeSet holds the song objects, so the marks follow their rows.
+   */
+  function showWithClose(rows, close, ytRecords, query, announce = false) {
+    const merged = mergeTiers(rows, narrow(close));
+    if (merged.length === rows.length) {
+      show(mergeSearchRows(rows, ytRecords), emptyFor(query, close, rows));   // the chips may have emptied it
+      if (announce) say(rows.length);
+      return;
+    }
+    const extra = merged.slice(rows.length, rows.length + MAX_CLOSE);   // the cap, after the chips
+    const local = sorting() ? sortSongs(rows.concat(extra), sortMode) : rows.concat(extra);
+    show(mergeSearchRows(local, ytRecords), emptyHint(query), { closeSet: new Set(extra) });
+    if (announce) say(local.length);
   }
 
   function youtubeOn() { return settings.get("youtube.enabled") && youtubeSupported(); }
@@ -237,13 +368,17 @@ export function createLibraryView({
     clearTimeout(ytSearchTimer);
     if (!youtubeOn() || !query.trim()) return;
     ytSearchTimer = setTimeout(async () => {
+      // A chip on drops every YouTube row (no songbook, not a library kind): don't ask for them.
+      if (view !== "songs" || filtering()) return;
       const threshold = settings.get("youtube.autoThreshold") || 2;
       // 11 = the ⚙ slider's max = "always" → skip the local-count gate and always query.
       if (threshold < 11 && catalog.search(query, threshold).length >= threshold) return;
       let recs = [];
       try { recs = await searchYoutube(query); } catch (_) { recs = []; }
       recs.forEach(registerYoutube);
-      if ($("search").value !== query || recentMode || favoritesMode) return; // query moved on
+      // The query moved on, or the list is showing something else now (Recent, Favorites, the
+      // Artists or Rankings tab): the answer is dropped.
+      if ($("search").value !== query || recentMode || favoritesMode || view !== "songs") return;
       renderSearchResults(query, recs);
     }, settings.get("youtube.debounceMs") || 3000);
   }
@@ -281,6 +416,10 @@ export function createLibraryView({
     get recentMode() { return recentMode; },
     get favoritesMode() { return favoritesMode; },
     get blockedCount() { return blocked.size; },
+    /** "songs" (the All tab) | "artists" (the artist list) | "artist" (one artist's songs) | "none". */
+    get view() { return view; },
+    /** The artist key whose songs are showing (view "artist"), else null. */
+    get artistShown() { return view === "artist" ? artistShown : null; },
 
     // --- boot ---
     loadFavorites,
@@ -326,16 +465,24 @@ export function createLibraryView({
       if (on && recentMode) this.setRecentMode(false);
     },
     showRecent() {
-      const songs = getRecentSongs();
-      show(songs, { title: "Nothing played yet tonight", hint: "Songs you play show up here." });
-      setStatus(songs.length ? `${songs.length} recently played` : "no recent songs yet");
+      view = "songs";
+      const all = getRecentSongs();
+      const songs = order(narrow(all));      // the chips and the sort apply here too (M6)
+      show(songs, all.length && !songs.length
+        ? emptyFor("", all, songs)
+        : { title: "Nothing played yet tonight", hint: "Songs you play show up here." });
+      setStatus(songs.length ? `${songs.length} recently played` : (all.length ? "no recent songs match the filters" : "no recent songs yet"));
     },
     showFavorites() {
-      const songs = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
-      show(songs, { title: "No favorites yet", hint: "Tap the ☆ on any song to keep it here." });
+      view = "songs";
+      const all = [...favorites].map((id) => catalog.getById(id)).filter(Boolean);
+      const songs = order(narrow(all));
+      show(songs, all.length && !songs.length
+        ? emptyFor("", all, songs)
+        : { title: "No favorites yet", hint: "Tap the ☆ on any song to keep it here." });
       setStatus(songs.length
         ? `${songs.length} favorite${songs.length === 1 ? "" : "s"}`
-        : "no favorites yet — tap ☆ on a song");
+        : (all.length ? "no favorites match the filters" : "no favorites yet — tap ☆ on a song"));
     },
     /** Leave Recent/Favorites if either is open. True when one actually closed. */
     leaveSpecialViews() {
@@ -354,11 +501,110 @@ export function createLibraryView({
     },
     scheduleYoutubeSearch,
     cancelYoutubeSearch() { clearTimeout(ytSearchTimer); },
-    renderAll() { show(catalog.search(""), EMPTY_LIBRARY); },
-    /** Row one of the list as it is rendered right now (what Enter in the search box takes). */
+    /** The whole library, through the chips and the sort (see allSongs). */
+    renderAll() { renderSearchResults("", null); },
+    /**
+     * The first SONG of the list as it is rendered right now (what Enter in the search box
+     * takes): the "← Artists" row is skipped, and the artist list has no song to take (null).
+     */
     topHit() {
+      if (view === "artists") return null;
       const list = (lib().getList && lib().getList()) || [];
-      return list[0] || null;
+      const first = list[0] && list[0].key === BACK_ROW ? list[1] : list[0];   // a back row only ever heads a list
+      return first || null;
+    },
+
+    // --- browse (M6) ---
+    /**
+     * The browse controls' state, at call time (app.js passes the browse UI's values; nothing
+     * here reads them back later). Partial: a missing field keeps its value. Nothing re-renders:
+     * the caller follows with rerender().
+     * @param {{filters?: {sources?: Set<string>, kinds?: Set<string>}, sort?: string}} b
+     */
+    setBrowse({ filters: f, sort } = {}) {
+      if (f) filters = { sources: new Set(f.sources || []), kinds: new Set(f.kinds || []) };
+      if (sort != null) sortMode = String(sort);
+    },
+    /**
+     * Draw the ACTIVE view again (the chips or the sort changed, the catalogue was rebuilt): the
+     * artist list, one artist's songs, Recent, Favorites, or the search for `query`. The count
+     * goes to the status line.
+     */
+    rerender(query = "") {
+      switch (view) {
+        case "artists": return this.showArtists(artistFilter);
+        case "artist": return this.showArtistSongs(artistShown);
+        case "none": return undefined;
+        default:
+          if (recentMode) return this.showRecent();
+          if (favoritesMode) return this.showFavorites();
+          return renderSearchResults(query, null, { announce: true });
+      }
+    },
+    /** The All tab: Recent or Favorites if one is on, else the search for `query` (+ YouTube). */
+    showAll(query = "") {
+      view = "songs";
+      if (recentMode) return this.showRecent();
+      if (favoritesMode) return this.showFavorites();
+      const done = renderSearchResults(query, null, { announce: true });
+      scheduleYoutubeSearch(String(query ?? ""));
+      return done;
+    },
+    /**
+     * The Artists tab: the artist index of the filtered library (built on first use), narrowed by
+     * `filterText` (every word in the folded name). Returns the items shown.
+     */
+    showArtists(filterText = "") {
+      clearTimeout(ytSearchTimer);
+      view = "artists";
+      artistShown = null;
+      artistFilter = String(filterText ?? "");
+      const index = artistIndex();
+      const items = filterArtists(index, artistFilter);
+      const q = artistFilter.trim();
+      showRows(items, {
+        rowKind: "artist",
+        empty: q
+          ? { title: `No artists match "${q}"`, hint: "Try fewer letters, or clear the search." }
+          : (index.length || !filtering()
+            ? { title: "No artists yet", hint: EMPTY_LIBRARY.hint }
+            : { title: "No artists match these filters", hint: FILTERED_EMPTY.hint }),
+      });
+      say(items.length, "artist");
+      return items;
+    },
+    /**
+     * One artist's songs (through the chips, and the sort when it is not Relevance) under a
+     * "← Artists" row at index 0 — a song list whose first item is the BACK_ROW.
+     */
+    showArtistSongs(key) {
+      clearTimeout(ytSearchTimer);
+      const every = songsByArtist(catalog.songs, key);           // by title already
+      const songs = narrow(every);
+      const rows = sorting() ? sortSongs(songs, sortMode) : songs;
+      // The index's spelling of the name; a chip can drop the artist from the filtered index,
+      // so fall back to the label / the first song's own spelling.
+      const entry = artistIndex().find((a) => a.key === key);
+      const name = entry ? entry.name
+        : key === UNKNOWN_ARTIST ? UNKNOWN_ARTIST_LABEL
+          : (every[0] && every[0].artistName) || "";
+      view = "artist";
+      artistShown = key;
+      showRows([{ key: BACK_ROW, name: "← Artists", artist: name, count: rows.length }, ...rows], { rowKind: "song" });
+      setStatus(name ? `${name}: ${countLabel(rows.length, "song")}` : countLabel(rows.length, "song"));
+      return rows;
+    },
+    /** The first artist of the artist list as shown (Enter in the search field), else null. */
+    topArtist() {
+      if (view !== "artists") return null;
+      const list = (lib().getList && lib().getList()) || [];
+      return list[0] && list[0].key != null ? list[0] : null;
+    },
+    /** The Rankings tab hides the list: nothing late may draw into it (a close tier, YouTube). */
+    showNone() {
+      clearTimeout(ytSearchTimer);
+      view = "none";
+      renderGen++;
     },
     renderCatalogError() {
       show([], {

@@ -10,8 +10,9 @@
  *   - ui/overlays-dom.js  : hidden / inert / scrim / focus / history for every overlay
  *   - ui/shell.js         : the control bar's ONE owner, idle / kind / playing, the status line
  *   - ui/home.js          : the idle home layer's tiles
+ *   - ui/browse-ui.js     : the Songs panel's tabs, chips, sort and rankings table (M6)
  * The big UI surfaces are delegated:
- *   - library-ui.js  : song list, search results, queue rendering
+ *   - library-ui.js  : song list (songs and artists), search results, queue rendering
  *   - settings-ui.js : the ⚙ panel (control ↔ Settings wiring)
  * Everything else (audio, lyrics, melody/key, mic, settings store) lives in
  * its own module; this file wires them together.
@@ -30,7 +31,7 @@ import { Settings } from "./settings.js";
 import { MicEngine } from "./mic.js";
 import { extractMelody, PitchGuide, snapNote, detectKey, keyName } from "./melody.js";
 import { Scorer } from "./scoring.js";
-import { createLibraryUI } from "./library-ui.js";
+import { createLibraryUI, BACK_ROW } from "./library-ui.js";
 import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createReactions } from "./reactions.js";
@@ -40,6 +41,8 @@ import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js"
 import { createQueue } from "./queue.js";
 import { createSession } from "./session.js";
 import { createLibraryView, enterDecision } from "./library-view.js";
+import { presentFacets } from "./library-browse.js";
+import { createRankings } from "./rankings.js";
 import { createSearchClient } from "./search-client.js";
 import { createRemoteGlue } from "./remote-glue.js";
 import { createRemoteHost } from "./remote-host.js";
@@ -50,6 +53,7 @@ import { createOverlays } from "./ui/overlays-dom.js";
 import { createShell } from "./ui/shell.js";
 import { createHome } from "./ui/home.js";
 import { createSongSheet } from "./ui/song-sheet.js";
+import { createBrowseUI } from "./ui/browse-ui.js";
 import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
@@ -89,8 +93,10 @@ const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
 const recap = createRecap();
 const score = createScorePresentation({ settings });
+const rankings = createRankings();   // the leaderboard (karaeoke.rankings.v1), one row per scored song
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer, songSheet;  // UI modules (created at boot)
+let browseUI;                    // the Songs panel's tabs / chips / sort / rankings (created at boot)
 let stack, overlays, shell, home; // the stage-first shell (created at boot — see buildShell)
 let inputMode, nav, actions;     // keys and D-pad (created at boot — see buildKeys)
 // id → the element registered for that overlay, kept beside the overlays.register calls: the
@@ -164,6 +170,23 @@ async function boot() {
     // and ✕ on a queue row keep their direct actions; Space still selects, "+" still queues.
     onActivate: (song, rowEl) => openSheet(song, rowEl, "library", +rowEl.dataset.index),
     onQueueActivate: (index, song, rowEl) => openSheet(song, rowEl, "queue", index),
+    // M6: an artist row (or "← Artists") opens that artist's songs (or the artist list again).
+    onArtist: (key) => openArtist(key),
+  });
+  // M6: the Songs panel's tabs, songbook / kind chips, sort and the rankings table. It draws the
+  // controls only; the list is still library-ui's, and what it shows is library-view's.
+  browseUI = createBrowseUI({
+    tabsEl: $("browse-tabs"), chipsEl: $("filter-chips"), paneEl: $("browse-pane"),
+    getFacets: browseFacets,
+    getRankings: ({ player = "", difficulty = "" } = {}) => ({
+      rows: rankings.top({ player, difficulty, limit: 50 }),
+      players: rankings.players(),
+      difficulties: rankings.difficulties(),
+    }),
+    onTab: onBrowseTab,
+    onFilters: (f) => { libraryView.setBrowse({ filters: f }); libraryView.rerender($("search").value); },
+    onSort: (mode) => { libraryView.setBrowse({ sort: mode }); libraryView.rerender($("search").value); },
+    onClearRankings: () => { clearRankingsAsk(); },
   });
   // The one "what do you want to do with this song?" sheet. It only renders and reports the
   // choice; onSheetAction carries it out (the queue, the player and the overlays are ours).
@@ -201,6 +224,7 @@ async function boot() {
     libraryView.loadBlocked();      // hide videos that previously failed to embed
     libraryView.seedServerBlocklist();
     libraryView.loadFavorites();    // restore starred songs (resolved by id) before the first render
+    renderBrowse();                 // the tabs + the chips of the songbooks / kinds this catalogue has
     libraryView.renderAll();
     loadSession(); // restore queue + recently-played (no auto-play)
     // Its own task, not awaited: the hand-off copies every title + artist, and should not
@@ -246,8 +270,16 @@ function buildShell() {
   // Every overlay except "controls" — the shell registers the bar itself (its one owner).
   reg("search", {
     el: $("ov-search"),
-    // Keys: the last focused row (the roving one), else the first; an empty list → the field.
-    initialFocus: () => (keysMode() && lib.focusRow() ? document.activeElement : $("search")),
+    // Keys: the last focused row (the roving one — a song or, on the Artists tab, an artist),
+    // else the first; an empty list → the field. The Rankings tab hides the list: its first
+    // control, else the selected tab. Touch / mouse: the field.
+    initialFocus: () => {
+      if (keysMode()) {
+        if (browseTab() === "rankings") return rankingsFocusTarget() || $("search");
+        if (lib.focusRow()) return document.activeElement;
+      }
+      return $("search");
+    },
     onOpen: remeasure,
   });
   reg("queue", {
@@ -278,7 +310,7 @@ function buildShell() {
 
   home = createHome({
     el: $("home"),
-    enabled: ["songs", "favorites", "queue", "tonight", "settings"],
+    enabled: ["songs", "artists", "rankings", "favorites", "queue", "tonight", "settings"],
     onTile: openFromHome,
   });
   home.render();
@@ -311,18 +343,143 @@ function closeOverlay(id) {
   if (overlays && overlays.isOpen(id)) overlays.close(id);
 }
 
-// A home tile opens the overlay it names. "Favorites" is the Songs panel in its Favorites view;
-// "Tonight" is the recap.
+// A home tile opens the overlay it names. "Songs", "Artists" and "Rankings" are the Songs panel
+// on that tab (the tab is switched BEFORE the panel opens, so its initial focus sees it);
+// "Favorites" is the Songs panel in its Favorites view, on the All tab; "Tonight" is the recap.
 function openFromHome(id) {
   switch (id) {
-    case "songs": overlays.open("search"); break;
+    case "songs": showBrowseTab("all"); overlays.open("search"); break;
+    case "artists": showBrowseTab("artists"); overlays.open("search"); break;
+    case "rankings": showBrowseTab("rankings"); overlays.open("search"); break;
     case "favorites":
-      if (!libraryView.favoritesMode) { libraryView.setFavoritesMode(true); libraryView.showFavorites(); }
+      if (!libraryView.favoritesMode) {
+        libraryView.setFavoritesMode(true);
+        if (browseTab() === "all") libraryView.showFavorites();
+        else showBrowseTab("all");      // onBrowseTab("all") → showAll → the Favorites view
+      }
       overlays.open("search");
       break;
     case "queue": overlays.open("queue"); break;
     case "tonight": overlays.open("recap"); break;
     case "settings": overlays.open("settings"); break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Browse (M6, plan §5.6 / §5.7 / §5.9): the Songs panel's tabs (All · Artists · Rankings), the
+// songbook / kind chips and the sort. browse-ui.js draws those controls and the rankings table;
+// the list is still the one virtual list (library-ui), and what it shows is library-view's. The
+// view state is never persisted: a reload starts on All, no chips, Relevance.
+// ---------------------------------------------------------------------------
+let facets = null, facetsFor = null;   // presentFacets of the catalogue — once per catalog.songs array
+function browseFacets() {
+  if (facetsFor !== catalog.songs) { facets = presentFacets(catalog.songs); facetsFor = catalog.songs; }
+  return facets;
+}
+const browseTab = () => (browseUI ? browseUI.tab : "all");
+/** Switch the Songs panel to tab `id`; a no-op when it is already there (onBrowseTab does the work). */
+function showBrowseTab(id) { if (browseUI && browseUI.tab !== id) browseUI.setTab(id); }
+
+/** (Re)build the tabs and chips — after the catalogue loads and after a rebuild — and hand the
+ *  browse state library-view must use over again (render() drops a chip the new catalogue lacks). */
+function renderBrowse() {
+  if (!browseUI) return;
+  browseUI.render();
+  libraryView.setBrowse({ filters: browseUI.filters, sort: browseUI.sort });
+}
+
+/** browse-ui's onTab: what the list shows on each tab. */
+function onBrowseTab(id) {
+  const list = $("song-list");
+  const q = $("search").value;
+  cancelSearchDebounce();               // a keystroke's pending render belongs to the old tab
+  libraryView.cancelYoutubeSearch();
+  if (id === "rankings") {
+    libraryView.leaveSpecialViews();    // Recent / Favorites are views of the All tab
+    libraryView.showNone();             // nothing late (a close tier, YouTube) draws into the hidden list
+    if (list) {
+      if (list.contains(document.activeElement)) focusSelectedTab();
+      list.hidden = true;               // the rankings table (browse-pane) takes its place
+    }
+    return;
+  }
+  if (list) list.hidden = false;        // BEFORE drawing: the virtual window reads the list's height
+  if (id === "artists") {
+    libraryView.leaveSpecialViews();
+    libraryView.showArtists(q);         // the field's text filters artist names on this tab
+  } else {
+    libraryView.showAll(q);             // the current search (or Recent / Favorites), re-run
+  }
+}
+
+function focusSelectedTab() {
+  const tabs = $("browse-tabs");
+  const t = tabs && tabs.querySelector('[role="tab"][aria-selected="true"]');
+  if (t) t.focus({ preventScroll: true });
+}
+
+/** Keys on the Rankings tab: the first control of the rankings view, else the selected tab. */
+function rankingsFocusTarget() {
+  const pane = $("browse-pane");
+  const first = nav && pane && !pane.hidden ? nav.focusables(pane)[0] : null;
+  const tabs = $("browse-tabs");
+  return first || (tabs && tabs.querySelector('[role="tab"][aria-selected="true"]')) || null;
+}
+
+/** An artist row → that artist's songs; the "← Artists" row → the artist list, on the artist we
+ *  came from (when the list had focus: a key or a click on a row). */
+function openArtist(key) {
+  const list = $("song-list");
+  const hadFocus = !!list && list.contains(document.activeElement);
+  if (key === BACK_ROW) {
+    const from = libraryView.artistShown;
+    const items = libraryView.showArtists($("search").value);
+    const i = from == null ? -1 : items.findIndex((a) => a.key === from);
+    if (i > 0 && hadFocus) lib.focusRow(i);   // row 0 already has it (the render restores focus there)
+    return;
+  }
+  libraryView.showArtistSongs(key);           // focus, if the list had it, lands on "← Artists"
+}
+
+// "Clear" in the rankings view — behind the confirm dialog (Cancel first; Back = Cancel).
+async function clearRankingsAsk() {
+  const n = rankings.all().length;
+  if (!n) return;
+  const ok = await overlays.confirm({
+    title: "Clear the rankings?",
+    text: `${n} ${n === 1 ? "entry" : "entries"} will be removed.`,
+    okLabel: "Clear",
+  });
+  if (!ok) return;
+  rankings.clear();
+  if (browseUI) browseUI.refreshPane();
+  setStatus("Rankings cleared");
+  // The Clear button hides with the last row: never leave focus on <body> inside the open panel.
+  const a = document.activeElement;
+  if (overlays.isOpen("search") && (!a || a === document.body || !a.isConnected || (a.closest && a.closest("[hidden]")))) {
+    const t = rankingsFocusTarget();
+    if (t) t.focus({ preventScroll: true });
+  }
+}
+
+// One leaderboard row per scored song (plan §5.9): the same condition as the score card (a
+// result exists), plus score.rankings. It reads `current` / `currentBy`, so it runs BEFORE
+// clearStage() like recap.log. It must never throw: endOfSong has to reach the queue hand-off.
+function logRanking(res) {
+  if (!res || !current || !settings.get("score.rankings")) return;
+  try {
+    rankings.add({
+      player: currentBy || settings.get("score.hostPlayer"),
+      songId: current.id,
+      song: current.name,
+      artist: current.artistName,
+      score: res.score,
+      difficulty: res.difficulty || "normal",
+      at: Date.now(),
+    });
+    if (browseUI) browseUI.refreshPane();
+  } catch (e) {
+    console.error("Could not record the ranking:", e);
   }
 }
 
@@ -530,6 +687,9 @@ function adjustTempo(delta) {
   return true;
 }
 
+// The browse tabs / chips row is on screen (browse-ui unhides them once the catalogue loads).
+const browseControlsShown = () => [$("filter-chips"), $("browse-tabs")].some((el) => el && !el.hidden);
+
 // Type-to-search (§4.3): on a song row, a printable key moves focus to the search field BEFORE
 // the browser inserts the character, so the character lands there. Bubble phase on the panel:
 // after the list's own handler (which prevents Space / "+" / "=" and its movement keys), before
@@ -541,10 +701,15 @@ function wireTypeToSearch() {
     if (e.defaultPrevented || e.isComposing) return;
     const row = e.target && e.target.closest ? e.target.closest(".song") : null;
     if (!row) return;
-    // The list's top edge is the search field. The list released this key (listKeyPlan), and
-    // spatial navigation would have to pick between the field and the filter pills on the same
-    // line — a tie decided by sub-pixel rounding — so the panel takes it, deterministically.
+    // The list's top edge. The list released this key (listKeyPlan). Without the browse controls
+    // the row above is the search row, where spatial navigation would have to pick between the
+    // field and the filter pills on the same line — a tie decided by sub-pixel rounding — so the
+    // panel takes it to the field, deterministically. M6: with the chips (and the sort) between
+    // the list and the field, the key goes on to the router, which moves up to them — otherwise
+    // the tabs and chips could never be reached with a D-pad (ArrowDown in the field still jumps
+    // straight to the list).
     if (e.key === "ArrowUp" && noMods(e) && row.dataset.index === "0") {
+      if (browseControlsShown()) return;
       e.preventDefault();
       field.focus({ preventScroll: true });
       return;
@@ -660,6 +825,10 @@ function applyAudioSettings() {
   if (audioFile) { audioFile.setVolume(vol); audioFile.setTempo(tempo); audioFile.setKey(settings.get("audio.key")); }
 }
 
+// The list is showing a search (the All tab, not Recent / Favorites): a setting that changes what
+// a search returns re-runs it then, and only then.
+const showingSearch = () => libraryView.view === "songs" && !libraryView.recentMode && !libraryView.favoritesMode;
+
 function onSettingChanged(path) {
   if (path === "*" || path.startsWith("lyrics.")) applyVisualSettings();
   if (path === "*" || path.startsWith("audio.")) applyAudioSettings();
@@ -684,10 +853,11 @@ function onSettingChanged(path) {
   if (path === "*" || path === "youtube.enabled") {
     libraryView.updateYoutubeToggle();
     // reflect the new state in the current search (append or drop YouTube rows)
-    if (path === "youtube.enabled" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
+    // (only while the list shows a search: not Recent / Favorites, not the Artists / Rankings tab)
+    if (path === "youtube.enabled" && showingSearch()) libraryView.runSearch($("search").value);
   }
   // Close matches on/off: redo the current search so the list says what the setting now says.
-  if (path === "search.fuzzy" && !libraryView.recentMode && !libraryView.favoritesMode) libraryView.runSearch($("search").value);
+  if (path === "search.fuzzy" && showingSearch()) libraryView.runSearch($("search").value);
   if (path === "*" || path === "library.showSource") { if (lib) lib.refresh(); } // songbook chip on/off
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
@@ -1521,6 +1691,7 @@ function endOfSong() {
   // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
   const res = score.finish(scorer, current, currentBy);
   recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
+  logRanking(res);                                          // one leaderboard row (M6) — needs current too
   score.resetLineBonus();
   clearStage();
   if (res) {
@@ -1714,34 +1885,68 @@ function tick() {
 // ---------------------------------------------------------------------------
 // Transport / main UI + keyboard
 // ---------------------------------------------------------------------------
+// The search field's debounced render (120 ms): what the field's text draws depends on the tab
+// (songs on All, artist names on Artists), so the pending render is a closure. Enter / ArrowDown
+// flush it; a tab switch cancels it (it belongs to the old tab, and the new tab draws itself).
+let searchDeb = null;   // the pending timer (null once it has run)
+let searchDebRun = null;
+function debounceSearch(fn) {
+  clearTimeout(searchDeb);
+  searchDebRun = fn;
+  searchDeb = setTimeout(() => { searchDeb = null; fn(); }, 120);
+}
+function flushSearch() {
+  if (searchDeb) { clearTimeout(searchDeb); searchDeb = null; searchDebRun(); }
+}
+function cancelSearchDebounce() { clearTimeout(searchDeb); searchDeb = null; }
+
 function wireUI() {
   const search = $("search");
   const clearBtn = $("search-clear");
   const toggleClear = () => clearBtn.classList.toggle("show", !!search.value);
-  let deb = null;   // the pending debounced render (null once it has run) — Enter flushes it
   search.oninput = () => {
-    libraryView.leaveSpecialViews();   // typing leaves the Recent / Favorites views
     toggleClear();
     const q = search.value;
-    clearTimeout(deb);
-    deb = setTimeout(() => { deb = null; libraryView.renderSearchResults(q, null); }, 120); // instant local (drops any YouTube rows)
+    const tab = browseTab();
+    if (tab === "artists") {
+      // The Artists tab: the field filters artist names (no song search, no YouTube).
+      debounceSearch(() => libraryView.showArtists(q));
+      return;
+    }
+    libraryView.leaveSpecialViews();   // typing leaves the Recent / Favorites views
+    if (tab === "rankings") {
+      // Typing on Rankings is a song search: the All tab, which runs it (onBrowseTab).
+      cancelSearchDebounce();
+      showBrowseTab("all");
+      return;
+    }
+    debounceSearch(() => libraryView.renderSearchResults(q, null)); // instant local (drops any YouTube rows)
     libraryView.scheduleYoutubeSearch(q); // append YouTube after a longer debounce, if enabled + local is sparse
   };
   clearBtn.onclick = () => {
     search.value = "";
     toggleClear();
+    cancelSearchDebounce();              // a keystroke's pending render must not redraw the old text
     libraryView.cancelYoutubeSearch();
-    libraryView.leaveSpecialViews();
-    libraryView.renderAll();
+    const tab = browseTab();
+    if (tab === "artists") libraryView.showArtists("");
+    else if (tab === "all") {
+      libraryView.leaveSpecialViews();
+      libraryView.renderAll();
+    }                                    // Rankings: the list is hidden; only the field clears
     search.focus();
   };
+  // Recent and Favorites are views of the All tab: from another tab they switch to it, and
+  // onBrowseTab("all") draws them (showAll).
   $("btn-recent").onclick = () => {
     libraryView.setRecentMode(!libraryView.recentMode);
+    if (browseTab() !== "all") { showBrowseTab("all"); return; }
     if (libraryView.recentMode) libraryView.showRecent();
     else libraryView.runSearch(search.value); // back to the (search) list
   };
   $("btn-favorites").onclick = () => {
     libraryView.setFavoritesMode(!libraryView.favoritesMode);
+    if (browseTab() !== "all") { showBrowseTab("all"); return; }
     if (libraryView.favoritesMode) libraryView.showFavorites();
     else libraryView.runSearch(search.value); // back to the (search) list
   };
@@ -1763,17 +1968,25 @@ function wireUI() {
     });
   }
 
-  // A key typed inside the 120 ms debounce has not rendered yet. Render it now, or the top hit
-  // (Enter) or the first row (ArrowDown) would belong to the query one keystroke earlier.
-  const flushSearch = () => {
-    if (deb) { clearTimeout(deb); deb = null; libraryView.renderSearchResults(search.value, null); }
-  };
-  // The field's own keys. Every key it handles is prevented, so the document key router (and the
-  // browser) never act on it a second time.
+  // A key typed inside the 120 ms debounce has not rendered yet: flushSearch() renders it now,
+  // or the top hit (Enter) or the first row (ArrowDown) would belong to the text one keystroke
+  // earlier. The field's own keys. Every key it handles is prevented, so the document key router
+  // (and the browser) never act on it a second time.
   search.onkeydown = (e) => {
     if (e.isComposing) return;
     if (e.key === "Enter") {
       flushSearch();
+      // Rankings has no list: the text is a song search, on the All tab (drawn by onBrowseTab).
+      if (browseTab() === "rankings") showBrowseTab("all");
+      // The artist list: Enter opens the top artist; the field keeps its text (so "← Artists"
+      // comes back to the same filtered list) and the panel stays open.
+      if (browseTab() === "artists" && libraryView.view === "artists") {
+        const a = libraryView.topArtist();
+        if (!a) return;
+        e.preventDefault();
+        openArtist(a.key);
+        return;
+      }
       const song = libraryView.topHit();
       if (!song) return;
       // Prevented: the panel is about to close and hand focus back to its opener, and an
@@ -1794,10 +2007,11 @@ function wireUI() {
       e.preventDefault(); e.stopPropagation();
       clearBtn.onclick();
     } else if (e.key === "ArrowDown" && noMods(e)) {
-      // Into the list: its roving row (the first row of a fresh result). Empty list → the key
-      // goes on to the router, which finds nothing below and leaves focus here.
+      // Into the list: its roving row (the first row of a fresh result). Empty list, or the
+      // Rankings tab (the list is hidden) → the key goes on to the router, which moves to what
+      // is below (the tabs) or leaves focus here.
       flushSearch();
-      if (lib.focusRow()) e.preventDefault();
+      if (browseTab() !== "rankings" && lib.focusRow()) e.preventDefault();
     }
   };
 
@@ -2049,7 +2263,10 @@ async function onRebuild() {
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
   buildSearchIndex();   // BEFORE the re-render: no close query may reach the old list's index
-  libraryView.renderSearchResults($("search").value, null);
+  renderBrowse();       // the chips follow the new catalogue's songbooks and kinds (facets recompute)
+  // The ACTIVE view again, on the new catalogue (its caches key on the catalog.songs array): the
+  // search, Recent / Favorites, the artist list or one artist's songs; nothing on Rankings.
+  libraryView.rerender($("search").value);
   setStatus(`${n.toLocaleString()} songs loaded`);
   return { ok: true, records: n };
 }

@@ -22,6 +22,7 @@ const mb = (bytes) => `${(bytes / 1048576).toFixed(bytes < 10485760 ? 1 : 0)} MB
 
 // type: "range" (number) · "check" (boolean) · "select"/"text" (string)
 // valId: label element id (defaults to `${id}-val`) · fmt: label text for ranges
+// clean: optional (value) → value applied before the value is stored (and shown back in the control)
 const SETTINGS_SCHEMA = [
   // overall font size (extra small/small/medium/large) + color theme
   { id: "set-fontsize", path: "ui.fontSize", type: "select" },
@@ -75,6 +76,9 @@ const SETTINGS_SCHEMA = [
   { id: "set-score", path: "score.enabled", type: "check" },
   { id: "set-score-card", path: "score.card", type: "check" },
   { id: "set-score-golden", path: "score.golden", type: "check" },
+  // the leaderboard (M6): record a row per scored song + the name a host-added song ranks under
+  { id: "set-score-rankings", path: "score.rankings", type: "check" },
+  { id: "set-score-host", path: "score.hostPlayer", type: "text", clean: cleanPlayerName },
   // queue fairness + reactions (party behaviour)
   { id: "set-fairplay", path: "queue.fairPlay", type: "check" },
   { id: "set-maxper", path: "queue.maxPerGuest", type: "range", fmt: (v) => (+v ? `${v}` : "off") },
@@ -172,11 +176,19 @@ const SEARCH_KEYWORDS = {
   "set-score": "points rating videoke sing grade",
   "set-score-card": "points rating result end of song",
   "set-score-golden": "hooks bonus double weight",
+  "set-score-rankings": "leaderboard ranking top scores high score history player",
+  "set-score-host": "player singer name nickname leaderboard ranking host",
   "export-data": "backup save download favorites queue settings json",
   "import-data": "restore load upload backup json",
 };
 
 const CAT_STATE_KEY = "karaeoke.settingsUI.v1"; // transient UI: category open/closed
+
+/** Pure: a singer name as the rankings store it — trimmed, inner whitespace collapsed, ≤ 24
+ *  characters (code points, so an emoji is never cut in half). "" stays "" (rankings → "Host"). */
+export function cleanPlayerName(v) {
+  return [...String(v ?? "").replace(/\s+/g, " ").trim()].slice(0, 24).join("").trim();
+}
 
 /**
  * Pure token-AND substring match: every whitespace-separated token in `query`
@@ -213,7 +225,8 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onEras
       if (!el) continue;
       const evt = (c.type === "check" || c.type === "select" || c.type === "text") ? "change" : "input";
       el.addEventListener(evt, () => {
-        const val = readControl(c, el);
+        const val = c.clean ? c.clean(readControl(c, el)) : readControl(c, el);
+        if (c.clean && el.value !== val) el.value = val;   // show what was actually kept
         settings.set(c.path, val);
         label(c, val);
       });

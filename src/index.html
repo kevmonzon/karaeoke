@@ -497,7 +497,12 @@
         <label class="row toggle"><span>Score my singing</span><input id="set-score" type="checkbox" /></label>
         <label class="row toggle"><span>Score card when a song ends</span><input id="set-score-card" type="checkbox" /></label>
         <label class="row toggle"><span>Golden notes count double</span><input id="set-score-golden" type="checkbox" /></label>
-        <div class="hint sub">Scored per note against the song's own melody, octave-forgivingly. MIDI songs only, and the mic must be on. Your best per song is remembered.</div>
+        <label class="row toggle"><span>Keep rankings</span><input id="set-score-rankings" type="checkbox" /></label>
+        <label class="row">
+          <span>Host singer name</span>
+          <input id="set-score-host" type="text" class="set-text" maxlength="24" placeholder="Host" autocomplete="off" />
+        </label>
+        <div class="hint sub">Scored per note against the song's own melody, octave-forgivingly. MIDI songs only, and the mic must be on. Your best per song is remembered, and every scored song gets a row in Songs → Rankings (under the guest's name, or the host singer name).</div>
 
         <div class="sub-h">Guide vocal (melody)</div>
         <label class="row"><span>Volume <em id="set-gv-vol-val">100%</em></span><input id="set-gv-vol" type="range" min="0" max="2" step="0.05" value="1" /></label>

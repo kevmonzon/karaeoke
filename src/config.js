@@ -207,6 +207,12 @@ export const DEFAULT_CONFIG = {
     enabled: true, // run the scorer + show the end-of-song score card
     card: true, // the full-stage score card when a song ends (off = live number only)
     golden: true, // weight the longest notes (the hooks) double, like UltraStar's golden notes
+    // The leaderboard (Songs → Rankings): one row per scored song, kept across nights in
+    // karaeoke.rankings.v1 (so Backup / Restore / Erase all cover it). Off = nothing is recorded.
+    rankings: true,
+    // Who a host-added song is ranked under (a phone's song keeps its guest nickname). Trimmed,
+    // at most 24 characters; empty = "Host".
+    hostPlayer: "Host",
   },
 
   // MIDI mode — a per-channel mixer band (between the lyrics and the transport)
