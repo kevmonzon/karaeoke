@@ -40,8 +40,6 @@ const SETTINGS_SCHEMA = [
   { id: "set-overscan", path: "ui.overscanPct", type: "range", fmt: (v) => `${+v}%` },
   { id: "set-key-hints", path: "ui.keyHints", type: "check" },
   // control bar: always-show toggle + idle auto-hide duration
-  { id: "set-playback", path: "ui.playback", type: "check" },
-  { id: "set-autohide", path: "ui.autoHideSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
   { id: "set-bt", path: "bt.enabled", type: "check" }, // lives in the Display category in index.html
@@ -119,6 +117,8 @@ const SETTINGS_SCHEMA = [
   { id: "set-reactions", path: "reactions.enabled", type: "check" },
   { id: "set-reactions-sound", path: "reactions.sound", type: "check" },
   { id: "set-gv-solo", path: "guide.vocal.solo", type: "check" },
+  { id: "set-foot-autohide", path: "ui.footer.autoHide", type: "check" },
+  { id: "set-foot-hide", path: "ui.footer.hideSec", type: "range", fmt: (v) => `${(+v).toFixed(1)} s` },
   // microphone
   { id: "set-mic-vol", path: "mic.volume", type: "range", fmt: pct },
   { id: "set-mic-aec", path: "mic.echoCancellation", type: "check" },
@@ -175,8 +175,6 @@ const SEARCH_KEYWORDS = {
   "set-key-hints": "keyboard remote arrows shortcuts help tips",
   "set-qr-stage": "phone qr code stage home idle corner always never guests",
   "set-theme": "dark light color theme appearance mode night day",
-  "set-playback": "playback controls transport seek bar show hide always overlay dock",
-  "set-autohide": "auto hide fade idle timeout duration seconds controls transport overlay",
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",
@@ -212,6 +210,8 @@ const SEARCH_KEYWORDS = {
   "set-guide": "melody piano roll pitch",
   "set-gv-level": "melody vocal guide volume level mute off quarter half",
   "set-gv-solo": "melody vocal isolate",
+  "set-foot-autohide": "footer auto hide fade status line buttons seek bar controls idle",
+  "set-foot-hide": "footer auto hide seconds timeout delay idle",
   "set-mic-vol": "microphone gain",
   "set-mic-aec": "feedback echo cancellation howl",
   "set-mic-gate": "noise feedback",

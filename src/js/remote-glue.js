@@ -291,9 +291,10 @@ export function createRemoteGlue({
     },
 
     /**
-     * Render/refresh (or clear) the QR + URL + room code. One renderer, three places: the queue
-     * panel (#remote-qr-code), the home layer (#home-qr, with the code in #home-room) and the
-     * small stage chip (#stage-qr). Which of the stage copies is VISIBLE is not decided here: it
+     * Render/refresh (or clear) the QR + URL + room code. One renderer, three places: ⚙ → Phones &
+     * party → Remote (#remote-qr-code; the queue panel's until 2026-11-24), the home layer
+     * (#home-qr, with the code in #home-room) and the small stage chip (#stage-qr). The Songs
+     * panel's Queue tab shows the room code alone (#queue-room-code; CSS shows it with remote-on). Which of the stage copies is VISIBLE is not decided here: it
      * depends on body[data-idle], which changes without this running, so the CSS owns it
      * (body.remote-on + body[data-qr] = remote.qrOnStage, written by app.js). The base URL is
      * auto-detected (settings override → the host page's own non-loopback origin → the server's
@@ -319,6 +320,7 @@ export function createRemoteGlue({
       const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, lanUrl);
       const url = base ? `${base}/remote?room=${room}` : "";
       const roomEl = $("remote-room"); if (roomEl) roomEl.textContent = room;
+      const qRoom = $("queue-room-code"); if (qRoom) qRoom.textContent = room;
       const link = $("remote-qr-url");
       if (link) { link.textContent = base ? `${base}/remote` : "(no reachable URL)"; link.href = url || "#"; }
       renderQr($("remote-qr-code"), url);

@@ -1,6 +1,6 @@
 /*
- * browse-ui.test.js — the Songs panel's browse controls (M6, src/js/ui/browse-ui.js): the three
- * tabs and their keys, and the rankings view (rows as text, player / difficulty filters, Clear,
+ * browse-ui.test.js — the Songs panel's browse controls (M6, src/js/ui/browse-ui.js): the four
+ * tabs (the Queue tab since 2026-11-24, with its count) and their keys, and the rankings view (rows as text, player / difficulty filters, Clear,
  * the empty state), plus setTab / reset and which container shows on which tab. The songbook /
  * type chips and the sort select were removed (2026-11-24); a test below checks they stay gone.
  * The DOM parts run against a small hand-built fake with only the surface the module documents:
@@ -128,9 +128,9 @@ const keydown = (el, key, extra = {}) => el.fire("keydown", { key, ...extra });
 
 // --- tabs -----------------------------------------------------------------------------------
 
-test("three tabs, in order", () => {
+test("four tabs, in order — the Queue last, after Rankings (Rae)", () => {
   const r = setup();
-  assert.deepEqual(BROWSE_TABS.map((t) => t.id), ["all", "artists", "rankings"]);
+  assert.deepEqual(BROWSE_TABS.map((t) => t.id), ["all", "artists", "rankings", "queue"]);
   assert.equal(r.doc.made.length, 0, "nothing is built before render()");
   assert.equal(r.tabsEl.hidden, true);
 
@@ -138,9 +138,9 @@ test("three tabs, in order", () => {
   assert.equal(r.tabsEl.hidden, false);
   assert.equal(r.tabsEl.getAttribute("role"), "tablist");
   const tabs = r.tabBtns();
-  assert.equal(r.tabsEl.children.length, 3);
-  assert.deepEqual(tabs.map((b) => b.textContent), ["All", "Artists", "Rankings"]);
-  assert.deepEqual(tabs.map((b) => b.dataset.tab), ["all", "artists", "rankings"]);
+  assert.equal(r.tabsEl.children.length, 4);
+  assert.deepEqual(tabs.map((b) => b.textContent), ["All", "Artists", "Rankings", "Queue"]);
+  assert.deepEqual(tabs.map((b) => b.dataset.tab), ["all", "artists", "rankings", "queue"]);
   for (const b of tabs) {
     assert.equal(b.tagName, "BUTTON");
     assert.equal(b.getAttribute("type"), "button");
@@ -148,14 +148,14 @@ test("three tabs, in order", () => {
     assert.equal(b.getAttribute("onclick"), null, "no inline handlers");
     assert.equal(b.getAttribute("style"), null, "no inline styles");
   }
-  assert.deepEqual(tabs.map((b) => b.getAttribute("aria-selected")), ["true", "false", "false"]);
-  assert.deepEqual(tabs.map((b) => b.getAttribute("tabindex")), ["0", "-1", "-1"]);
-  assert.deepEqual(tabs.map((b) => b.getAttribute("aria-controls")), ["song-list", "song-list", "browse-pane"]);
+  assert.deepEqual(tabs.map((b) => b.getAttribute("aria-selected")), ["true", "false", "false", "false"]);
+  assert.deepEqual(tabs.map((b) => b.getAttribute("tabindex")), ["0", "-1", "-1", "-1"]);
+  assert.deepEqual(tabs.map((b) => b.getAttribute("aria-controls")), ["song-list", "song-list", "browse-pane", "queue-view"]);
   assert.equal(r.ui.tab, "all");
   assert.deepEqual(r.calls.tab, [], "render fires no callback");
 
-  r.ui.render();   // a second render keeps the same three tabs
-  assert.equal(r.tabsEl.children.length, 3);
+  r.ui.render();   // a second render keeps the same four tabs
+  assert.equal(r.tabsEl.children.length, 4);
   assert.equal(r.tabBtns()[0], tabs[0]);
 });
 
@@ -168,19 +168,24 @@ test("arrow keys move the selected tab", () => {
   assert.equal(ev.defaultPrevented, true);
   assert.equal(r.ui.tab, "artists");
   assert.equal(r.doc.activeElement, r.tabBtn("artists"), "focus moves with the selection");
-  assert.deepEqual(r.tabBtns().map((b) => b.getAttribute("aria-selected")), ["false", "true", "false"]);
-  assert.deepEqual(r.tabBtns().map((b) => b.getAttribute("tabindex")), ["-1", "0", "-1"]);
+  assert.deepEqual(r.tabBtns().map((b) => b.getAttribute("aria-selected")), ["false", "true", "false", "false"]);
+  assert.deepEqual(r.tabBtns().map((b) => b.getAttribute("tabindex")), ["-1", "0", "-1", "-1"]);
   assert.deepEqual(r.calls.tab, ["artists"]);
 
   ev = keydown(r.tabBtn("artists"), "ArrowRight");
   assert.equal(ev.defaultPrevented, true);
   assert.equal(r.ui.tab, "rankings");
-
-  // the last tab: the arrow is NOT prevented, so the D-pad router moves on
   ev = keydown(r.tabBtn("rankings"), "ArrowRight");
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(r.ui.tab, "queue");
+
+  // the last tab (the Queue): the arrow is NOT prevented, so the D-pad router moves on
+  ev = keydown(r.tabBtn("queue"), "ArrowRight");
   assert.equal(ev.defaultPrevented, false);
+  assert.equal(r.ui.tab, "queue");
+  assert.deepEqual(r.calls.tab, ["artists", "rankings", "queue"]);
+  keydown(r.tabBtn("queue"), "ArrowLeft");
   assert.equal(r.ui.tab, "rankings");
-  assert.deepEqual(r.calls.tab, ["artists", "rankings"]);
 
   ev = keydown(r.tabBtn("rankings"), "ArrowLeft");
   assert.equal(ev.defaultPrevented, true);
@@ -190,7 +195,7 @@ test("arrow keys move the selected tab", () => {
   // the first tab: Left is not prevented either
   ev = keydown(r.tabBtn("all"), "ArrowLeft");
   assert.equal(ev.defaultPrevented, false);
-  assert.deepEqual(r.calls.tab, ["artists", "rankings", "artists", "all"]);
+  assert.deepEqual(r.calls.tab, ["artists", "rankings", "queue", "rankings", "artists", "all"]);
 
   // a TV remote with no key name (keyCode 39), and chords / other keys left alone
   ev = keydown(r.tabBtn("all"), "Unidentified", { keyCode: 39 });
@@ -231,7 +236,7 @@ test("no songbook / type chips and no sort select: the tabs are the only control
   assert.equal(r.panel.all("[data-src]").length + r.panel.all("[data-kind]").length, 0, "no songbook / type chips");
   assert.equal(r.panel.all(".chip").length, 0, "no chip at all while the rankings view is closed");
   assert.ok(!("filters" in r.ui) && !("sort" in r.ui), "no filters / sort on the returned object");
-  assert.deepEqual(Object.keys(r.ui).sort(), ["refreshPane", "render", "reset", "setTab", "tab"]);
+  assert.deepEqual(Object.keys(r.ui).sort(), ["refreshPane", "render", "reset", "setCount", "setTab", "tab"]);
 
   // the only chips are the rankings view's own (player, and difficulty when there is a choice)
   r.ui.setTab("rankings");
@@ -248,7 +253,7 @@ test("render keeps the current tab, and builds the tabs once", () => {
   r.tabBtn("artists").focus();
   r.ui.render();
   assert.equal(r.ui.tab, "artists");
-  assert.deepEqual(r.tabBtns(), before, "the same three buttons");
+  assert.deepEqual(r.tabBtns(), before, "the same four buttons");
   assert.equal(r.doc.activeElement, r.tabBtn("artists"), "focus is left alone");
   assert.equal(r.calls.tab.length, n, "render fires no callbacks");
   assert.equal(r.doc.htmlWrites, 0);
@@ -548,4 +553,26 @@ test("createBrowseUI needs its two containers", () => {
   const old = createBrowseUI({ tabsEl: el(), paneEl: el(), doc, chipsEl: el(), getFacets: () => { throw new Error("unused"); } });
   old.render();
   assert.equal(old.tab, "all");
+});
+
+test("the Queue tab's count (setCount): after the name, before or after the tabs exist, 0 = none", () => {
+  const r = setup();
+  r.ui.setCount("queue", 3);           // before render(): kept, painted when the tab is built
+  r.ui.render();
+  const q = r.tabBtn("queue");
+  assert.equal(q.textContent, "Queue3");
+  assert.equal(q.one(".tab-count").textContent, "3");
+  r.ui.setCount("queue", 12);
+  assert.equal(q.one(".tab-count").textContent, "12");
+  r.ui.setCount("queue", 0);
+  assert.equal(q.textContent, "Queue", "an empty queue shows no count");
+  for (const junk of [-2, NaN, "x", null, undefined]) {
+    r.ui.setCount("queue", junk);
+    assert.equal(q.one(".tab-count").textContent, "", String(junk));
+  }
+  r.ui.setCount("queue", 2.9);
+  assert.equal(q.one(".tab-count").textContent, "2");
+  r.ui.setCount("bogus", 5);           // unknown tab: ignored, nothing thrown
+  assert.deepEqual(r.calls.tab, [], "a count is not a tab change");
+  assert.equal(r.tabBtn("all").all(".tab-count").length, 0, "only the Queue tab carries a count");
 });

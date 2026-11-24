@@ -17,12 +17,12 @@
 
 const def = (kind, modal, group, z, autoHideMs = 0) => Object.freeze({ kind, modal, group, z, autoHideMs });
 
-/** id → { kind, modal, group, z, autoHideMs }. `controls`' period is set at runtime. */
+/** id → { kind, modal, group, z, autoHideMs }. (The `controls` bar went with the playback dock —
+ *  Rae, 2026-11-24; the stage footer is not an overlay. The `queue` panel went the same day: the
+ *  queue is a tab of the Songs panel.) */
 export const OVERLAY_DEFS = Object.freeze({
-  controls:  def("bar",    false, null,     20),
   adjust:    def("toast",  false, null,     25, 2500),
   search:    def("panel",  true,  "panel",  40),
-  queue:     def("panel",  true,  "panel",  40),
   mixer:     def("panel",  true,  "panel",  40),
   settings:  def("panel",  true,  "panel",  40),
   song:      def("sheet",  true,  "sheet",  50),

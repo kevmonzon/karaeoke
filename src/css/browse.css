@@ -53,6 +53,12 @@
               background-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .browse-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--brand-2); }
+/* The Queue tab's count (browseUI.setCount): a small pill after the name; nothing when empty. */
+.tab-count:not(:empty) {
+  display: inline-block; margin-inline-start: .4em; padding: 0 .45em; min-width: 1.4em;
+  border-radius: 999px; background: color-mix(in srgb, var(--brand-2) 22%, transparent); color: var(--text);
+  font-size: .85em; line-height: 1.5; font-variant-numeric: tabular-nums; text-align: center;
+}
 
 /* ---- Chips (the rankings view's player / difficulty filters) -----------------------------
    Each group wraps its own chips. A chip is a pill, --chip-h tall, its own width (a short label

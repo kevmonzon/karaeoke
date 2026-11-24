@@ -139,8 +139,11 @@ function fakeDom() {
   const matches = (n, sel) => {
     if (!n || !n.classList) return false;
     if (sel.startsWith(".")) return n.classList.contains(sel.slice(1));
-    const a = /^\[([\w-]+)\]$/.exec(sel);
-    if (a) return a[1] in n.attrs;
+    // [attr] / [attr="value"], one or several in a row ('[role="tab"][aria-selected="true"]')
+    const groups = [...sel.matchAll(/\[([\w-]+)(?:="([^"]*)")?\]/g)];
+    if (groups.length && groups.map((m) => m[0]).join("") === sel) {
+      return groups.every((m) => m[1] in n.attrs && (m[2] === undefined || n.attrs[m[1]] === m[2]));
+    }
     return n.tagName === sel.toUpperCase();
   };
   const make = (tag) => {
@@ -194,7 +197,7 @@ function fakeDom() {
   return { doc, make };
 }
 
-function withRig({ songs = 0, activate = true, queueActivate = true } = {}, fn) {
+function withRig({ songs = 0, activate = true, queueActivate = true, tab = false } = {}, fn) {
   const { doc, make } = fakeDom();
   const songList = make("ul");
   songList.ownerDocument = doc;
@@ -204,6 +207,11 @@ function withRig({ songs = 0, activate = true, queueActivate = true } = {}, fn) 
   close.setAttribute("data-ov-close", "");
   const queueList = make("ul");
   panel.appendChild(close);
+  // The Songs panel's Queue tab (2026-11-24): where focus goes when the queue empties under it.
+  const qTab = make("button");
+  qTab.setAttribute("role", "tab");
+  qTab.setAttribute("aria-selected", "true");
+  if (tab) panel.appendChild(qTab);
   panel.appendChild(queueList);
   const heading = make("span");
   const elsewhere = make("button");     // focus outside both lists (a song-sheet button, say)
@@ -241,7 +249,7 @@ function withRig({ songs = 0, activate = true, queueActivate = true } = {}, fn) 
     };
     // A real queue driving the list, the way app.js wires it (onChange → renderQueue).
     const queue = createQueue({ onChange: () => lib.renderQueue(queue.list, queue.listBy) });
-    return fn({ doc, lib, calls, row, qrow, press, click, queue, queueList, close, heading, elsewhere });
+    return fn({ doc, lib, calls, row, qrow, press, click, queue, queueList, close, heading, elsewhere, panel });
   } finally {
     globalThis.document = saved.document; globalThis.window = saved.window; globalThis.requestAnimationFrame = saved.raf;
   }
@@ -335,7 +343,9 @@ test("queue list: one tab stop, data-index on every row, role=list, ✕ is point
     assert.equal(b.querySelector(".title").textContent, "Song b");
     assert.equal(b.querySelector(".artist").textContent, "Artist b");
     assert.equal(b.querySelector(".by").textContent, " · Mia");
-    assert.equal(heading.textContent, "(4)");
+    // The count is the Songs panel's Queue tab's now (app.js → browseUI.setCount): library-ui no
+    // longer writes a heading.
+    assert.equal(heading.textContent, "");
   });
 });
 
@@ -434,7 +444,7 @@ test("queue list: after a remove (or the song starting) focus goes to the row at
   });
 });
 
-test("queue list: an emptied queue puts focus on the panel's Close", () => {
+test("queue list: an emptied queue puts focus on the panel's Close (no tab)", () => {
   withRig({}, ({ doc, lib, queue, close, heading }) => {
     queue.add(song("a")); queue.add(song("b"));
     lib.focusQueueRow(1);
@@ -442,6 +452,18 @@ test("queue list: an emptied queue puts focus on the panel's Close", () => {
     assert.equal(doc.activeElement, close);
     assert.equal(doc.focusLog.at(-1).opts.preventScroll, true);
     assert.equal(heading.textContent, "");
+  });
+});
+
+test("queue list: on the Songs panel's Queue tab an emptied queue puts focus on the tab", () => {
+  withRig({ tab: true }, ({ doc, lib, queue, panel }) => {
+    queue.add(song("a")); queue.add(song("b"));
+    lib.focusQueueRow(0);
+    queue.clear();
+    const t = panel.children.find((c) => c.attrs.role === "tab");
+    assert.ok(t, "the rig has the tab");
+    assert.equal(doc.activeElement, t);
+    assert.equal(doc.focusLog.at(-1).opts.preventScroll, true);
   });
 });
 

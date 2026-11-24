@@ -1,6 +1,6 @@
 /*
  * shell.test.js — the stage shell's runtime (M3): the history sync, the overlay DOM adapter,
- * the control bar's one owner, and the home tiles (src/js/ui/overlays-dom.js, shell.js, home.js).
+ * the stage footer's owner (src/js/ui/overlays-dom.js, shell.js). The home tiles and home.js are gone (2026-11-24).
  * A minimal fake document, a fake history and fake timers; the stack is the real M1 stack with
  * the `subscribe` wrapper app.js adds, so the tests run the real integration path.
  * Run with:  node --test
@@ -11,8 +11,7 @@ import assert from "node:assert/strict";
 
 import { createOverlayStack } from "../src/js/ui/overlay-stack.js";
 import { createHistorySync, createOverlays } from "../src/js/ui/overlays-dom.js";
-import { nextAutoHide, createShell } from "../src/js/ui/shell.js";
-import { HOME_TILES, homeTiles, createHome } from "../src/js/ui/home.js";
+import { createShell, TICK_MS, footHideMs } from "../src/js/ui/shell.js";
 
 // --- a minimal fake document (keep under 60 lines) ----------------------------------------
 class El {
@@ -108,8 +107,8 @@ function rig({ nativeInert = true, register = true } = {}) {
   add("scrim").hidden = true;
   add("status");
   const ctl = add("ov-controls", doc.body, "section");
-  for (const id of ["btn-restart", "btn-play", "toggle-lib", "toggle-queue", "btn-mixer", "btn-settings", "btn-fullscreen"]) add(id, ctl, "button");
-  const panels = { search: "ov-search", queue: "ov-queue", mixer: "ov-mixer", settings: "settings-panel", song: "ov-song", adjust: "ov-adjust" };
+  for (const id of ["btn-restart", "btn-play", "toggle-lib", "btn-mixer", "btn-settings", "btn-fullscreen"]) add(id, ctl, "button");
+  const panels = { search: "ov-search", mixer: "ov-mixer", settings: "settings-panel", song: "ov-song", adjust: "ov-adjust" };
   for (const [id, elId] of Object.entries(panels)) {
     const el = add(elId, doc.body, "section");
     el.hidden = true;
@@ -139,19 +138,30 @@ function rig({ nativeInert = true, register = true } = {}) {
 function shellRig(opts = {}) {
   const r = rig(opts);
   if (opts.before) opts.before(r);
-  const values ={ "ui.playback": false, "ui.autoHideSec": 3, ...(opts.settings || {}) };
-  const calls = { restart: 0, fullscreen: 0 };
+  const calls = { fullscreen: 0, queue: [] };
+  const values = { "ui.footer.autoHide": true, "ui.footer.hideSec": 3, ...(opts.settings || {}) };
   let tickFn = null, tickMs = 0;
+  // One fake clock for the stack tick AND the footer's countdown (setTimeout).
+  const timeouts = []; let tid = 0;
   const shell = createShell({
     overlays: r.ov, stack: r.stack, doc: r.doc,
     settings: { get: (p) => values[p] },
-    actions: { restart: () => calls.restart++, fullscreen: () => calls.fullscreen++ },
-    timers: { setInterval: (fn, ms) => { tickFn = fn; tickMs = ms; }, clearInterval() {} },
+    actions: { fullscreen: () => calls.fullscreen++, queue: (el) => calls.queue.push(el) },
+    timers: {
+      setInterval: (fn, ms) => { tickFn = fn; tickMs = ms; }, clearInterval() {},
+      setTimeout: (fn, ms) => { const id = ++tid; timeouts.push({ id, at: r.clock.t + ms, fn }); return id; },
+      clearTimeout: (id) => { const i = timeouts.findIndex((x) => x.id === id); if (i >= 0) timeouts.splice(i, 1); },
+    },
   });
   shell.wire();
-  const advance = (ms) => { for (let left = ms; left > 0; left -= tickMs) { r.clock.t += tickMs; tickFn(); } };
-  const hidden = () => r.doc.body.classList.contains("controls-hidden");
-  return { ...r, shell, values, calls, advance, hidden, get tickMs() { return tickMs; } };
+  const advance = (ms) => {
+    for (let left = ms; left > 0; left -= tickMs) {
+      r.clock.t += tickMs; tickFn();
+      for (const x of timeouts.filter((y) => y.at <= r.clock.t)) { timeouts.splice(timeouts.indexOf(x), 1); x.fn(); }
+    }
+  };
+  const hidden = () => r.doc.body.classList.contains("foot-hidden");
+  return { ...r, shell, calls, values, advance, hidden, get tickMs() { return tickMs; } };
 }
 
 const isInert = (el) => el.hasAttribute("inert");
@@ -237,10 +247,10 @@ test("history: an overlay opened without activation pushes no entry", () => {
   const r = rig();
   r.ov.arm();
   r.stage.focus();
-  assert.equal(r.ov.open("queue", { activated: false }), true);
+  assert.equal(r.ov.open("search", { activated: false }), true);
   assert.equal(r.h.calls.push, 1);                 // the sentinel only
   assert.equal(r.doc.activeElement, r.stage);     // focus is not moved by a relay open
-  r.ov.close("queue");
+  r.ov.close("search");
   assert.equal(r.h.calls.back, 0);
 });
 
@@ -250,13 +260,13 @@ test("history: a panel swap replaces the entry", () => {
   r.ov.arm();
   r.ov.open("search");
   r.h.calls.push = 0;
-  assert.equal(r.ov.open("queue"), true);
+  assert.equal(r.ov.open("mixer"), true);
   assert.equal(r.h.calls.replace, 1);
   assert.equal(r.h.calls.push, 0);
   assert.equal(r.h.calls.back, 0);
-  assert.deepEqual(r.h.state, { kv: "overlay", id: "queue" });
+  assert.deepEqual(r.h.state, { kv: "overlay", id: "mixer" });
   assert.equal(r.el("ov-search").hidden, true);
-  r.h.user();                                      // one Back closes Queue and nothing else
+  r.h.user();                                      // one Back closes the Mixer and nothing else
   assert.deepEqual(r.stack.list(), []);
   assert.equal(r.h.state.kv, "sentinel");
 });
@@ -325,19 +335,17 @@ test("history: a relay-opened overlay closes on browser Back without leaving the
   const r = rig();
   r.ov.wire();
   r.ov.arm();
-  r.ov.open("queue", { activated: false });
+  r.ov.open("search", { activated: false });
   r.h.user();
-  assert.equal(r.stack.isOpen("queue"), false);
+  assert.equal(r.stack.isOpen("search"), false);
   assert.equal(r.h.state.kv, "sentinel");
 });
 
 // --- overlays ----------------------------------------------------------------------------
 test("overlays: a modal makes the stage inert and shows the scrim", () => {
   const r = rig();
-  r.ov.register("controls", { el: r.el("ov-controls"), visibility: "class" });
   r.ov.open("search");
-  assert.equal(isInert(r.stage), true);
-  assert.equal(isInert(r.el("ov-controls")), true);  // the bar is behind the modal
+  assert.equal(isInert(r.stage), true);              // the stage — and the footer inside it
   assert.equal(isInert(r.el("ov-search")), false);
   assert.equal(r.el("ov-search").hidden, false);
   assert.equal(r.el("ov-search").classList.contains("open"), true);
@@ -345,7 +353,6 @@ test("overlays: a modal makes the stage inert and shows the scrim", () => {
   assert.equal(r.doc.body.dataset.ov, "search");
   r.ov.close();
   assert.equal(isInert(r.stage), false);
-  assert.equal(isInert(r.el("ov-controls")), false);
   assert.equal(r.el("scrim").hidden, true);
   assert.equal(r.doc.body.dataset.ov, "");
 });
@@ -382,23 +389,23 @@ test("overlays: a vanished opener sends focus to the stage", () => {
 test("overlays: a panel swap moves inert correctly", () => {
   const r = rig();
   r.ov.open("search");
-  r.ov.open("queue");
+  r.ov.open("mixer");
   assert.equal(isInert(r.el("ov-search")), false);
-  assert.equal(isInert(r.el("ov-queue")), false);
+  assert.equal(isInert(r.el("ov-mixer")), false);
   assert.equal(isInert(r.stage), true);
   r.ov.open("song");                               // a sheet above the panel
-  assert.equal(isInert(r.el("ov-queue")), true);
+  assert.equal(isInert(r.el("ov-mixer")), true);
   assert.equal(isInert(r.el("ov-song")), false);
   r.ov.close("song");
-  assert.equal(isInert(r.el("ov-queue")), false);
-  r.ov.close("queue");
-  const all = [r.stage, ...Object.values(r.panels).map(r.el), r.el("ov-controls"), r.el("scrim")];
+  assert.equal(isInert(r.el("ov-mixer")), false);
+  r.ov.close("mixer");
+  const all = [r.stage, ...Object.values(r.panels).map(r.el), r.el("scrim")];
   assert.deepEqual(all.filter(isInert), []);       // nothing left inert after both close
 });
 
 test("overlays: body[data-panel] follows the open panel", () => {
   const r = rig();
-  for (const id of ["search", "queue", "mixer", "settings"]) {
+  for (const id of ["search", "mixer", "settings"]) {
     r.ov.open(id);
     assert.equal(r.doc.body.dataset.panel, "right", id);
     r.ov.close(id);
@@ -408,7 +415,7 @@ test("overlays: body[data-panel] follows the open panel", () => {
   assert.equal(r.doc.body.dataset.panel, "");
   r.ov.close("song");
   r.ov.open("search");
-  r.ov.open("queue");                              // a swap keeps it "right"
+  r.ov.open("mixer");                              // a swap keeps it "right"
   assert.equal(r.doc.body.dataset.panel, "right");
 });
 
@@ -523,64 +530,17 @@ test("overlays: without native inert, aria-hidden and a focus redirect stand in"
 });
 
 // --- shell -------------------------------------------------------------------------------
-test("shell: nextAutoHide is 0 while paused, idle or always-show", () => {
-  assert.equal(nextAutoHide({ playing: false, alwaysShow: false, seconds: 3 }), 0);   // paused or idle
-  assert.equal(nextAutoHide({ playing: true, alwaysShow: true, seconds: 3 }), 0);
-  assert.equal(nextAutoHide({ playing: false, alwaysShow: true, seconds: 9 }), 0);
-  assert.equal(nextAutoHide({}), 0);
+// Since 2026-11-24 there is no control bar (Rae removed the playback dock): the shell wires the
+// footer's panel buttons, arms the history sentinel, ticks the stack and writes idle / kind.
+test("shell: there is no control bar — nothing registered, nothing to hide", () => {
   const s = shellRig();
-  s.shell.setPlaying(true);                        // idle wins over playing
-  s.advance(5000);
-  assert.equal(s.hidden(), false);
-});
-
-test("shell: nextAutoHide uses the setting in seconds", () => {
-  const on = (seconds) => nextAutoHide({ playing: true, alwaysShow: false, seconds });
-  assert.equal(on(3), 3000);
-  assert.equal(on(1.5), 1500);
-  assert.equal(on(15), 15000);
-  assert.equal(on(0.5), 1000);                     // at least one second
-  assert.equal(on(undefined), 3000);               // missing or invalid → the 3 s default
-  assert.equal(on("x"), 3000);
-});
-
-test("shell: the bar is visible at boot and after poke", () => {
-  const s = shellRig();
-  assert.equal(s.tickMs, 250);
-  assert.equal(s.stack.isOpen("controls"), true);
-  assert.equal(s.hidden(), false);
-  s.shell.setIdle(false);
-  s.shell.setPlaying(true);
-  s.advance(2750);
-  assert.equal(s.hidden(), false);
-  s.advance(250);                                  // 3 s of no input while playing
-  assert.equal(s.hidden(), true);
-  s.shell.poke();
-  assert.equal(s.hidden(), false);
-  s.values["ui.playback"] = true;                  // "always show"
-  s.shell.applyAutoHide();
+  assert.deepEqual(s.stack.list(), []);
+  assert.equal(s.doc.body.classList.contains("controls-hidden"), false);
   s.advance(10000);
-  assert.equal(s.hidden(), false);
-});
-
-test("shell: overlays-dom leaves #ov-controls unhidden", () => {
-  let writes = 0;
-  const s = shellRig({   // trap `hidden` before the shell registers the bar
-    before: (r) => Object.defineProperty(r.el("ov-controls"), "hidden", { get: () => false, set: () => { writes++; } }),
-  });
-  const ctl = s.el("ov-controls");
-  assert.equal(ctl.classList.contains("open"), true);
-  s.shell.setIdle(false);
-  s.shell.setPlaying(true);
-  s.advance(3000);                                 // hides by timer
-  assert.equal(s.hidden(), true);
-  assert.equal(ctl.classList.contains("open"), false);
-  s.shell.poke();
-  assert.equal(ctl.classList.contains("open"), true);
-  s.ov.open("search");
-  s.ov.close("search");
-  s.stack.close("controls");
-  assert.equal(writes, 0);                         // `hidden` never set on a "class" element
+  assert.equal(s.doc.body.classList.contains("controls-hidden"), false);
+  assert.equal(typeof s.shell.poke, "undefined");
+  assert.equal(typeof s.shell.toggle, "undefined");
+  assert.equal(s.tickMs, TICK_MS);
 });
 
 test("shell: adjust toast closes within 2500–2750 ms", () => {
@@ -592,37 +552,7 @@ test("shell: adjust toast closes within 2500–2750 ms", () => {
   assert.ok(elapsed >= 2500 && elapsed <= 2750, `closed after ${elapsed} ms`);
 });
 
-test("shell: the bar never hides while a modal is open, and re-arms after", () => {
-  const s = shellRig();
-  s.shell.setIdle(false);
-  s.shell.setPlaying(true);
-  s.ov.open("search");
-  s.advance(6000);
-  assert.equal(s.hidden(), false);
-  s.ov.close("search");
-  s.advance(2750);
-  assert.equal(s.hidden(), false);                 // a full period again after the close
-  s.advance(250);
-  assert.equal(s.hidden(), true);
-});
-
-test("shell: pausing or going idle shows the bar", () => {
-  const s = shellRig();
-  s.shell.setIdle(false);
-  s.shell.setPlaying(true);
-  s.advance(3000);
-  assert.equal(s.hidden(), true);
-  s.shell.setPlaying(false);
-  assert.equal(s.hidden(), false);
-  s.advance(10000);
-  assert.equal(s.hidden(), false);
-  s.shell.setPlaying(true);
-  s.advance(3000);
-  s.shell.setIdle(true);
-  assert.equal(s.hidden(), false);
-});
-
-test("shell: wire binds the bar buttons to the overlays and the actions", () => {
+test("shell: wire binds the footer's panel buttons to the overlays and the actions", () => {
   const s = shellRig();
   const click = (id) => s.el(id).dispatch("click");
   click("toggle-lib");
@@ -630,18 +560,17 @@ test("shell: wire binds the bar buttons to the overlays and the actions", () => 
   assert.equal(s.stack.opener("search"), s.el("toggle-lib"));
   click("toggle-lib");
   assert.equal(s.stack.isOpen("search"), false);
-  click("toggle-queue");
-  assert.equal(s.stack.isOpen("queue"), true);
-  s.ov.close("queue");
+  // The queue is a tab of Songs (2026-11-24): the queue count asks app.js (actions.queue) to show
+  // it, with itself as the opener; it opens no overlay of its own.
   click("queue-count");
-  assert.equal(s.stack.isOpen("queue"), true);
+  assert.deepEqual(s.calls.queue, [s.el("queue-count")]);
+  assert.deepEqual(s.stack.list(), []);
   click("btn-mixer");
-  assert.deepEqual(s.stack.list(), ["controls", "mixer"]);
+  assert.deepEqual(s.stack.list(), ["mixer"]);
   click("btn-settings");
-  assert.deepEqual(s.stack.list(), ["controls", "settings"]);
+  assert.deepEqual(s.stack.list(), ["settings"]);
   click("btn-fullscreen");
-  click("btn-restart");
-  assert.deepEqual(s.calls, { restart: 1, fullscreen: 1 });
+  assert.deepEqual(s.calls, { fullscreen: 1, queue: [s.el("queue-count")] });
 });
 
 test("shell: the first keydown or pointerdown arms the sentinel once", () => {
@@ -656,22 +585,7 @@ test("shell: the first keydown or pointerdown arms the sentinel once", () => {
   assert.deepEqual(s.h.state, { kv: "sentinel" });
 });
 
-test("shell: activity pokes the bar; a pointer resting in place does not", () => {
-  const s = shellRig();
-  s.shell.setIdle(false);
-  s.shell.setPlaying(true);
-  s.advance(3000);
-  assert.equal(s.hidden(), true);
-  s.doc.body.dispatch("pointermove", { clientX: 10, clientY: 10 });
-  assert.equal(s.hidden(), false);
-  s.advance(3000);
-  s.doc.body.dispatch("pointermove", { clientX: 10, clientY: 10 });
-  assert.equal(s.hidden(), true);
-  s.doc.body.dispatch("touchstart", {});
-  assert.equal(s.hidden(), false);
-});
-
-test("shell: setIdle, setKind and setStatus write the document", () => {
+test("shell: setIdle and setKind write the document", () => {
   const s = shellRig();
   s.shell.setIdle(false);
   assert.equal(s.doc.body.dataset.idle, "false");
@@ -681,49 +595,78 @@ test("shell: setIdle, setKind and setStatus write the document", () => {
   assert.equal(s.doc.body.dataset.kind, "midi");
   s.shell.setKind("");
   assert.equal(s.doc.body.dataset.kind, "");
-  s.shell.setStatus("Song A: 87, Good job!");
-  assert.equal(s.el("status").textContent, "Song A: 87, Good job!");
-  s.shell.setStatus(null);
-  assert.equal(s.el("status").textContent, "");
 });
 
-// --- home --------------------------------------------------------------------------------
-test("home: homeTiles keeps order and drops disabled ids", () => {
-  assert.deepEqual(HOME_TILES.map((t) => t.id),
-    ["songs", "artists", "rankings", "favorites", "queue", "settings"]);
-  assert.deepEqual(homeTiles(["settings", "songs", "queue", "tonight", "favorites"]).map((t) => t.id),
-    ["songs", "favorites", "queue", "settings"], "Tonight is gone (2026-11-24): an old id is ignored");
-  assert.deepEqual(homeTiles([]), []);
-  for (const t of HOME_TILES) assert.ok(t.label && t.icon, t.id);
+// --- the footer's auto-hide (Rae, 2026-11-24) ----------------------------------------------
+test("footer: footHideMs is 0 while paused, idle, under a modal or with the setting off", () => {
+  assert.equal(footHideMs({ playing: false, autoHide: true, seconds: 3 }), 0);
+  assert.equal(footHideMs({ playing: true, autoHide: true, seconds: 3, idle: true }), 0);
+  assert.equal(footHideMs({ playing: true, autoHide: true, seconds: 3, modal: true }), 0);
+  assert.equal(footHideMs({ playing: true, autoHide: false, seconds: 3 }), 0);
+  assert.equal(footHideMs({ playing: true, autoHide: true, seconds: 3 }), 3000);
+  assert.equal(footHideMs({ playing: true, autoHide: true, seconds: 0.2 }), 1000, "at least a second");
+  assert.equal(footHideMs({ playing: true, autoHide: true, seconds: "x" }), 3000, "junk → the 3 s default");
 });
 
-test("home: unknown ids are ignored", () => {
-  assert.deepEqual(homeTiles(["nope", "songs", "__proto__", "constructor"]).map((t) => t.id), ["songs"]);
-  assert.deepEqual(homeTiles(new Set(["queue", "x"])).map((t) => t.id), ["queue"]);
+test("footer: hides after the set seconds while a song plays, never while idle or paused", () => {
+  const s = shellRig();
+  s.shell.setPlaying(true);
+  s.advance(5000);
+  assert.equal(s.hidden(), false, "idle wins over playing");
+  s.shell.setIdle(false);
+  s.advance(2750);
+  assert.equal(s.hidden(), false);
+  s.advance(500);
+  assert.equal(s.hidden(), true);
+  s.shell.setPlaying(false);                       // pausing shows it and keeps it
+  assert.equal(s.hidden(), false);
+  s.advance(10000);
+  assert.equal(s.hidden(), false);
 });
 
-test("home: render builds button tiles with one delegated listener", () => {
-  const doc = makeDoc();
-  const home = doc.add("home");
-  const tiles = doc.add("home-tiles", home, "nav");
-  const room = doc.add("home-room", home);
-  doc.add("i-search", doc.add("sprite", doc.body, "svg"), "symbol");
-  const got = [];
-  const h = createHome({ el: home, enabled: ["queue", "songs", "favorites"], onTile: (id) => got.push(id), doc });
-  h.render();
-  assert.deepEqual(tiles.children.map((b) => b.getAttribute("data-tile")), ["songs", "favorites", "queue"]);
-  assert.ok(tiles.children.every((b) => b.tagName === "BUTTON" && b.className === "home-tile"));
-  assert.equal(tiles.children[0].children[0].tagName, "SVG");      // its symbol exists
-  assert.equal(tiles.children[1].children.length, 1);              // no symbol → label only
-  tiles.children[2].children[0].dispatch("click");                 // a click on the label
-  assert.deepEqual(got, ["queue"]);
-  assert.equal(tiles.ls.click.length, 1);
-  tiles.children[1].focus();
-  h.render();                                      // a rebuild keeps the focused tile focused
-  assert.equal(doc.activeElement.getAttribute("data-tile"), "favorites");
-  assert.equal(tiles.ls.click.length, 1);          // still one listener
-  h.setRoom("ABC123");
-  assert.equal(room.textContent, "Room ABC123");
-  h.setRoom("");
-  assert.equal(room.textContent, "");
+test("footer: a tap, a mouse move or a key shows it; a resting pointer and Back do not", () => {
+  const s = shellRig();
+  s.shell.setIdle(false); s.shell.setPlaying(true);
+  s.advance(3250);
+  assert.equal(s.hidden(), true);
+  s.doc.body.dispatch("pointermove", { clientX: 10, clientY: 10 });
+  assert.equal(s.hidden(), false);
+  s.advance(3250);
+  s.doc.body.dispatch("pointermove", { clientX: 10, clientY: 10 });   // same spot: not a move
+  assert.equal(s.hidden(), true);
+  s.doc.body.dispatch("keydown", { key: "Escape" });                  // Back never wakes it
+  assert.equal(s.hidden(), true);
+  s.doc.body.dispatch("touchstart", {});
+  assert.equal(s.hidden(), false);
+  s.advance(3250);
+  s.doc.body.dispatch("keydown", { key: "ArrowLeft" });
+  assert.equal(s.hidden(), false);
 });
+
+test("footer: never hides under a panel; closing it starts a full period", () => {
+  const s = shellRig();
+  s.shell.setIdle(false); s.shell.setPlaying(true);
+  s.ov.open("search");
+  s.advance(10000);
+  assert.equal(s.hidden(), false);
+  s.ov.close("search");
+  s.advance(2750);
+  assert.equal(s.hidden(), false);
+  s.advance(500);
+  assert.equal(s.hidden(), true);
+});
+
+test("footer: the setting off keeps it shown; the seconds are read live", () => {
+  const s = shellRig({ settings: { "ui.footer.autoHide": false } });
+  s.shell.setIdle(false); s.shell.setPlaying(true);
+  s.advance(20000);
+  assert.equal(s.hidden(), false);
+  s.values["ui.footer.autoHide"] = true;
+  s.values["ui.footer.hideSec"] = 8;
+  s.shell.applyAutoHide();
+  s.advance(7750);
+  assert.equal(s.hidden(), false);
+  s.advance(500);
+  assert.equal(s.hidden(), true);
+});
+

@@ -40,7 +40,7 @@ offline after first-run setup.
 | | Feature |
 |---|---|
 | 🎹 | **MIDI synthesis** via SpessaSynth (WebAssembly + AudioWorklet) — no external audio files per song |
-| 🖥️ | **Stage-first everywhere** — one full-screen stage on every device; Songs, Queue, Mixer and Settings slide in from the right, one control bar hides while you sing, and a home screen (tiles + QR) shows when nothing is playing |
+| 🖥️ | **Stage-first everywhere** — one full-screen stage on every device; Songs, Queue, Mixer and Settings slide in from the right, a quiet status line and corner buttons sit along the bottom, and a home screen (QR + room code) shows when nothing is playing |
 | 📜 | **Videoke lyrics** — two fixed rows that take turns, outlined text and a count-in after each break (or the classic smooth-scrolling column), with a per-syllable wipe parsed from each song's own MIDI meta events |
 | 🔎 | **Forgiving search** — typo-tolerant (≈ close matches), a number finds that number in **every songbook** (SH, PLATKAR, TJMEDIA, MIDI), plus **Artists** and **Rankings** tabs |
 | 🎮 | **TV remote / D-pad / keyboard** — everything works with arrows, OK and Back alone; colour keys, media keys and number keys are shortcuts |
@@ -263,16 +263,19 @@ until you create the folders:
 ### 🖥️ The stage
 Every device — a laptop, a phone, a tablet, a TV — gets the same layout: **one full-screen stage**
 with the lyrics, and everything else on top of it.
-- **The control bar** (bottom) holds the seek bar, the transport, Key / Tempo / Volume and the
-  buttons that open the panels. While a song **plays** it hides after a few idle seconds and comes
-  back on a mouse move, a tap or a key (Back excepted); it never hides while paused, idle, or while
-  a panel is open.
-- **Panels slide in from the right:** **Songs**, **Queue**, **Mixer** (MIDI songs, when the channel
-  mixer is on) and **Settings** (⚙). One is open at a time; on a wide screen the lyrics move over and
+- **The bottom of the screen** holds the two-line **status line** at the left, the small **panel
+  buttons** — in the **bottom-right corner** whenever the screen is wider than tall (a TV, a laptop,
+  a phone on its side), just above the status line when it is held upright — and the **seek bar**
+  along the very bottom edge (see *The status line* below). While a song plays it fades away after a few idle seconds and
+  comes back on a tap, a mouse move or a key (Back excepted); it never hides while paused or idle
+  (⚙ → Display → **Footer**).
+- **Panels slide in from the right:** **Songs** (with the queue as its **Queue** tab), **Mixer**
+  (MIDI songs, when the channel mixer is on) and **Settings** (⚙). One is open at a time; on a wide screen the lyrics move over and
   stay uncovered beside it, on a phone held upright the panel fills the screen. **Back** (Esc, the
   browser's Back button or a TV remote's Back) closes the top panel and never leaves the app.
-- **The queue bar** (top of the stage) shows the song, artist, singer and key, and a **⏭ N** badge
-  for the songs waiting — tap it to open the queue.
+- **The queue bar** (top of the stage) shows the song, artist, singer and key, then **NEXT** — the
+  next song in the queue and who queued it — and **⏭ N** for the songs waiting (tap it to open the
+  queue).
 - **The home screen** appears whenever nothing is loaded: the **Ka-Rae-oke** logo, tiles (**Songs,
   Artists, Rankings, Favorites, Queue, Settings**) and, while the phone remote is on, a
   big **QR + room code** for guests. It never flashes between queued songs.
@@ -282,10 +285,10 @@ with the lyrics, and everything else on top of it.
   app enlarges them as soon as you touch the screen. The stage sizes itself from the screen, so the browser's own zoom (Ctrl/⌘ + / −) barely
   changes it — use Font size instead. **Overscan** moves the stage in from the edges for a TV that
   crops the picture; **Theme** is Auto (follows your OS), Dark or Light.
-- **Full screen** — the **Full screen** button at the end of the bar, or **F**.
+- **Full screen** — the **Full screen** panel button, or **F**.
 
 ### Find & queue songs
-Open **Songs** (the bar's Songs button, **S**, **/**, the Red key, a home tile — or just type a
+Open **Songs** (the 🔍 panel button, **F1**, **S**, **/**, the Red key — or just type a
 number).
 - **Search** by number, title, artist or language. Results come in up to three groups, always in
   this order:
@@ -312,10 +315,14 @@ number).
   queue), **Play next** (first in the queue), **Play now**, **★ Favorite**, **Cancel**. A
   double-click does *not* play — Play now is one tap in the sheet. The row's own **★** and **＋**
   still act directly.
-- **The Queue panel** lists what's waiting, with the name of the guest who added it. Tap a
-  queued song for **Play now · Move to top · Move up · Move down · Remove**; **✕** removes it at once;
-  **Clear all** empties the queue after asking. The queue advances by itself between songs (MIDI,
-  audio, video and YouTube alike).
+- **The queue** is the last tab of Songs — **All · Artists · Rankings · Queue**, with the number of
+  waiting songs on the tab. **Q**, the **Green** key or the queue count at the top of the stage open
+  Songs straight on it (the count again closes it). It lists what's waiting, with the name of the
+  guest who added it; with the remote on, a line on top shows the **room code** and the phones'
+  connection. Tap a queued song for **Play now · Move to top · Move up · Move down · Remove**; **✕**
+  removes it at once; **Clear all** empties the queue after asking. Typing in the search field
+  switches back to **All**, and the 🔍 button opens Songs on All. The queue advances by itself
+  between songs (MIDI, audio, video and YouTube alike).
 
 ### 🔢 Song numbers (number keys)
 Song numbers are not shown on screen, but they still work for anyone dialing from a printed
@@ -331,10 +338,10 @@ never does. **Number keys open the song search** turns this off.
 Every screen works with **the arrows, OK (Enter) and Back** alone, so a TV remote or a game-pad
 D-pad drives the whole app.
 - **Arrows** move to the nearest control in that direction. With nothing focused, the first arrow
-  shows the control bar and lands on **Play**.
+  lands on the **Songs** button (the first of the panel buttons).
 - **OK** presses the focused control (on a song row: the action sheet).
 - **Back** does one thing per press: clears a search box that has text, then closes the top panel
-  or dialog, then hides the control bar. It never stops the song.
+  or dialog, then takes focus off the bottom buttons. It never stops the song.
 - **Colour keys:** **Red** = Songs · **Green** = Queue · **Yellow** = next background ·
   **Blue** = melody volume (next level). **Media keys** play, pause, stop, skip and restart; **Channel + / −**
   change the key. The OS media controls (headset buttons, the lock screen) work too.
@@ -343,41 +350,49 @@ D-pad drives the whole app.
 
 Full list in [§8](#8-keyboard-shortcuts).
 
-### Playback controls (the control bar)
-- **Restart**, **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (each press steps the melody
-  guide's volume: **Off → 25% → 50% → 75% → 100% → Off**; the bar under its note shows the level),
-  and **🎤 Mic**.
-- **Seek bar** — click/drag to scrub (the current / total time flank it).
-- **Key ±** — transpose in semitones (the resulting key is named next to it).
-- **Tempo ±** — 0.5×–1.5× playback rate (a −/＋ stepper, like Key).
-- **Volume** — up to 200% (with the D-pad: Up / Down on the slider).
-- Then the panel buttons: **Songs**, **Queue**, **Mixer** (MIDI songs with the channel mixer on),
+### The status line, the corner buttons and the seek bar
+There is no playback bar: play, pause, next and restart come from the keys (**Space**, **N**, **P**,
+the media keys), a TV remote, or a phone.
+- **The status line** (bottom-left, small caps) is two lines: the song — the song count while
+  nothing plays, or **▶ Title — Artist** (❚❚ when paused) — and under it five values, each between
+  a **−** and a **+**:
+  - **VOL** 0–100 (steps of 5)
+  - **KEY** the song's key (**F**, **Am**), **F → G** once transposed; **+2** for a song with no
+    detected key
+  - **TEMPO** 0.50×–1.50× (steps of 0.05)
+  - **MELODY** Off / 25 / 50 / 75 / 100 — the guide melody's level
+  - **OFFSET** the lyric offset in ms (steps of 10)
+- **The panel buttons** — small icons in the bottom-right corner (just above the status line on a
+  screen held upright): **Songs** (the queue is its **Queue** tab), **Mixer** (MIDI songs with the channel mixer on),
   **Next background** (only while a video or photo background shows), **Settings** and **Full
-  screen**.
+  screen** (hover or long-press for the name).
+- **On a phone or a small tablet held upright** the bottom becomes a bar: the panel buttons share
+  the width, and the five values stand side by side like a mixing desk — the name, **+** above, the
+  value, **−** below. With touch, every button there is at least 44 px; on a landscape phone or a
+  tablet each value sits with its name above it between its **−** and **+**, so all five fit on one line.
+- **The seek bar** is the thin line on the bottom edge: press or drag along it to move in the song.
 
-Keep the bar up all the time with **⚙ → Display → Always show playback controls**, or change how
-long it waits with **Auto-hide after** (1–15 s, default 3 s). A change made from the keyboard or a
-TV remote flashes a short note on the stage ("Key +1", "Tempo 1.05×", "Melody 50%").
+A change made from the keyboard or a TV remote flashes a short note on the stage ("Key +1", "Tempo
+1.05×", "Melody 50%"), as do messages such as "Reserved: …".
 
 ### Lyrics
-Two looks, under ⚙ → Display → Lyrics → **Style**:
+Two looks, under ⚙ → Lyrics → Lyrics → **Style**:
 - **Stage** (default) — the videoke look: **two fixed rows** that take turns (the line being sung,
   and the one just sung until you reach the new line's second syllable, then a preview of the next),
   outlined text with a hard-edged wipe, and a **4 · 3 · 2 · 1 · GO!** count-in before the first line
   and after any break longer than 8 s ("♪ Instrumental" shows during the break). In portrait it uses
   four rows. Rows, alignment, **position** (at the bottom, or **centered on the screen**), line
-  animation, highlight colour, outline, shadow and the count-in are under ⚙ → Display → **Stage
-  lyrics**; **(backing vocals)** show in orange. Centered rows stay put when the playback bar shows or
-  hides; on a short screen (a landscape phone with the pitch guide on) they move down as far as needed
+  animation, highlight colour, outline, shadow and the count-in are under ⚙ → Lyrics → **Stage
+  lyrics**; **(backing vocals)** show in orange. Centered rows sit at the screen's middle; on a short screen (a landscape phone with the pitch guide on) they move down as far as needed
   to fit.
 - **Scroll** — a smooth-scrolling column that glides upward as lines finish; tune visible lines,
-  line merging and width under ⚙ → Display → Lyrics.
+  line merging and width under ⚙ → Lyrics → Scroll lyrics.
 
 Either way the active line is painted **syllable-by-syllable**. Nudge timing live with **`[`** /
 **`]`** (∓50 ms), and size the lyrics alone with **Lyrics size**.
 
 ### 🎙️ Microphone & voice
-⚙ → **Singing → Microphone & voice → Enable microphone** (or the bar's **🎤**; your browser asks
+⚙ → **Singing → Microphone & voice → Enable microphone** (your browser asks
 permission). It needs a secure page — `http://localhost` / `127.0.0.1` count, so no HTTPS is needed
 on the machine running the server; on a plain LAN address the button is disabled with the reason
 (see [§9](#9-serving-to-phonestvs-on-your-network)). Once live, your voice mixes with the music:
@@ -430,7 +445,7 @@ browser.
 
 ### 🎼 Guide vocal
 The detected **melody channel** has five volume levels — **Off, 25%, 50%, 75%, 100%** — up to learn
-a song, off to perform. The **🎵** button on the control bar (and **M** or the Blue key) steps to the
+a song, off to perform. **F2** (or **M**, or the Blue key) steps to the
 next level; ⚙ → Singing → Score → *Guide vocal (melody)* → **Melody volume** picks one, and **Solo**
 isolates the tune. The **Melody** toggle on the phone remote turns it off and back on at its level.
 
@@ -458,7 +473,7 @@ plays (and fixes thirdless power chords to the key's triad). **MIDI-only** — h
 and YouTube, which carry no note data.
 
 ### 🎛️ Channel mixer (MIDI)
-⚙ → **Music → MIDI → Channel mixer** adds a **Mixer** button to the control bar for a MIDI song;
+⚙ → **Music → MIDI → Channel mixer** adds a **Mixer** button to the corner buttons for a MIDI song;
 it opens a panel with **all 16 channels** (each labeled by instrument, ch 10 = Drums;
 silent channels are dimmed) with a **volume slider, mute + solo, and a live VU meter** fed by
 each channel's real audio level. Untouched channels keep the song's authored mix; turning the
@@ -472,7 +487,7 @@ then pick what shows behind the lyrics under ⚙ → **Display → Background**:
   the camera), **Off**, **Videos**, **Photos** or **Camera**. **Category** picks one sub-folder,
   or All.
 - **Dim** (default 35%) darkens the background under the lyrics; **Next background on each song**
-  (on) moves to the next clip or photo when a song starts. The **Yellow** key or the bar's **Next
+  (on) moves to the next clip or photo when a song starts. The **Yellow** key or the corner's **Next
   background** button (shown only while a video or photo background is up) changes it any time.
 - **Photos** — **Each photo** (3–60 s, default 8 s) and **Photo animation** (None, Fade, Slide,
   Zoom; default Fade). With reduced motion on in your OS, photos simply cut.
@@ -506,8 +521,8 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 **needs a network**. Tune the threshold / debounce / max-results / keyword in ⚙.
 
 ### 📱 Remote control (phones)
-A **QR code + room code** sit on the Queue panel and on the home screen (the remote is **on by
-default**; turn it off under **⚙ → Sources → Remote** for an untrusted network, and choose with **QR
+A **QR code + room code** sit under **⚙ → Phones & party → Remote** and on the home screen (the remote is **on by
+default**; turn it off under **⚙ → Phones & party → Remote** for an untrusted network, and choose with **QR
 on the stage** whether the stage shows it *When idle* (default), *Always* — during songs too, as a
 small code beside the pitch guide at exactly the guide's height (top-right, under the song title, when
 the guide is off or hidden) — or *Never*). Guests scan the QR with their phones (same network) to open **`/remote`**.
@@ -516,8 +531,8 @@ Scanning auto-connects; anyone typing the URL by hand enters the **room code** s
 The phone downloads only a **compact copy of the songbook** (a couple of megabytes even for a very
 large library) and gets **instant updates**: a tap reaches the TV in a fraction of a second over a
 live event stream. If something on the network holds that stream back, the phone falls back to
-checking once a second by itself and tries the stream again a minute later. The Queue panel shows
-the state (**Phones: instant / connecting… / polling**), and so does the phone's **You** tab. Five tabs:
+checking once a second by itself and tries the stream again a minute later. The Songs panel's Queue
+tab (with the room code) and ⚙ → Remote show the state (**Phones: instant / connecting… / polling**), and so does the phone's **You** tab. Five tabs:
 - **Now** — the current song with restart, play/pause, next, seek, **key / tempo / volume** (tempo
   is a −/＋ stepper), a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from
   their phone (on brings it back at the level the host's 🎵 button set), the live score, and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
@@ -536,7 +551,7 @@ the state (**Phones: instant / connecting… / polling**), and so does the phone
   **how the lyrics look on your phone** (lyric style, lyric lines 2–8 for Scroll, lyrics size
   70–180% — yours alone; the karaoke screen keeps its own layout), and the connection status + room code.
 
-**What guests may do** — ⚙ → Sources → Remote:
+**What guests may do** — ⚙ → Phones & party → Remote:
 
 | Setting | Default | |
 |---|---|---|
@@ -548,7 +563,7 @@ A request the host doesn't allow is refused, and the phone says so ("not allowed
 
 The host stays the real player — phones send requests that the host applies, so the whole room can
 build the queue together. When a song was queued from a phone, the host shows **who's singing** above
-the melody guide and on the title card, and an **"up next"** line in the last 20 seconds.
+the melody guide and on the title card, and the queue bar always shows who sings **next**.
 
 The **room code** is generated once per host browser and kept there (stable across restarts). Each
 host has its own code, so several karaoke stations can share one server. ⚠️ The code is a **friction
@@ -584,10 +599,11 @@ data; **Erase all app data** (red, two-click) wipes everything including the cac
 starts fresh. That one is irreversible.
 
 ### 🎬 Title card, Bluetooth mode
-- **Title card** — a title / artist / key (and singer, if queued from a phone) card overlays the
-  lyrics when a song starts, then fades in the words (⚙ → Display → Lyrics → **Title card**,
-  0–10 s; 0 = off).
-- **Bluetooth mode** (⚙ → Display → Lyrics) — BT speakers lag ~260 ms, so this delays the visuals
+- **Title card** — when a song starts, its title and artist (then who queued it and the key) show
+  in the middle of the stage, and **the lyrics stay hidden until the card goes**: after the card's
+  time (⚙ → Lyrics → Lyrics → **Title card**, 0–10 s; 0 = off) or as soon as the lyrics reach their
+  first count-in, whichever comes first.
+- **Bluetooth mode** (⚙ → Lyrics → Timing) — BT speakers lag ~260 ms, so this delays the visuals
   to match and disables the mic (and calibration); the offset stays adjustable.
 
 ---
@@ -598,34 +614,39 @@ All settings live in the **⚙ panel** and persist in `localStorage`. Their **de
 from **`src/config.js`** — edit that file to change built-in defaults, then click **Reset to
 defaults** in the panel to adopt them.
 
-Settings is a panel on the right (the bar's Settings button, or the home screen's Settings tile),
-organized into **collapsible categories** (🎬 Display · 🎵 Music · 🎤 Singing · 🔎 Sources) with a
+Settings is a panel on the right (the ⚙ panel button), organized into **collapsible
+categories** (🎬 Display · 🎤 Lyrics · 🎵 Music · 🎙️ Singing · 🔎 Songs & search · 📱 Phones & party ·
+⌨️ Keyboard shortcuts · ⚙️ Application) with a
 **search box** at the top — start typing to filter every control across all categories at once (it
 matches labels, section names, and synonyms like "latency" → Offset or "transpose" → Key). `Esc`
-or ✕ clears it. Volume, Tempo and Key live on the control bar (and are remembered too).
+or ✕ clears it. Volume, Tempo, Key, Melody and Offset are also on the status line (and remembered).
 
 Defaults are in *italics*.
 
 | Category → section | Controls |
 |---|---|
 | 🎬 **Display → Screen** | Theme (*Auto* / Dark / Light) · Font size (Extra small / Small / *Medium* / Large) · Overscan (*0* – 5%) · Show key hints (*on*) |
-| 🎬 **Display → Playback controls** | Always show playback controls (*off*) · Auto-hide after (1 – 15 s, *3 s*) |
-| 🎬 **Display → Lyrics** | Offset (±2000 ms, *0*) + Reset offset · Bluetooth mode (*off*) · Style (*Stage* / Scroll) · Smooth wipe (*on*) · Visible lines (2 – 8, *5*) · Merge lines (1 – 4, *2*) · Line width (50 – 100%, *90%*) — those three shape the Scroll style · Lyrics size (0.6 – 1.8×, *1.00×*) · Title card (0 – 10 s, *5 s*) |
-| 🎬 **Display → Stage lyrics** | Rows (*Auto — 4 in portrait* / 2 / 4) · Alignment (*Center* / Left-Right Split / Close Split) · Position (*Bottom* / Centered on screen) · Line animation (*None* / Fade / Wipe / Crossfade / Flip / Pop bounce) · Highlight colour (*blue*) · Random colour per song (*off*) · Outline (0 – 12, *6*) · Shadow (*on*) · Count-in (*on*) · "Instrumental" during breaks (*on*) |
+| 🎬 **Display → Footer** | Auto-hide while a song plays (*on*) · Hide after (1 – 15 s, *3 s*) |
 | 🎬 **Display → Background** | Background (*Auto* / Off / Videos / Photos / Camera) · Category (*All* + your sub-folders) · Dim (0 – 80%, *35%*) · Next background on each song (*on*) · Each photo (3 – 60 s, *8 s*) · Photo animation (None / *Fade* / Slide / Zoom) · Which camera (*Back* / Front) · Mirror (*Auto — front camera* / On / Off) |
+| 🎤 **Lyrics → Lyrics** | Style (*Stage* / Scroll) · Smooth wipe (*on*) · Lyrics size (0.6 – 1.8×) · Title card (0 – 10 s, *5 s*) |
+| 🎤 **Lyrics → Stage lyrics** | Rows (*Auto — 4 in portrait* / 2 / 4) · Alignment (*Center* / Left-Right Split / Close Split) · Position (Bottom / *Centered on screen*) · Line animation (*None* / Fade / Wipe / Crossfade / Flip / Pop bounce) · Highlight colour (*blue*) · Random colour per song (*off*) · Outline (0 – 12, *6*) · Shadow (*on*) · Count-in (*on*) · "Instrumental" during breaks (*on*) |
+| 🎤 **Lyrics → Scroll lyrics** | Visible lines (2 – 8) · Merge lines (1 – 4) · Line width (50 – 100%, *90%*) |
+| 🎤 **Lyrics → Timing** | Offset (±2000 ms, *0*) + Reset offset · Bluetooth mode (*off*) |
 | 🎵 **Music → Sound** | Reverb and Chorus (Off / Low / *Normal* / High / Max) · Equalizer (*Flat* / Warm / Bright / Vocal / Bass boost / Small speakers / TV speakers / Custom — ten bands, ±12 dB) · Even out song loudness (*on*) · Loudness target (−30 – −12 dB, *−24 dB*) |
+| 🎵 **Music → Melody guide** | Melody volume (Off / 25% / 50% / 75% / *100%*) · Solo melody (*off*) |
 | 🎵 **Music → MIDI** | Channel mixer (*off*) · Transpose drums with the key (*off* — the old behaviour when on) |
 | 🎵 **Music → Key detection** | Auto-detect key (*on*) · Show key by title (*on*) |
 | 🎵 **Music → Chords** | Show chord lane (*off*) · Simplify (*off*) |
-| 🎤 **Singing → Pitch guide** | Show pitch guide (*on*) · Look-ahead (2 – 10 s, *5 s*) · Band height · Melody channel (*auto* or 1 – 16) · Overlay my pitch (*on*) · Soft pitch trail (*on*) · Live score on the guide (*on*) |
-| 🎤 **Singing → Score** | Score my singing (*on*) · Score card when a song ends (*on*) · Golden notes count double (*on*) · Feedback while singing (*Per note* / Per line / Both / Off) · Difficulty (Easy / *Normal* / Hard, from the next song) · Keep rankings (*on*) · Host singer name (*Host*) · Guide vocal: Melody volume (Off / 25% / 50% / 75% / *100%*), Solo melody (*off*) |
-| 🎤 **Singing → Microphone & voice** | Enable microphone · Mic volume (0 – 150%, *90%*) · Echo cancellation (*on*) · Noise suppression (*on*) · Auto gain (*off*) · High-pass (*on*) · Noise gate (*on*) · Gate threshold (−70 – −20 dB, *−50 dB*) · Mic latency (0 – 500 ms, *100 ms*) + **Calibrate…** · Echo / Reverb / Chorus (*off*) with their mix · Pitch shift (*off*, ±12 st) · Auto-tune (*off*) · Strength (*100%*) · Snap to (*Melody guide* / Key / scale / Chromatic) · Key (*Auto (detected)* / C … B) · Scale (*Major* / Minor / Pentatonic / Chromatic) |
-| 🔎 **Sources → YouTube search** | Enabled (*on*; also the 🌐 pill) · Query YouTube when local has (fewer than 1 – 10 hits, or always; *< 2*) · Debounce (0.5 – 10 s, *3 s*) · Max results (5 – 40, *20*) · Append keyword (*karaoke*) |
-| 🔎 **Sources → Remote** | Enabled (*on*) · QR on the stage (*When idle* / Always / Never) · URL override (*blank = auto-detect*) · Instant updates (*on*) · Guests can play a song now (***off***) · Guests can jump the queue (*on*) |
-| 🔎 **Sources → Library** | Also show close matches (typos) (*on*) · Enter in search (*reserve while singing, play when idle* / Always reserve / Always play now) · Number keys open the song search (*on*) · Clear an untouched song number after (3 – 30 s, *8 s*) · the live song count · ↻ Rebuild Catalog |
-| 🔎 **Sources → Queue** | Fair play (*off*) · Max reservations per guest (*off*, 1 – 6) |
-| 🔎 **Sources → Reactions** | Let phones send reactions (*on*) · Play applause (*on*) |
-| **Below the categories** | Reset to defaults · **Backup** — ⭳ Export app data / ⭱ Import app data… (every setting and library list as one JSON file) · Erase all app data |
+| 🎙️ **Singing → Microphone & voice** | Enable microphone · Mic volume (0 – 150%, *90%*) · Echo cancellation (*on*) · Noise suppression (*on*) · Auto gain (*off*) · High-pass (*on*) · Noise gate (*on*) · Gate threshold (−70 – −20 dB, *−50 dB*) · Mic latency (0 – 500 ms, *100 ms*) + **Calibrate…** · Echo / Reverb / Chorus (*off*) with their mix · Pitch shift (*off*, ±12 st) · Auto-tune (*off*) · Strength (*100%*) · Snap to (*Melody guide* / Key / scale / Chromatic) · Key (*Auto (detected)* / C … B) · Scale (*Major* / Minor / Pentatonic / Chromatic) |
+| 🎙️ **Singing → Pitch guide** | Show pitch guide (*on*) · Look-ahead (2 – 10 s, *5 s*) · Band height · Melody channel (*auto* or 1 – 16) · Overlay my pitch (*on*) · Soft pitch trail (*on*) · Live score on the guide (*on*) |
+| 🎙️ **Singing → Score** | Score my singing (*on*) · Score card when a song ends (*on*) · Golden notes count double (*on*) · Feedback while singing (*Per note* / Per line / Both / Off) · Difficulty (Easy / *Normal* / Hard, from the next song) · Keep rankings (*on*) · Host singer name (*Host*) |
+| 🔎 **Songs & search → Search** | Also show close matches (typos) (*on*) · Enter in search (*reserve while singing, play when idle* / Always reserve / Always play now) · Number keys open the song search (*on*) · Clear an untouched song number after (3 – 30 s, *8 s*) |
+| 🔎 **Songs & search → YouTube search** | Enabled (*on*; also the 🌐 pill) · Query YouTube when local has (fewer than 1 – 10 hits, or always; *< 2*) · Debounce (0.5 – 10 s, *3 s*) · Max results (5 – 40, *20*) · Append keyword (*karaoke*) |
+| 📱 **Phones & party → Remote** | Enabled (*on*; the phone QR, room code, URL and connection show under it) · QR on the stage (*When idle* / Always / Never) · URL override (*blank = auto-detect*) · Instant updates (*on*) · Guests can play a song now (***off***) · Guests can jump the queue (*on*) |
+| 📱 **Phones & party → Queue** | Fair play (*off*) · Max reservations per guest (*off*, 1 – 6) |
+| 📱 **Phones & party → Reactions** | Let phones send reactions (*on*) · Play applause (*on*) |
+| ⌨️ **Keyboard shortcuts** | Every rebindable action with its keys — select a key to change it, ＋ to add one, Reset shortcuts (see [§8](#8-keyboard-shortcuts)) |
+| ⚙️ **Application** | Library: the live song count · ↻ Rebuild Catalog · Backup: ⭳ Export app data / ⭱ Import app data… (every setting and library list as one JSON file) · Reset to defaults · Erase all app data |
 
 ---
 
@@ -639,9 +660,9 @@ left to the browser.
 
 | Key | Action |
 |---|---|
-| **← ↑ → ↓** | Move to the nearest control in that direction (with nothing focused, the first arrow shows the control bar and lands on Play). On a slider, ← / → change it — the bar's Volume uses ↑ / ↓ |
+| **← ↑ → ↓** | Move to the nearest control in that direction (with nothing focused, the first arrow lands on the Songs panel button). On a slider, ← / → change it |
 | **Enter** / **OK** | Press the focused control — on a song row, open its action sheet |
-| **Esc** / **Backspace** / **Back** | Back, one step per press: clear a search box that has text → close the top panel or dialog → hide the control bar. Never stops the song |
+| **Esc** / **Backspace** / **Back** | Back, one step per press: clear a search box that has text → close the top panel or dialog → leave the bottom buttons. Never stops the song |
 
 **Playback & the stage**
 
@@ -650,15 +671,22 @@ left to the browser.
 | **Space** or **K** | Play / pause |
 | **N** | Next song |
 | **P** | Restart the song |
-| **+** (or **=**) / **-** | Key up / down a semitone |
-| **.** / **,** | Tempo up / down (0.05×) |
-| **`]`** / **`[`** | Nudge the lyric offset +/− 50 ms |
-| **M** or **F2** | Melody guide on / off |
-| **S**, **/** or **F1** | Open Songs (focus its search box if it's already open) |
-| **Q** | Open the queue |
-| **C** | Show / hide the control bar |
+| **F4** / **F3** (or **+** / **-**) | Key up / down a semitone |
+| **F6** / **F5** (or **.** / **,**) | Tempo up / down (0.05×) |
+| **`]`** / **`[`** | Nudge the lyric offset +/− 10 ms |
+| **F2** or **M** | Melody guide volume: Off → 25% → 50% → 75% → 100% → Off |
+| **F8** | Pitch guide band on / off |
+| **F1** | Songs open / close |
+| **S** or **/** | Open Songs (focus its search box if it's already open) |
+| **Q** | Open the queue (the Songs panel's Queue tab) |
 | **F** | Full screen |
 | **0 – 9** | Open Songs with that number in the search (see [§6](#6-using-the-app--full-walkthrough)) |
+
+**Change any of these** in ⚙ → **Keyboard shortcuts**: select a key to change it (or ＋ to add one)
+and press the new key; a key another action already uses offers **Swap** (or **Move**). Arrows,
+Enter, Back and 0–9 are fixed. **Reset shortcuts** restores this table. Volume and melody up / down
+have no key by default but can be given one. On a Mac, F1–F12 may be the system's brightness /
+media keys unless you hold **fn** (or turn on "Use F1, F2, etc. keys as standard function keys").
 
 **TV remote & media keys**
 
@@ -667,7 +695,7 @@ left to the browser.
 | **Red** | Open Songs |
 | **Green** | Open the queue |
 | **Yellow** | Next background (while a video or photo background shows) |
-| **Blue** | Melody guide on / off |
+| **Blue** | Melody guide volume (next level) |
 | **Play** / **Pause** / **Play-Pause** | Play · pause · toggle (separate Play and Pause buttons never toggle the wrong way) |
 | **Stop** | Stop the song and show the home screen; the queue is kept |
 | **Next track** / **Previous track** | Next song / restart the song |
@@ -741,7 +769,7 @@ secure page, so MIDI songs play and the microphone, scoring, calibration and the
 - The TV now loads everything **through the internet and back** — the box needs internet, and the
   first MIDI song downloads the ~31 MB SoundFont once (it is then cached on the box).
 - Phones follow the QR, which now shows the **https** address too, so they also go through the
-  tunnel. To keep phones on your LAN instead, set **⚙ → Sources → Remote → URL override** to
+  tunnel. To keep phones on your LAN instead, set **⚙ → Phones & party → Remote → URL override** to
   `http://<your-LAN-IP>:8080`.
 - Anyone with the public address and the room code can reach the remote — see the warning in the
   phone-remote section below.
@@ -778,8 +806,8 @@ TV and hosts a Wi-Fi hotspot; guests connect and control it from their phones.
 
 ### 📱 Phone remote control
 
-Once you're serving on the LAN, the remote is already on (**⚙ → Sources → Remote**). A **QR code + a
-room code** appear on the Queue panel and the home screen — guests scan the QR to open
+Once you're serving on the LAN, the remote is already on (**⚙ → Phones & party → Remote**). A **QR code + a
+room code** appear under ⚙ → Phones & party → Remote and on the home screen (the Queue tab shows the room code) — guests scan the QR to open
 **`http://<your-LAN-IP>:8080/remote`** (it auto-connects), or type that URL and enter the **room
 code** shown on screen. Then they can search / reserve / control from their phones (any modern
 mobile browser; see the walkthrough in [§6](#6-using-the-app--full-walkthrough)). The URL is
@@ -787,7 +815,7 @@ mobile browser; see the walkthrough in [§6](#6-using-the-app--full-walkthrough)
 manual **URL override** in ⚙ if needed.
 
 > 💡 Phones update **instantly** over a live event stream. A proxy or tunnel that buffers that
-> stream is detected — the phones fall back to checking once a second by themselves (the Queue panel
+> stream is detected — the phones fall back to checking once a second by themselves (the Queue tab
 > then reads *Phones: polling*) and keep working. To skip the stream altogether, turn off
 > **Instant updates**.
 
@@ -878,16 +906,15 @@ karaoke-clone/
 | **A double-click doesn't play the song any more** | By design: a click or tap opens the song's action sheet, and **Play now** is one tap there. |
 | **Browser zoom doesn't make the stage bigger** | The stage sizes itself from the screen. Use ⚙ → Display → **Font size** (and **Lyrics size** for the lyrics alone). |
 | **The TV cuts off the edges** | ⚙ → Display → **Overscan** moves the stage in from the edges. |
-| **The control bar keeps disappearing** | It hides while a song plays. A key (other than Back), a tap or a mouse move brings it back; **C** toggles it; ⚙ → Display → **Always show playback controls** keeps it up. |
 | **Video won't seek / stops** | Seeking needs HTTP Range (206) — always serve via `tools/serve.py`, not another static server. |
 | **Mic won't enable / Calibrate… or the Camera option is greyed out** | They need a click (browser gesture) + a secure page. Use `http://localhost` / `127.0.0.1` on the server machine, or HTTPS — not a plain LAN IP ([§9](#9-serving-to-phonestvs-on-your-network)). Grant the browser permission when prompted. Calibrate… is also off in Bluetooth mode. |
 | **Calibrate says "Could not measure"** | Nothing was saved. Turn the volume up, hold the mic about 20 cm from the speaker, keep the room quiet, and Retry. |
 | **Feedback/howling on speakers** | Use **headphones**. Otherwise keep Echo-cancellation + Noise-gate on and lower mic volume. |
 | **No background shows** | Create `data/bgv/` or `data/bgphoto/` with supported files and **reload the page**; check ⚙ → Display → Background isn't **Off**. Backgrounds never show behind a video or YouTube song. A `.mov` / HEVC clip may not play in Chrome — re-encode it to `.mp4` (H.264) or `.webm`. |
 | **Port 8080 in use** | `python tools/serve.py --port 9000`. |
-| **Phone remote won't connect** | Check ⚙ → Sources → Remote is on, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
+| **Phone remote won't connect** | Check ⚙ → Phones & party → Remote is on, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
 | **Phones show "polling" instead of "instant"** | Something between them and the server (a proxy or tunnel) is holding back the live stream. The remote still works, just with up to a second's delay; it tries the stream again after a minute. |
-| **A guest's Play now / Play next is missing or "not allowed by the host"** | ⚙ → Sources → Remote: **Guests can play a song now** is off by default; **Guests can jump the queue** is refused while **Fair play** is on. |
+| **A guest's Play now / Play next is missing or "not allowed by the host"** | ⚙ → Phones & party → Remote: **Guests can play a song now** is off by default; **Guests can jump the queue** is refused while **Fair play** is on. |
 | **QR code doesn't render** | The QR needs `src/vendor/qrcode.min.js` — re-run `python tools/serve.py` once to fetch it. The URL text is always shown even without the image. |
 | **First-run downloads fail** | You need internet on the first run only. Re-run, or manually place a General MIDI `.sf2` at `data/soundfont.sf2`. |
 | **Run the tests** | `npm test` runs both suites — `npm run test:js` (Node, `test/*.test.js`) and `npm run test:py` (Python 3, `test/test_*.py`: the catalog grammar + server). Needs Node.js for the JS half. |
@@ -920,7 +947,9 @@ Local **MIDI/audio/video** playback is **same-origin and works offline** after s
 the cross-origin-isolation headers the synth needs, serves HTTP Range requests so video seeking
 works, and exposes a few endpoints — `POST /api/rebuild-catalog` (⚙ rebuild button),
 `/api/youtube-search` + `/api/youtube-block` (the keyless YouTube search), `/api/backgrounds` (the
-`bgv/` + `bgphoto/` listing), `/api/catalog/compact` (the phones' compact songbook) and the
+`bgv/` + `bgphoto/` listing), `/api/catalog/compact` (the phones' compact songbook),
+`POST /api/played` + `GET /api/playcounts` (how many times each song was played — a song counts once
+after 30 s of playback or at its natural end; kept in `data/playcounts.json`, not shown yet) and the
 **phone-remote relay** (`/api/remote/*`): an in-memory, ephemeral channel where the host posts its
 state, publishes each song's lyrics for the phones, and receives the commands guests send from
 `/remote` — pushed live over a server-sent event stream (`/api/remote/events`), with polling as the

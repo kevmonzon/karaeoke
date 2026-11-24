@@ -1,6 +1,8 @@
 /*
  * browse-ui.js — the Songs panel's browse controls: the tabs and the rankings table
- * (M6, plan §5.7 / §5.9).
+ * (M6, plan §5.7 / §5.9). Since 2026-11-24 (Rae) the queue is a fourth tab, after Rankings: the
+ * Queue panel is gone. This module only draws the tab (and its count, setCount); the queue view
+ * itself (#queue-view: the list, Clear all) is app.js / library-ui's, like #song-list.
  *
  * It owns ONLY: the tabs inside tabsEl and the rankings view inside paneEl. It does NOT draw songs
  * or artists — the virtual list (#song-list, library-ui.js) does (R8). It never persists anything
@@ -35,11 +37,13 @@ export const BROWSE_TABS = Object.freeze([
   Object.freeze({ id: "all", label: "All" }),
   Object.freeze({ id: "artists", label: "Artists" }),
   Object.freeze({ id: "rankings", label: "Rankings" }),
+  Object.freeze({ id: "queue", label: "Queue" }),
 ]);
 
 const TAB_IDS = BROWSE_TABS.map((t) => t.id);
 const MAX_ROWS = 50;
 const LIST_ID = "song-list";                       // what the All / Artists tabs control
+const QUEUE_ID = "queue-view";                     // what the Queue tab controls (o.queueId overrides)
 const EMPTY_TEXT = "No rankings yet — finish a song with scoring on.";
 const NO_MATCH_TEXT = "No rankings match this filter.";
 
@@ -88,11 +92,13 @@ function formatDate(at) {
  * @param {(f: {player: string, difficulty: string}) => {rows: object[], players: string[], difficulties: string[]}} o.getRankings
  * @param {(id: string) => void} [o.onTab]            after the tab changed (by a click, a key or setTab)
  * @param {() => void} [o.onClearRankings]             the rankings view's "Clear" button
+ * @param {string} [o.queueId]  the queue view's id, for the Queue tab's aria-controls ("queue-view")
  * @param {Document} [o.doc]
  * @returns {{
  *   render(): void,          // build the tabs (once) and unhide tabsEl; keeps the current tab
  *   setTab(id: string): void,// programmatic switch (home tiles); calls onTab
- *   readonly tab: string,    // "all" | "artists" | "rankings"
+ *   readonly tab: string,    // "all" | "artists" | "rankings" | "queue"
+ *   setCount(id: string, n: number): void, // a count after a tab's name ("Queue 3"); 0 = none
  *   refreshPane(): void,     // re-render the rankings view (a new ranking, a clear)
  *   reset(): void,           // tab all, rankings filters All (no callbacks fired)
  * }}
@@ -127,6 +133,8 @@ export function createBrowseUI(o = {}) {
   // focus keeper both read it, so a stale element (from before a rebuild) is never acted on.
   const owned = new Map();     // element → { kind: "tab"|"player"|"diff"|"clear"|"region", value }
   const tabBtn = new Map();    // tab id → button
+  const countEl = new Map();   // tab id → its <span class="tab-count"> (the Queue tab)
+  const counts = new Map();    // tab id → the count set before or after the tabs were built
 
   // --- small DOM helpers ---------------------------------------------------------------------
   const docRef = () => opts.doc || tabsEl.ownerDocument || globalThis.document || null;
@@ -228,12 +236,24 @@ export function createBrowseUI(o = {}) {
       b.setAttribute("role", "tab");
       b.setAttribute("id", `browse-tab-${t.id}`);
       b.setAttribute("data-tab", t.id);
-      b.setAttribute("aria-controls", t.id === "rankings" ? paneId : LIST_ID);
+      b.setAttribute("aria-controls", t.id === "rankings" ? paneId : t.id === "queue" ? (opts.queueId || QUEUE_ID) : LIST_ID);
+      if (t.id === "queue") {
+        const c = add(b, make(d, "span", "tab-count", ""));
+        countEl.set(t.id, c);
+        paintCount(t.id);
+      }
       tabBtn.set(t.id, b);
       owned.set(b, { kind: "tab", value: t.id });
       return b;
     });
     replace(tabsEl, buttons);
+  }
+  function paintCount(id) {
+    const c = countEl.get(id);
+    if (!c) return;
+    const n = counts.get(id) || 0;
+    const text = n > 0 ? String(n) : "";
+    if (c.textContent !== text) c.textContent = text;
   }
   function paintTabs() {
     for (const [id, b] of tabBtn) {
@@ -563,6 +583,13 @@ export function createBrowseUI(o = {}) {
     if (tab === "rankings") renderPane();
   }
 
+  function setCount(id, n) {
+    if (!TAB_IDS.includes(id)) return;
+    const v = Math.max(0, Math.floor(Number(n)) || 0);
+    counts.set(id, v);
+    paintCount(id);
+  }
+
   function reset() {
     tab = "all";
     player = "";
@@ -575,6 +602,7 @@ export function createBrowseUI(o = {}) {
     render,
     setTab,
     get tab() { return tab; },
+    setCount,
     refreshPane,
     reset,
   };

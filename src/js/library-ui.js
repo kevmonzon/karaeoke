@@ -626,17 +626,13 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     if (hadFocus) {
       if (target >= 0) showQueueRow(q.children[target]);
       else {
-        // An emptied queue: the panel's Close.
+        // An emptied queue: the Songs panel's selected tab (the Queue tab), else its Close.
         const host = q.closest && q.closest("[data-ov]");
-        const close = host && host.querySelector("[data-ov-close]");
-        if (close) close.focus({ preventScroll: true });
+        const to = host && (host.querySelector('[role="tab"][aria-selected="true"]') || host.querySelector("[data-ov-close]"));
+        if (to) to.focus({ preventScroll: true });
       }
     }
-    // NOT "queue-count": that id also belonged to the now-playing chip in the stage header,
-    // so getElementById returned the chip and this overwrote it — the chip read "(1)" instead
-    // of "⏭ 1" and the queue heading never showed a count at all. Two writers, one id.
-    const count = $("queue-heading-count");
-    if (count) count.textContent = next.length ? `(${next.length})` : "";
+    // The count is the Songs panel's Queue tab's now (app.js → browseUI.setCount), not ours.
   }
   queueEl();   // listen from the start (the static #queue-list exists before the first render)
 
@@ -649,6 +645,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     setNowPlaying,
     refresh, // re-measure the row + --vlist-h and re-render (panel opened / font size / resize)
     focusRow, // keys: #search ArrowDown and the Songs panel's initial focus
-    focusQueueRow, // keys: the Queue panel's initial focus, and back to the row after the song sheet
+    focusQueueRow, // keys: the Queue tab's initial focus, and back to the row after the song sheet
   };
 }

@@ -79,8 +79,8 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
-body:not(.controls-hidden) .bg-layer > .bg-camera-start {
-  bottom: calc(max(var(--edge-b), min(var(--bar-h, 0px), 45vh)) + var(--gap));
+.bg-layer > .bg-camera-start {
+  bottom: calc(max(var(--edge-b), min(var(--foot-h, 0px), 45vh)) + var(--gap));
 }
 .bg-layer > .bg-camera-start:focus-visible { outline: var(--focus-w) solid var(--focus); outline-offset: 2px; }
 .bg-layer > .bg-camera-start:active { background: var(--surface-2); }

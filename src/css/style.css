@@ -1,5 +1,5 @@
-/* Ka-Rae-oke — offline karaoke styling: the COMPONENT rules (song rows, queue rows, playbar,
-   steppers, settings body, pitch guide, chords, lyrics, title/score cards, mixer rows,
+/* Ka-Rae-oke — offline karaoke styling: the COMPONENT rules (song rows, queue rows,
+   settings body, pitch guide, chords, lyrics, title/score cards, mixer rows,
    reactions). Page geometry lives in stage.css (the stage + its layers) and
    overlays.css (control bar, panels, sheets, dialogs, scrim, focus ring).
    Palette + scale come from tokens.css (loaded first, see index.html). The app's legacy
@@ -26,15 +26,15 @@
    duration + easing, so they AUTO-DISABLE under prefers-reduced-motion
    (tokens zero the --dur-* vars). This is what stops the UI feeling stiff.
    --------------------------------------------------------------------------- */
-.gear, .song, button.add, button.fav, .pill-btn, .stepper button, .transport button,
+.gear, .song, button.add, button.fav, .pill-btn, .st-btn,
 .seg-filter .pill-btn, .reset-btn, .mx-btn, .queue-list li, .search-clear,
 .set-cat > summary, .settings-body select, #search, .np-key, .badge {
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
               color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease),
               box-shadow var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
 }
-.gear:active, button.add:active, .stepper button:active, .transport button:active,
-.pill-btn:active, .reset-btn:active, .mx-btn:active, .transport .primary:active { transform: scale(.93); }
+.gear:active, button.add:active, .st-btn:active,
+.pill-btn:active, .reset-btn:active, .mx-btn:active { transform: scale(.93); }
 /* subtle lift on song-row hover so browsing feels alive (transform only → cheap) */
 .song:hover { transform: translateX(2px); }
 
@@ -48,15 +48,6 @@
   line-height: 1; padding: 0; flex: none;
 }
 .gear:hover { border-color: var(--brand-2); }
-/* Playback dock — the seek bar + transport, inside the control bar overlay (#ov-controls,
-   positioned and auto-hidden in overlays.css). The gradient fades the lyric text behind the
-   bar so it stays legible; the padding keeps clear of safe areas and TV overscan, and the
-   bottom strip always leaves room for the #status line (stage.css) under the controls. */
-.playback-dock {
-  padding: calc(10 / 16 * var(--u)) var(--edge-r)
-           calc(max(var(--pad), var(--safe-b) + 1.1 * var(--u)) + var(--overscan)) var(--edge-l);
-  background: linear-gradient(to top, var(--overlay-bg-soft) 62%, transparent);
-}
 
 /* Phone-remote QR panel — hidden unless remote.enabled (JS adds .show). */
 .remote-qr { display: none; }
@@ -110,7 +101,6 @@ body.youtube-mode.chords-on .chords,
 body.youtube-mode .midi-mixer,
 body.youtube-mode.midi-mode .midi-mixer,
 body.youtube-mode .lyrics-wrap { display: none; }
-body.youtube-mode .controls .ctl:first-child { opacity: .4; pointer-events: none; }
 
 /* AUDIO karaoke (recorded audio + a lyric sidecar): unlike video/youtube it KEEPS the
    scrolling lyric surface and the Key control (Key pitch-shifts the audio) — it only
@@ -154,9 +144,10 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 .seg-filter .pill-btn { border: 0; background: none; }
 .seg-filter .pill-btn:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); }
 .seg-filter .pill-btn.active { background: var(--accent-2); color: #04231f; }
-/* text input in the ⚙ panel (e.g. YouTube append-keyword) */
+/* text input in the ⚙ panel (YouTube append keyword, host singer name, URL override): the row's
+   full width, like every select. */
 .set-text {
-  width: calc(130 / 16 * var(--u)); padding: calc(5 / 16 * var(--u)) calc(8 / 16 * var(--u)); border-radius: calc(8 / 16 * var(--u)); border: 1px solid var(--line);
+  width: 100%; padding: calc(5 / 16 * var(--u)) calc(8 / 16 * var(--u)); border-radius: calc(8 / 16 * var(--u)); border: 1px solid var(--line);
   background: var(--panel); color: var(--ink); font-size: calc(13 / 16 * var(--u));
 }
 .set-text:focus { border-color: var(--accent); }
@@ -231,7 +222,6 @@ button.fav.on { color: var(--gold); }
 .kind {
   font-size: calc(15 / 16 * var(--u)); line-height: 1; text-align: center; user-select: none;
 }
-.ctl label em { color: var(--accent-2); font-style: normal; }
 
 /* Pitch guide (scrolling piano-roll) and, beside it, the stage QR (#stage-qr, remote.qrOnStage
    "always"). They share .guide-row, so the QR's top and height are always the guide's, at any
@@ -380,38 +370,6 @@ body.midi-mode .midi-mixer { display: grid; }
   pointer-events: none;
 }
 
-/* Seek + time */
-/* Seek bar with the current/total time inline on either side */
-.seek-row { display: flex; align-items: center; gap: calc(10 / 16 * var(--u)); margin: calc(6 / 16 * var(--u)) 2px calc(14 / 16 * var(--u)); }
-.seek-row .seek-track { flex: 1; }
-.t-time { color: var(--muted); font-size: calc(12 / 16 * var(--u)); font-variant-numeric: tabular-nums; flex: none; }
-.seek-track { height: calc(8 / 16 * var(--u)); background: var(--panel-2); border-radius: calc(20 / 16 * var(--u)); overflow: hidden; cursor: pointer; }
-.seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-
-/* Playback bar — transport ▏ Key ▏ Tempo ▏ Volume ▏ panel buttons spread across the full width.
-   .controls is display:contents (below) so its .ctl children participate directly in this
-   space-between distribution; the bar wraps when it runs out of width (portrait regroups
-   it into centred rows — overlays.css). */
-.playbar { display: flex; align-items: center; justify-content: space-between; gap: calc(16 / 16 * var(--u)) calc(28 / 16 * var(--u)); flex-wrap: wrap; }
-
-/* Transport */
-.transport { display: flex; gap: calc(12 / 16 * var(--u)); align-items: center; flex: none; }
-.transport button {
-  width: calc(52 / 16 * var(--u)); height: calc(52 / 16 * var(--u)); border-radius: 50%; border: 1px solid var(--line);
-  background: var(--panel); color: var(--ink); font-size: calc(18 / 16 * var(--u)); cursor: pointer;
-}
-.transport button:hover { border-color: var(--accent-2); }
-.transport .primary { width: calc(66 / 16 * var(--u)); height: calc(66 / 16 * var(--u)); font-size: calc(22 / 16 * var(--u)); background: var(--accent); border: none; }
-.transport .primary:hover { filter: brightness(1.1); }
-
-/* Controls — dissolve the wrapper so its .ctl children spread within .playbar. */
-.controls { display: contents; }
-.ctl { display: flex; flex-direction: column; gap: calc(6 / 16 * var(--u)); align-items: center; }
-.ctl label { color: var(--text-muted); font: 600 calc(11 / 16 * var(--u))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .14em; }
-.stepper { display: flex; align-items: center; gap: calc(10 / 16 * var(--u)); }
-.stepper button { width: calc(30 / 16 * var(--u)); height: calc(30 / 16 * var(--u)); border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; font-size: calc(15 / 16 * var(--u)); }
-.stepper button:hover { border-color: var(--brand-2); }
-.stepper span { min-width: calc(28 / 16 * var(--u)); text-align: center; font-weight: 700; font-size: calc(14 / 16 * var(--u)); font-variant-numeric: tabular-nums; }
 input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent); }
 
 /* Queue (the Queue panel; its title is the panel's .ov-head) */
@@ -439,33 +397,8 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 /* Reduced motion (M13): the loader stops turning; the progress bar under it still shows progress. */
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-color: var(--accent); opacity: .6; } }
 
-/* Title card — song title/artist/key over the LYRICS AREA, then fades to the lyrics */
+/* The lyric area. The title card (title-card.css) is absolute inside it. */
 .lyrics-wrap { position: relative; flex: 1; display: flex; min-height: 0; }
-/* ~50% of the screen height, centered on the lyric area (overflows the shorter lyrics-wrap).
-   Stays inside the stage flow, so it reflows beside an open panel instead of under it. The
-   TITLE is auto-sized by JS (fitTitleCard) to the largest font that fills this fixed height
-   without truncating — so a short title is huge and a long one shrinks to fit, using the space.
-   Font clamps: the px bounds became --u bounds and the vw middle keeps the Font-size multiplier. */
-.title-card {
-  position: absolute; left: 0; right: 0; top: 50%; height: 50vh; transform: translateY(-50%);
-  overflow: hidden; z-index: 3; border-radius: calc(12 / 16 * var(--u));
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: calc(10 / 16 * var(--u)); text-align: center; padding: calc(24 / 16 * var(--u));
-  /* Brand-tinted rather than a fixed dark rgba: this is the moment the room looks up,
-     and it should look like THIS app in either theme, not like a generic scrim. */
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--brand) 18%, transparent), transparent 60%),
-    color-mix(in srgb, var(--surface-0) 88%, transparent);
-  backdrop-filter: blur(4px);
-  opacity: 0; pointer-events: none; transition: opacity var(--dur-slow) var(--ease);
-}
-.title-card.show { opacity: 1; }
-/* font-size here is only a pre-JS fallback; fitTitleCard() overrides it inline to fill the card. */
-.tc-title { font-size: clamp(calc(32 / 16 * var(--u)), calc(6vw * var(--scale)), calc(64 / 16 * var(--u))); font-weight: 800; line-height: 1.08; max-width: 96%; }
-.tc-artist { font-size: clamp(calc(20 / 16 * var(--u)), calc(3.4vw * var(--scale)), calc(36 / 16 * var(--u))); color: var(--muted); }
-.tc-singer { margin-top: calc(6 / 16 * var(--u)); color: var(--accent); font-weight: 700; font-size: clamp(calc(18 / 16 * var(--u)), calc(2.6vw * var(--scale)), calc(28 / 16 * var(--u))); }
-.tc-key { margin-top: calc(8 / 16 * var(--u)); color: var(--accent-2); font-size: calc(18 / 16 * var(--u)); }
-.tc-title:empty, .tc-artist:empty, .tc-singer:empty, .tc-key:empty { display: none; }
 
 /* ---------------------------------------------------------------------------
    Score card — the videoke payoff, shown over the cleared stage when a song
@@ -534,26 +467,6 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
   @keyframes react-fade { 0% { opacity: 0; } 15% { opacity: 1; } 100% { opacity: 0; } }
 }
 
-/* Mic toggle in the transport row */
-.transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
-.transport .mic-toggle:disabled { opacity: .35; cursor: not-allowed; }
-/* Melody button: lit while the melody is audible; each press steps Off · 25 · 50 · 75 · 100 %
-   (app.js stepMelody). Its level is a short bar under the note — a quarter of its width per level —
-   so the room can read it without opening Settings. */
-.transport .melody-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
-.transport .melody-toggle { position: relative; }
-.transport .melody-toggle[data-level]::after {
-  content: ""; position: absolute; left: 30%; bottom: 16%; height: max(2px, calc(3 / 16 * var(--u)));
-  width: calc(40% * var(--melody-lv, 0) / 4); border-radius: 2px; background: currentColor;
-}
-.transport .melody-toggle[data-level="1"] { --melody-lv: 1; }
-.transport .melody-toggle[data-level="2"] { --melody-lv: 2; }
-.transport .melody-toggle[data-level="3"] { --melody-lv: 3; }
-.transport .melody-toggle[data-level="4"] { --melody-lv: 4; }
-/* Melody is MIDI-only — no melody channel in a baked video/YouTube song, so dim + disable it there. */
-body.video-mode .transport .melody-toggle,
-body.youtube-mode .transport .melody-toggle,
-body.audio-mode .transport .melody-toggle { opacity: .4; pointer-events: none; }
 
 /* Bluetooth mode dims the mic controls */
 body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
@@ -571,6 +484,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .settings-body h4 { margin: 0 0 var(--s-3); font: 700 calc(11 / 16 * var(--u))/1 var(--font-mono); text-transform: uppercase; letter-spacing: .16em; color: var(--brand-2); }
 .settings-body .row { display: flex; flex-direction: column; gap: calc(6 / 16 * var(--u)); margin-bottom: var(--s-3); font-size: calc(13 / 16 * var(--u)); }
 .settings-body .row span { display: flex; justify-content: space-between; align-items: center; color: var(--text); }
+/* The label's note (<em class="muted">(old behaviour)</em>) or value: the span is a flex box, so the
+   space before the <em> collapses — "Bluetooth mode260 ms". A gap puts it back; a long note wraps. */
+.settings-body .row > span { column-gap: .5em; flex-wrap: wrap; }
 .settings-body .row em { color: var(--text-muted); font-style: normal; font-variant-numeric: tabular-nums; }
 .settings-body .row input[type=range] { width: 100%; accent-color: var(--brand); }
 .settings-body .row.toggle { flex-direction: row; align-items: center; justify-content: space-between; }
@@ -598,6 +514,9 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .settings-body select:focus { border-color: var(--brand-2); }
 .hint.sub { margin: calc(-6 / 16 * var(--u)) 0 var(--s-3); font-size: calc(11 / 16 * var(--u)); }
 #rebuild-status { margin: calc(8 / 16 * var(--u)) 0 0; } /* sits below the rebuild button, not crammed against it */
+#cache-status { margin-top: calc(8 / 16 * var(--u)); }
+/* Stacked action buttons (Export / Import, Reset to defaults) keep apart. */
+.settings-body .reset-btn + .reset-btn { margin-top: var(--s-2); }
 #rebuild-status:empty { margin: 0; }
 .hint kbd { background: var(--surface-2); border: 1px solid var(--border); border-radius: calc(4 / 16 * var(--u)); padding: 0 calc(5 / 16 * var(--u)); font-size: calc(11 / 16 * var(--u)); }
 .reset-btn { width: 100%; padding: calc(11 / 16 * var(--u)); border-radius: var(--r-md); border: 1px solid var(--brand); background: none; color: var(--brand); cursor: pointer; font: 600 calc(13 / 16 * var(--u))/1 var(--font-sans); }
@@ -667,20 +586,6 @@ code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-
 /* A hint that is telling you something is wrong (e.g. the offline cache is full). */
 .hint.warn { color: var(--warn); }
 
-/* ---------------------------------------------------------------------------
-   Title card entrance. The four lines cascade in rather than appearing as one
-   block — a song starting is an event, and this is the only screen the whole
-   room reliably looks at. transform/opacity only, so it composites cheaply and
-   (importantly) does NOT affect layout: fitTitleCard() measures scrollHeight
-   the moment .show is added, and a translateY would be invisible to it anyway.
-   --------------------------------------------------------------------------- */
-@media (prefers-reduced-motion: no-preference) {
-  .title-card.show .tc-title  { animation: tc-in 420ms var(--ease) both; }
-  .title-card.show .tc-artist { animation: tc-in 420ms var(--ease) 70ms both; }
-  .title-card.show .tc-singer { animation: tc-in 420ms var(--ease) 140ms both; }
-  .title-card.show .tc-key    { animation: tc-in 420ms var(--ease) 210ms both; }
-}
-@keyframes tc-in { from { opacity: 0; transform: translateY(calc(14 / 16 * var(--u))); } to { opacity: 1; transform: none; } }
 
 /* ---------------------------------------------------------------------------
    Empty states. An empty <ul> used to be bare whitespace — the same picture for
@@ -709,7 +614,7 @@ code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-
   stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
 }
 /* Any control holding an icon centres it (the .gear primitive already does). */
-.transport button, .stepper button, .search-clear, .set-search-x {
+.st-btn, .search-clear, .set-search-x {
   display: inline-flex; align-items: center; justify-content: center;
 }
 /* The play triangle is a filled shape; keep its own fill and drop the outline weight. */

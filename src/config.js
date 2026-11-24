@@ -53,7 +53,7 @@ export const DEFAULT_CONFIG = {
     stage: {
       rows: "auto",       // "auto" (2 rows; 4 when the screen is portrait) | "2" | "4"
       align: "center",    // "center" | "split" (top row left, bottom right) | "close" (split, pulled in)
-      position: "bottom", // "bottom" (the videoke layout) | "center" (rows centred vertically on the screen)
+      position: "center", // "center" (rows centred vertically on the screen — the default, Rae 2026-11-24) | "bottom" (the videoke layout)
       animation: "none",  // line change: "none" | "fade" | "wipe" | "crossfade" | "flip" | "bounce"
       color: "#0000ff",   // sung-text colour (it gets a white outline; unsung text is white, outlined black)
       randomColor: false, // pick a highlight colour per song from a 20-colour palette instead
@@ -118,12 +118,12 @@ export const DEFAULT_CONFIG = {
   // output isn't practical). The offset stays adjustable afterward.
   bt: { enabled: false },
 
-  // The stage and its controls. (The old `library` / `queue` panel toggles are gone: Songs and
-  // Queue are panels opened from the control bar. A stored value for either is simply ignored.)
-  //   playback = "Always show playback controls" (the control bar). true = always visible;
-  //              false = while a song plays it hides after `autoHideSec` idle seconds and returns
-  //              on any pointer move, tap or key. It never hides while paused or idle.
-  //   autoHideSec = idle seconds before the control bar hides (when `playback` is off).
+  // The stage and its controls. (Songs and Queue are panels opened from the footer's buttons; the
+  // old `library` / `queue` toggles and the control bar's `playback` / `autoHideSec` are gone. A
+  // stored value for any of them is ignored.)
+  //   footer = the stage footer (panel buttons, status line, seek bar): `autoHide` = while a song
+  //            plays it hides after `hideSec` idle seconds (1–15) and comes back on a tap, a mouse
+  //            move or a key (Back excepted); it never hides while idle, paused or under a panel.
   //   fontSize = overall text/UI size: "xsmall" | "small" | "medium" | "large" (×0.65 / ×0.9 /
   //              ×1 / ×1.3 on the stage's scale unit). The Lyrics "Lyrics size" slider fine-tunes
   //              just the lyrics on top of this.
@@ -132,7 +132,7 @@ export const DEFAULT_CONFIG = {
   //   overscanPct = extra inset (0–5, % of the screen) around the stage, for a TV that crops
   //              the picture's edges.
   //   keyHints = show short key / remote-button hints (they appear only in keyboard / remote use).
-  ui: { playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto", overscanPct: 0, keyHints: true },
+  ui: { footer: { autoHide: true, hideSec: 3 }, fontSize: "medium", theme: "auto", overscanPct: 0, keyHints: true },
 
   // The background behind the lyrics (plan §5.22): looping videos from data/bgv/, a photo
   // slideshow from data/bgphoto/ (one level of sub-folders = a category), or the live camera.
@@ -170,13 +170,15 @@ export const DEFAULT_CONFIG = {
   },
 
   // Song numbers from the keys (plan §5.3). A digit pressed on the stage opens the Songs panel
-  // with that digit in the search field, where the number tier lists every songbook's match;
-  // the panel's "123" button shows an on-screen number pad that types into the same field.
-  //   enabled = number keys open the song search (off: digits on the stage do nothing, the
-  //             "123" button is hidden and guests' live digits are ignored)
+  // with that digit in the search field, where the number tier lists every songbook's match.
+  //   enabled = number keys open the song search (off: digits on the stage do nothing)
   //   idleSec = a panel a digit opened, still holding only digits, clears and closes after this
   //             many seconds with no key or tap in it (3–30). A panel opened any other way never does.
   keypad: { enabled: true, idleSec: 8 },
+
+  // Keyboard shortcuts (Rae, 2026-11-24; ⚙ → Keyboard shortcuts). Stored as the DIFFERENCE from the
+  // defaults in ui/keymap.js (DEFAULT_BINDINGS): { actionId: [key names] }. Empty = the defaults.
+  keys: { bindings: {} },
 
   // YouTube search (BYOC): live-query YouTube for karaoke videos and append the results to
   // the song list while you search. ON by default (toggle with the 🌐 pill in the search row).

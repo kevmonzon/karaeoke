@@ -515,9 +515,9 @@ test("pickRemoteBaseUrl: loopback + no LAN URL yields empty string", () => {
 // audio.volume goes straight to a GainNode. `undefined` is the reject sentinel because 0,
 // false and -12 are all legitimate stored values.
 test("clampRemoteSetting: clamps each path to its own range", () => {
-  assert.equal(clampRemoteSetting("audio.volume", 1e6), 2);      // the deafen-the-room case
+  assert.equal(clampRemoteSetting("audio.volume", 1e6), 1);      // the deafen-the-room case (cap 100 %)
   assert.equal(clampRemoteSetting("audio.volume", -5), 0);
-  assert.equal(clampRemoteSetting("audio.volume", 1.25), 1.25);  // in range → untouched
+  assert.equal(clampRemoteSetting("audio.volume", 0.75), 0.75);  // in range → untouched
   assert.equal(clampRemoteSetting("audio.key", 999999999), 12);
   assert.equal(clampRemoteSetting("audio.key", -99), -12);
   assert.equal(clampRemoteSetting("audio.tempo", 40), 1.5);
@@ -1643,13 +1643,13 @@ test("remoteGlue: a stale index, a junk seek and an unknown type all do nothing"
 
 test("remoteGlue: a guest setting is gated on BOTH the path and the value", () => {
   const { glue, calls } = glueHarness({ settings: {} });
-  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1.5 });
-  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1e6 });   // clamped to 2
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 0.5 });
+  glue.applyCommand({ type: "setting", path: "audio.volume", value: 1e6 });   // clamped to 1 (100 %)
   glue.applyCommand({ type: "setting", path: "mic.volume", value: 1 });       // NOT allowlisted
   glue.applyCommand({ type: "setting", path: "__proto__", value: 1 });
   glue.applyCommand({ type: "setting", path: 42, value: 1 });
   glue.applyCommand({ type: "setting", path: "audio.key", value: "loud" });
-  assert.deepEqual(calls, [["setting", "audio.volume", 1.5], ["setting", "audio.volume", 2]]);
+  assert.deepEqual(calls, [["setting", "audio.volume", 0.5], ["setting", "audio.volume", 1]]);
 });
 
 test("remoteGlue: the reservation cap refuses an over-quota guest with a visible reason", () => {

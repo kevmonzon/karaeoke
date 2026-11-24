@@ -5,8 +5,7 @@
  *      so an arrow that leaves the list is handed to spatial navigation exactly once.
  *   2. The list's keydown handler really uses it (a fake <ul>): an edge is not prevented and calls
  *      onEdge once; a move inside is prevented; printable keys are left alone; ★ / ＋ are not stops.
- *   3. The control bar's `c` toggle and Back-hide (shell.js): the shell pokes the bar on EVERY
- *      keydown, so these must give the same result whichever document listener runs first.
+   (The control bar's `c` / Back-hide tests went with the bar — Rae removed the dock, 2026-11-24.)
  * Run with:  node --test
  */
 
@@ -14,8 +13,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { listKeyPlan, createLibraryUI } from "../src/js/library-ui.js";
-import { createOverlayStack } from "../src/js/ui/overlay-stack.js";
-import { createShell } from "../src/js/ui/shell.js";
 
 // --- 1. listKeyPlan ----------------------------------------------------------------------
 test("list keys: a list edge hands the key to spatial nav exactly once", () => {
@@ -195,109 +192,4 @@ test("list keys: a row's ★ and ＋ are not focus stops; an empty list takes no
     r.lib.renderList([]);
     assert.equal(r.lib.focusRow(), false);
   } finally { r.restore(); }
-});
-
-// --- 3. the `c` toggle and Back-hide (shell.js) ---------------------------------------------
-function shellRig() {
-  const listeners = [];
-  const byId = new Map();
-  const body = {
-    dataset: { idle: "false" },
-    cls: new Set(),
-    classList: { toggle(c, on) { if (on) body.cls.add(c); else body.cls.delete(c); }, contains: (c) => body.cls.has(c) },
-  };
-  const doc = {
-    body, activeElement: body,
-    getElementById: (id) => byId.get(id) || null,
-    addEventListener: (t, fn) => listeners.push([t, fn]),
-  };
-  const el = (id, parent = null) => {
-    const e = { id, parent, contains(n) { for (; n; n = n.parent) if (n === e) return true; return false; }, focus() { doc.activeElement = e; } };
-    byId.set(id, e);
-    return e;
-  };
-  const stage = el("stage");
-  const bar = el("ov-controls");
-  const play = el("btn-play", bar);
-  const subs = new Set();
-  const clock = { t: 0 };
-  const stack = createOverlayStack({ onChange: (c) => { for (const fn of subs) fn(c); }, now: () => clock.t });
-  stack.subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
-  const overlays = { register() {}, arm() {}, toggle() {} };
-  const shell = createShell({
-    overlays, stack, doc, settings: { get: () => undefined },
-    timers: { setInterval() {}, clearInterval() {} },
-  });
-  shell.wire();
-  shell.setIdle(false);
-  const shellKeydown = listeners.filter(([t]) => t === "keydown").map(([, fn]) => fn);
-  // One keydown through the shell's listener and the "router" (toggle/hide) in either order.
-  const key = (routerFirst, router, ev = { type: "keydown", key: "c" }) => {
-    if (routerFirst) { router(ev); for (const fn of shellKeydown) fn(ev); }
-    else { for (const fn of shellKeydown) fn(ev); router(ev); }
-  };
-  const hidden = () => body.cls.has("controls-hidden");
-  return { doc, stage, bar, play, stack, shell, key, hidden };
-}
-
-for (const routerFirst of [false, true]) {
-  const order = routerFirst ? "router first" : "shell first";
-  test(`keys: c shows a hidden bar and hides a shown one (${order})`, () => {
-    const s = shellRig();
-    assert.equal(s.hidden(), false);
-    s.key(routerFirst, (ev) => s.shell.toggle(ev));
-    assert.equal(s.hidden(), true, "shown → hidden");
-    s.key(routerFirst, (ev) => s.shell.toggle(ev));
-    assert.equal(s.hidden(), false, "hidden → shown");
-    s.key(routerFirst, (ev) => s.shell.toggle(ev));
-    assert.equal(s.hidden(), true, "and back");
-  });
-
-  test(`keys: Back hides the bar and the same keydown's poke does not undo it (${order})`, () => {
-    const s = shellRig();
-    s.play.focus();
-    s.key(routerFirst, (ev) => assert.equal(s.shell.hide(ev), true));
-    assert.equal(s.hidden(), true);
-    assert.equal(s.doc.activeElement, s.stage, "focus leaves the hidden bar for #stage");
-    s.key(routerFirst, () => {});                       // any later key shows it again
-    assert.equal(s.hidden(), false);
-  });
-}
-
-// Integration fix (orchestrator): after Back hides the bar, a further Back must leave it hidden
-// (§4.2 rule 3: dialog → panel → bar → nothing). The shell's any-key wake used to bring it back.
-test("keys: a Back key never wakes a hidden bar; any other key does", () => {
-  const s = shellRig();
-  const shellKeys = (ev) => s.key(false, () => {}, ev);
-  s.play.focus();
-  s.key(false, (ev) => assert.equal(s.shell.hide(ev), true));
-  assert.equal(s.hidden(), true);
-  for (const ev of [
-    { type: "keydown", key: "Escape" },
-    { type: "keydown", key: "Backspace" },
-    { type: "keydown", key: "BrowserBack" },
-    { type: "keydown", key: "Unidentified", keyCode: 461 },     // webOS Back
-    { type: "keydown", key: "Unidentified", keyCode: 10009 },   // Tizen Back
-  ]) {
-    shellKeys(ev);
-    assert.equal(s.hidden(), true, `${ev.key}/${ev.keyCode || ""} left the bar hidden`);
-  }
-  // Backspace while typing is not Back — it edits the field, and counts as activity.
-  shellKeys({ type: "keydown", key: "Backspace", target: { tagName: "INPUT", type: "search" } });
-  assert.equal(s.hidden(), false, "Backspace in a text field wakes the bar like any key");
-  s.key(false, (ev) => s.shell.hide(ev));
-  shellKeys({ type: "keydown", key: "ArrowDown" });
-  assert.equal(s.hidden(), false, "an arrow wakes it");
-});
-
-test("keys: the bar never hides while idle or under a modal", () => {
-  const s = shellRig();
-  s.shell.setIdle(true);
-  assert.equal(s.shell.toggle(null), false);
-  assert.equal(s.shell.hide(null), false);
-  assert.equal(s.hidden(), false);
-  s.shell.setIdle(false);
-  s.stack.open("search");
-  assert.equal(s.shell.hide(null), false);
-  assert.equal(s.hidden(), false);
 });

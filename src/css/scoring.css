@@ -56,8 +56,7 @@ body.guide-on.chords-on:not(.video-mode):not(.youtube-mode):not(.audio-mode) .ve
 }
 
 /* A full-stage card owns the moment: no chip over the title card or the score card. */
-.title-card.show ~ .verdict.show,
-.score-card.show ~ .verdict.show { opacity: 0; }
+.score-card.show ~ .verdict.show { opacity: 0; }   /* (the title card hides it in title-card.css) */
 
 /* Pop in. The independent `scale` property, so it never fights each position's translate.
    pop-a / pop-b are the same keyframes under two names: swapping restarts the animation.

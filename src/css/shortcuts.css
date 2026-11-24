@@ -1,0 +1,78 @@
+/* ============================================================================
+ * shortcuts.css — Settings → keyboard shortcuts (what shortcuts-ui.js renders into its
+ * container, `.sc`).
+ *
+ *   .sc-hint      what the list does, and which keys stay fixed
+ *   .sc-status    the last change, said once (role=status)
+ *   .sc-group     a .sub-h divider per group (Playback, Panels, Sound, Key & tempo, Screen)
+ *   .sc-row       one action: .sc-label, then .sc-keys — one .sc-key button per key, a quiet
+ *                 "No key" (.sc-none) when it has none, and ＋ (.sc-add)
+ *   .sc-prompt    under the row being changed: the message (.sc-msg) and its buttons
+ *                 (.sc-act; .primary = Swap / Move)
+ *   .sc-reset     a .reset-btn
+ *
+ * Rows also carry `.row` so the Settings search finds them; the `.settings-body .row` rules
+ * (a column, spans spread apart) are undone here, and every rule that meets a style.css one
+ * (.hint, .sub-h, .reset-btn) is a class deeper, so the order the sheets load in does not matter. Under touch every button is already at least --hit (style.css). Colours
+ * are tokens only; sizes are multiples of --u.
+ * ========================================================================== */
+
+.sc .sc-hint { margin: 0 0 var(--s-3); font-size: calc(12 / 16 * var(--u)); }
+.sc-status { margin: 0 0 var(--s-3); font-size: calc(12 / 16 * var(--u)); color: var(--brand-2); }
+.sc-status:empty { display: none; }
+.sc .sc-status + .sc-group { border-top: 0; padding-top: 0; }   /* the first group: no rule above it */
+
+.settings-body .row.sc-row {
+  flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: var(--s-2) var(--s-3);
+  margin-bottom: var(--s-2);
+}
+.sc-label { flex: 1 1 calc(9 * var(--u)); min-width: 0; color: var(--text); }
+.sc-keys {
+  flex: 0 1 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center;
+  gap: calc(6 / 16 * var(--u));
+}
+
+/* A key reads as a keycap: the hint's <kbd> look, a size up, so it is a target and not just text. */
+.sc-key, .sc-add {
+  min-width: calc(34 / 16 * var(--u)); height: calc(30 / 16 * var(--u));
+  padding: 0 calc(8 / 16 * var(--u));
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+  font: 600 calc(12 / 16 * var(--u))/1 var(--font-mono); white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+              color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.sc-key { box-shadow: inset 0 calc(-2 / 16 * var(--u)) 0 var(--border); }
+.sc-add { border-style: dashed; background: none; color: var(--text-muted); font-family: var(--font-sans); }
+.sc-key:hover, .sc-add:hover { border-color: var(--brand-2); color: var(--brand-2); }
+/* The key (or ＋) waiting for the next key press. */
+.sc-key[data-capturing], .sc-add[data-capturing] {
+  border-color: var(--brand-2); border-style: solid; color: var(--brand-2);
+  background: color-mix(in srgb, var(--brand-2) 16%, transparent);
+}
+.sc-none { color: var(--text-muted); font-size: calc(12 / 16 * var(--u)); font-style: italic; }
+
+/* The prompt takes the row's whole width, right under the keys it is about. */
+.sc-prompt {
+  flex: 1 0 100%;
+  padding: var(--s-3);
+  border-radius: var(--r-md); border: 1px solid var(--brand-2);
+  background: color-mix(in srgb, var(--brand-2) 10%, var(--surface-1));
+}
+.sc-prompt[hidden] { display: none; }
+.sc-msg { margin: 0 0 var(--s-2); color: var(--text); line-height: 1.4; }
+.sc-btns { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.sc-act {
+  min-height: calc(30 / 16 * var(--u)); padding: 0 var(--s-3);
+  border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+  font: 600 calc(12 / 16 * var(--u))/1 var(--font-sans);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+              transform var(--dur-fast) var(--ease);
+}
+.sc-act:hover { border-color: var(--brand-2); }
+.sc-act.primary { background: var(--brand-2); border-color: var(--brand-2); color: var(--brand-2-ink); }
+.sc-act:active, .sc-key:active, .sc-add:active { transform: scale(.95); }
+
+.sc .sc-reset { margin-top: var(--s-3); }

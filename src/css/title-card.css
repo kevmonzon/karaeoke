@@ -1,0 +1,135 @@
+/* ============================================================================
+ * title-card.css — the song intro over the lyric area (ui/title-card.js, 2026-11-24).
+ *
+ * A calm text block, no panel: title, artist, and one small line with who reserved the song
+ * and its key, centred a little above the middle of the lyric area. Shaped after how the
+ * commercial videoke app's intro behaves (clean room: behaviour and rough layout only).
+ *
+ * THE RULE THAT MATTERS: while the card is up, body.title-card-on hides #lyrics — both lyric
+ * styles live inside it (the scroll view .lyric-view and the stage canvas .lyric-stage) — so the
+ * card never shares the screen with a lyric line. When the card goes, the lyrics fade back in
+ * as the card fades out (one crossfade, no gap).
+ *
+ * Sizes are --u multiples, capped by the card's own height (it is a size container), because
+ * the lyric area is the flex remainder under the queue bar, guide and chords: about 100 px on a
+ * landscape phone with the guide on, several hundred on a TV. Colours are tokens.
+ * Only colour-scheme and reduced-motion @media.
+ * ========================================================================== */
+
+/* ---- Hide the lyrics while the card is up ------------------------------------------- */
+#lyrics { transition: opacity var(--dur-base) var(--ease); }
+body.title-card-on #lyrics { visibility: hidden; opacity: 0; transition: none; }
+/* No verdict chip over the card (it replaces style.css's old .title-card.show ~ .verdict rule). */
+body.title-card-on .verdict.show { opacity: 0; }
+
+/* ---- Ink per theme -------------------------------------------------------------------- */
+/* Dark (default): the app's text tokens, a faint dark halo. */
+.tcard {
+  --tc-title: var(--text);
+  --tc-artist: var(--text-muted);
+  --tc-singer: var(--brand-2);
+  --tc-key: var(--text-muted);
+  --tc-halo: rgba(0, 0, 0, .6);
+  --tc-halo-soft: rgba(0, 0, 0, .35);
+}
+/* Light: dark ink on the light stage, a faint light halo. Same selector pattern as tokens.css. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .tcard { --tc-halo: rgba(255, 255, 255, .85); --tc-halo-soft: rgba(255, 255, 255, .5); }
+}
+:root[data-theme="light"] .tcard { --tc-halo: rgba(255, 255, 255, .85); --tc-halo-soft: rgba(255, 255, 255, .5); }
+/* Over a background picture (backgrounds.js sets body[data-bg="on"]), BOTH themes: light ink on a
+   strong dark halo, the videoke look the scroll lyrics use there (backgrounds.css). #eef2ff is the
+   dark theme's --text, spelled out because the light theme redefines --text. Specificity beats the
+   two light-theme rules above. */
+:root body[data-bg="on"] .tcard {
+  --tc-title: #eef2ff;
+  --tc-artist: rgba(238, 242, 255, .82);
+  --tc-singer: var(--teal);
+  --tc-key: rgba(238, 242, 255, .82);
+  --tc-halo: rgba(0, 0, 0, .88);
+  --tc-halo-soft: rgba(0, 0, 0, .55);
+}
+
+/* ---- The card --------------------------------------------------------------------------- */
+/* Fills .lyrics-wrap (position: relative) over the hidden lyrics; never takes pointer events. */
+.tcard {
+  position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  container-type: size;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 var(--s-5);
+  text-align: center;
+  text-shadow: 0 0 calc(2 / 16 * var(--u)) var(--tc-halo),
+               0 calc(1 / 16 * var(--u)) calc(8 / 16 * var(--u)) var(--tc-halo-soft);
+  opacity: 0; visibility: hidden;
+  transition: opacity var(--dur-base) var(--ease), visibility 0s linear var(--dur-base);
+}
+.tcard.is-on {
+  opacity: 1; visibility: visible;
+  transition: opacity var(--dur-slow) var(--ease), visibility 0s;
+}
+
+/* cq units resolve against .tcard (the size container) from here down — never on .tcard itself,
+   where they would fall back to the viewport. The bottom margin lifts the centred block a little
+   above the middle (by half of it). */
+.tcard-block {
+  display: flex; flex-direction: column; align-items: center;
+  max-width: min(100%, calc(900 / 16 * var(--u)));
+  min-width: 0;
+  margin-bottom: var(--s-5);
+  margin-bottom: 8cqh;
+}
+
+/* Title: about the stage-lyric size (not a fill-the-box hero), two lines at most. */
+.tcard-title {
+  color: var(--tc-title);
+  font-weight: 800; line-height: 1.15; letter-spacing: -0.01em;
+  font-size: calc(48 / 16 * var(--u));
+  font-size: min(calc(48 / 16 * var(--u)), 21cqh);
+  text-wrap: balance; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden;
+  padding-block: 0.06em;   /* room for descenders and the halo inside the clamp's clip */
+  max-width: 100%;
+}
+
+/* Artist: half the title, one line. */
+.tcard-artist {
+  color: var(--tc-artist);
+  font-weight: 600; line-height: 1.25;
+  font-size: calc(24 / 16 * var(--u));
+  font-size: min(calc(24 / 16 * var(--u)), 10.5cqh);
+  margin-top: calc(6 / 16 * var(--u));
+  margin-top: min(calc(6 / 16 * var(--u)), 1.5cqh);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Who reserved it · key: small and quiet, one line. */
+.tcard-meta {
+  display: flex; align-items: baseline; justify-content: center; flex-wrap: nowrap;
+  max-width: 100%; min-width: 0;
+  line-height: 1.3;
+  font-size: calc(16 / 16 * var(--u));
+  font-size: min(calc(16 / 16 * var(--u)), 7.5cqh);
+}
+.tcard-meta > * {
+  margin-top: calc(10 / 16 * var(--u));
+  margin-top: min(calc(10 / 16 * var(--u)), 2.5cqh);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.tcard-singer { color: var(--tc-singer); font-weight: 700; }
+.tcard-key { color: var(--tc-key); font-weight: 600; font-variant-numeric: tabular-nums; flex: none; }
+.tcard-singer:not(:empty) + .tcard-key:not(:empty)::before {
+  content: "·"; margin-inline: 0.55em; color: var(--tc-key);
+}
+.tcard-title:empty, .tcard-artist:empty, .tcard-meta > :empty { display: none; }
+/* A very short lyric area (a landscape phone with the guide on, ~100 px): the meta line would be
+   unreadably small, and the queue bar already shows the singer and the key — drop it. */
+@container (max-height: 140px) {
+  .tcard-meta { display: none; }
+}
+
+/* ---- Reduced motion: no fades — the card and the lyrics simply swap. -------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .tcard, .tcard.is-on, #lyrics { transition: none; }
+}

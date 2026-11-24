@@ -34,15 +34,13 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 /* D-pad mode (html[data-input="keys"], set from M4): focused tiles and buttons also grow a
    little, so the focus reads from across a room. Not under reduced motion. */
 @media (prefers-reduced-motion: no-preference) {
-  html[data-input="keys"] :is(.home-tile, .ov-bar button, .ov-close, [data-ov-close], .ov-actions button):focus-visible {
+  html[data-input="keys"] :is(.stage-foot button, .ov-close, [data-ov-close], .ov-actions button):focus-visible {
     transform: scale(1.04);
   }
 }
 
-/* What a modal makes inert behind it (the control bar while a panel is open) is dimmed, so it
-   reads as unavailable. The stage itself is not dimmed: the lyrics stay readable beside an
+/* The stage is not dimmed while a modal makes it inert: the lyrics stay readable beside an
    open panel, and the tinted scrim covers it for sheets and dialogs. */
-.ov-bar[inert] { opacity: .55; }
 
 /* ---- Scrim -----------------------------------------------------------------------
    Takes the tap that closes the top overlay. Transparent for panels (the stage stays
@@ -60,55 +58,6 @@ body[data-ov="confirm"] .scrim { background: var(--scrim); backdrop-filter: blur
 body[data-ov="song"] .scrim { z-index: 45; }
 body[data-ov="calibrate"] .scrim { z-index: 55; }
 body[data-ov="confirm"] .scrim { z-index: 65; }
-
-/* ---- Control bar (#ov-controls) ---------------------------------------------------
-   Pinned to the bottom, over the stage. shell.js owns it: the bar is "open" unless
-   body.controls-hidden (it never gets `hidden`). The dock inside (style.css) carries the
-   gradient and the edge padding; .playbar wraps when it runs out of width. */
-.ov-bar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
-  transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease), padding var(--dur-base) var(--ease);
-}
-body.controls-hidden .ov-bar {
-  opacity: 0; pointer-events: none; transform: translateY(calc(10 / 16 * var(--u)));
-  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease), padding var(--dur-base) var(--ease);
-}
-/* The cursor hides with the bar (the shell never hides the bar while idle). */
-body.controls-hidden { cursor: none; }
-/* Beside an open panel the bar's content moves left with the stage (§4.2 rule 6). */
-body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
-
-/* The panel buttons: Songs · Queue · Mixer · Settings · Full screen. Each carries a short
-   visible label in landscape (TV, desktop, tablet and phone on their side), taken from its
-   aria-label; portrait shows the icons only so the wrapped bar stays compact. */
-.ctl-actions { display: flex; align-items: center; gap: calc(8 / 16 * var(--u)); flex: none; }
-.ctl-actions button {
-  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: calc(0.25 * var(--u));
-  min-width: var(--hit); width: auto; height: auto; min-height: var(--hit);
-  padding: calc(0.3 * var(--u)) calc(0.45 * var(--u));
-  border-radius: var(--radius); border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--text);
-  font-family: inherit; font-size: var(--u); line-height: 1; cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-}
-.ctl-actions button::after {
-  content: attr(aria-label);
-  font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em; /* full --text: small type needs the contrast */
-  white-space: nowrap;
-}
-@media (hover: hover) {
-  .ctl-actions button:hover { border-color: var(--brand-2); }
-}
-.ctl-actions button:active { transform: scale(.93); }
-
-/* Portrait: the bar regroups into centred rows — transport / Key · Tempo · Volume / panel
-   buttons — instead of left-aligned leftovers, with a narrower volume slider. */
-@media (orientation: portrait) {
-  .ov-bar .playbar { justify-content: center; column-gap: calc(20 / 16 * var(--u)); }
-  .ov-bar .ctl input[type=range] { width: calc(108 / 16 * var(--u)); }
-  .ctl-actions button::after { content: none; }
-}
 
 /* ---- Panels (Songs, Queue, Mixer, Settings) ---------------------------------------
    One edge, one width, one motion: every panel is fixed full height on the RIGHT, --panel-w
@@ -150,12 +99,25 @@ body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
 }
 
 /* The scrolling body of each panel takes the height that is left. */
-.ov-panel > .song-list,
-.ov-panel > .queue-list { flex: 1 1 auto; min-height: 0; }
-.ov-panel > .search-row, .ov-panel > .browse-tabs,
-.ov-panel > .queue-actions, .ov-panel > .remote-qr { flex: none; }
-/* The Queue panel keeps the old queue column's inset around its QR card, list and actions. */
-#ov-queue > :not(.ov-head) { margin-inline: var(--s-4); }
+.ov-panel > .song-list { flex: 1 1 auto; min-height: 0; }
+.ov-panel > .search-row, .ov-panel > .browse-tabs { flex: none; }
+
+/* The Songs panel's Queue tab (Rae, 2026-11-24 — it was the Queue panel): the room line, the list
+   scrolling in the middle, Clear all at the foot. The room line shows only with Remote on. */
+.ov-panel > .queue-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.queue-view > .queue-list { flex: 1 1 auto; min-height: 0; padding-top: var(--s-2); }
+.queue-view > .queue-room, .queue-view > .queue-actions { flex: none; margin-inline: var(--s-4); }
+.queue-room {
+  padding-block: var(--s-2) 0;
+  font-size: calc(12 / 16 * var(--u)); color: var(--text-muted);
+}
+.queue-room strong { color: var(--accent); letter-spacing: 2px; font-variant-numeric: tabular-nums; }
+.queue-push:not(:empty)::before { content: "· "; }
+body:not(.remote-on) .queue-room { display: none; }
+.queue-list:empty::after {
+  content: "Nothing queued yet — pick a song and choose Reserve.";
+  display: block; padding: var(--s-4) var(--s-2); color: var(--text-muted); font-size: calc(13 / 16 * var(--u));
+}
 /* Clear all (M5): a full-size touch target at the foot of the queue. */
 .queue-actions { padding-block: var(--s-3) var(--s-4); }
 .queue-actions .reset-btn { min-height: var(--hit); }

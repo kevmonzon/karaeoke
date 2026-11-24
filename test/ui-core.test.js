@@ -9,13 +9,23 @@ import assert from "node:assert/strict";
 
 import { OVERLAY_DEFS, createOverlayStack } from "../src/js/ui/overlay-stack.js";
 import { pickNext } from "../src/js/ui/spatial-nav.js";
-import { ACTIONS, TV_KEYCODES, keyToAction } from "../src/js/ui/keymap.js";
+import { ACTIONS, TV_KEYCODES, keyToAction, resolveBindings } from "../src/js/ui/keymap.js";
+
+// The app has no non-modal bar since the playback dock went (2026-11-24), but the stack still
+// supports one (the toast is the other non-modal kind): these tests keep it as a test-only id.
+// Likewise `queue`: the Queue panel became a tab of Songs the same day, but the panel-swap rules
+// need a second panel beside search / mixer / settings, so the tests keep it as a test-only id.
+const TEST_DEFS = Object.freeze({
+  ...OVERLAY_DEFS,
+  controls: Object.freeze({ kind: "bar", modal: false, group: null, z: 20, autoHideMs: 0 }),
+  queue: Object.freeze({ kind: "panel", modal: true, group: "panel", z: 40, autoHideMs: 0 }),
+});
 
 // A stack on a settable clock that records every change.
 function makeStack(t0 = 1000) {
   const changes = [];
   const clock = { t: t0 };
-  const stack = createOverlayStack({ onChange: (c) => changes.push(c), now: () => clock.t });
+  const stack = createOverlayStack({ defs: TEST_DEFS, onChange: (c) => changes.push(c), now: () => clock.t });
   return { stack, changes, clock };
 }
 
@@ -162,20 +172,19 @@ test("stack: swap closes one panel and opens another in one change", () => {
   assert.equal(changes.length, 1);
 });
 
-test("stack: the nine overlay ids match the spec", () => {
+test("stack: the seven overlay ids match the spec (no queue panel since 2026-11-24)", () => {
   const P = (kind, modal, group, z, autoHideMs = 0) => ({ kind, modal, group, z, autoHideMs });
   assert.deepEqual(OVERLAY_DEFS, {
-    controls:  P("bar",    false, null,     20),
     adjust:    P("toast",  false, null,     25, 2500),
     search:    P("panel",  true,  "panel",  40),
-    queue:     P("panel",  true,  "panel",  40),
     mixer:     P("panel",  true,  "panel",  40),
     settings:  P("panel",  true,  "panel",  40),
     song:      P("sheet",  true,  "sheet",  50),
     calibrate: P("dialog", true,  "dialog", 60),
     confirm:   P("dialog", true,  "dialog", 70),
   });
-  assert.equal(Object.keys(OVERLAY_DEFS).length, 9);
+  assert.equal(Object.keys(OVERLAY_DEFS).length, 7);
+  assert.equal(Object.prototype.hasOwnProperty.call(OVERLAY_DEFS, "queue"), false, "the queue is a tab of Songs");
   assert.ok(Object.isFrozen(OVERLAY_DEFS));
   for (const d of Object.values(OVERLAY_DEFS)) assert.ok(Object.isFrozen(d));
 });
@@ -435,11 +444,13 @@ const KEY_TABLE = [
   [".", "tempoUp"], [",", "tempoDown"],
   ["]", "offsetUp"], ["[", "offsetDown"],
   ["m", "melodyToggle"], ["F2", "melodyToggle"], ["ColorF3Blue", "melodyToggle"],
-  ["/", "openSearch"], ["s", "openSearch"], ["F1", "openSearch"], ["ColorF0Red", "openSearch"],
+  ["/", "openSearch"], ["s", "openSearch"], ["ColorF0Red", "openSearch"],
+  ["F1", "searchToggle"],
   ["q", "openQueue"], ["ColorF1Green", "openQueue"],
   ["ColorF2Yellow", "bgNext"],
-  ["c", "toggleControls"],
   ["f", "fullscreen"],
+  // the product owner's function keys (2026-11-24)
+  ["F3", "keyDown"], ["F4", "keyUp"], ["F5", "tempoDown"], ["F6", "tempoUp"], ["F8", "guideToggle"],
 ];
 
 test("keymap: media and colour keys", () => {
@@ -450,8 +461,8 @@ test("keymap: media and colour keys", () => {
       assert.deepEqual(keyToAction(K(key.toUpperCase()), STAGE), want, key.toUpperCase());
     }
   }
-  // unmapped keys stay null
-  for (const key of ["x", "F3", "Tab", "Shift", "PageDown", "Home", "ColorF4Grey"]) {
+  // unmapped keys stay null (`c` was toggleControls until the control bar went)
+  for (const key of ["x", "c", "F7", "F9", "Tab", "Shift", "PageDown", "Home", "ColorF4Grey"]) {
     assert.equal(keyToAction(K(key), STAGE), null, key);
   }
   assert.equal(keyToAction(null, STAGE), null);
@@ -473,6 +484,10 @@ test("keymap: every mapped action is in ACTIONS", () => {
       produced.add(h.action);
     }
   }
-  // and the reverse: nothing in ACTIONS is dead
-  assert.deepEqual([...produced].sort(), [...ACTIONS].sort());
+  // and the reverse: nothing in ACTIONS is dead — the four with no default key are reached
+  // through a table that binds them
+  const unbound = ["volumeUp", "volumeDown", "melodyUp", "melodyDown"];
+  assert.deepEqual([...produced].sort(), ACTIONS.filter((a) => !unbound.includes(a)).sort());
+  const table = resolveBindings({ volumeUp: ["u"], volumeDown: ["d"], melodyUp: ["F9"], melodyDown: ["F10"] });
+  assert.deepEqual(["u", "d", "F9", "F10"].map((k) => keyToAction(K(k), STAGE, table).action), unbound);
 });

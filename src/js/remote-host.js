@@ -49,7 +49,7 @@ export const REMOTE_SETTING_RANGES = Object.assign(Object.create(null), {
   "lyrics.offsetMs":  { type: "int",  min: -2000, max: 2000 },
   "audio.key":        { type: "int",  min: -12,   max: 12 },
   "audio.tempo":      { type: "num",  min: 0.5,   max: 1.5 },
-  "audio.volume":     { type: "num",  min: 0,     max: 2 },
+  "audio.volume":     { type: "num",  min: 0,     max: 1 },   // 0–100 % (Rae, 2026-11-24)
   "guide.vocal.mute": { type: "bool" },
 });
 

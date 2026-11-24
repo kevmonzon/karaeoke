@@ -6,7 +6,7 @@
  * owns the page base, #stage and its layers (bottom to top):
  *   0 background (#bg-layer) · 1 media (#kv, #ytplayer) · 2 flow (#stage-flow:
  *   queue bar, pitch guide, chords, lyrics, cards) · 3 home (idle) ·
- *   4 HUD (boot sweep) · 5 reactions (style.css). The stage QR (#stage-qr) lives in the
+ *   4 HUD (boot sweep, the footer: status line · panel buttons · seek bar) · 5 reactions (style.css). The stage QR (#stage-qr) lives in the
  *   flow, in .guide-row beside the pitch guide (style.css).
  * plus the status line, the stage's reflow beside an open panel, and the
  * orientation rules. Sizes are multiples of --u (tokens.css); colours are tokens.
@@ -58,16 +58,13 @@ body.video-mode .kv, body.youtube-mode .ytplayer { display: block; }
 }
 /* Idle: the home layer replaces the empty flow ("Select a song to begin", blank lyrics). */
 body[data-idle="true"] .stage-flow { opacity: 0; visibility: hidden; }
-/* While the control bar is up (always while paused or idle, and after any touch, pointer
-   move or key), the flow gives up its measured height (--bar-h, set by app.js) so the
-   lyrics glide up above it instead of sitting under it; when the bar auto-hides during
-   singing the lyrics take the full height back. Capped at 45vh so a short landscape phone,
-   where the bar wraps to half the screen, keeps a usable lyric area (the bar overlaps
-   there until it hides). Same --dur-base glide as the drawer reflow. */
-body:not(.controls-hidden) .stage-flow { padding-bottom: max(var(--edge-b), min(var(--bar-h, 0px), 45vh)); }
+/* The footer is always on screen (Rae, 2026-11-24), so the flow always gives up its measured
+   height (--foot-h, set by app.js) and the lyrics never sit under it. Capped at 45vh so a short
+   landscape phone, where the status line wraps, keeps a usable lyric area. */
+.stage-flow { padding-bottom: max(var(--edge-b), min(var(--foot-h, 0px), 45vh)); }
 
 /* The queue bar (#queue-bar.now-playing): kind icon · title/artist · singer · key · lyric
-   state · up-next · queue count. The badges are `flex: none`, so on a narrow stage they
+   state · what plays next · queue count. The badges are `flex: none`, so on a narrow stage they
    took the whole row and squeezed .np-meta to ZERO width: let the row wrap and give the
    title a floor, so the badges drop to a second line instead of evicting the title. */
 .queue-bar { flex: none; }
@@ -95,55 +92,44 @@ body.video-mode .queue-bar, body.youtube-mode .queue-bar {
 }
 .now-singer:empty { display: none; }
 
+/* The key and the queue count read like the title (Rae, 2026-11-24): the same large bold type,
+   no pill — the key in the accent, the count a plain button that opens the queue. */
 .np-key {
-  font-size: calc(12 / 16 * var(--u)); color: var(--accent-2); background: var(--panel-2);
-  border: 1px solid var(--line); padding: calc(4 / 16 * var(--u)) calc(11 / 16 * var(--u)); border-radius: calc(20 / 16 * var(--u));
-  white-space: nowrap; font-variant-numeric: tabular-nums;
+  font-size: calc(1.3125 * var(--u)); font-weight: 800; color: var(--accent-2);
+  white-space: nowrap; font-variant-numeric: tabular-nums; flex: none;
 }
 .np-key:empty { display: none; }
 .np-key.uncertain { color: var(--muted); }
 
-/* Queued-song count: the .badge pill, teal, and a BUTTON now (it opens the queue). The glyph
-   stays small; an invisible pseudo-element brings the hit area up to --hit. */
+/* What plays next: a mono eyebrow and the song · singer, after the badges; empty = gone. */
+.np-next { flex: 0 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--s-2); white-space: nowrap; }
+.np-next:empty { display: none; }
+.np-next .nx-lb { flex: none; font: 700 calc(11 / 16 * var(--u))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
+.np-next .nx-song { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(16 / 16 * var(--u)); font-weight: 700; color: var(--text); }
+.np-next .nx-by { flex: none; font-size: calc(14 / 16 * var(--u)); font-weight: 600; color: var(--brand); }
+
+/* Queued-song count: a BUTTON (it opens the queue), in the title's type. An invisible
+   pseudo-element brings the hit area up to --hit. */
 .queue-count {
-  flex: none; position: relative; background: var(--brand-2); font-weight: 700; letter-spacing: .3px;
-  border: 0; font-family: inherit; line-height: inherit; cursor: pointer;
+  flex: none; position: relative; color: var(--text); background: none; padding: 0;
+  /* longhands: `inherit` is not allowed as the family inside the `font` shorthand */
+  font-family: inherit; font-size: calc(1.3125 * var(--u)); font-weight: 800; line-height: 1;
+  letter-spacing: -.01em; text-transform: none;
+  font-variant-numeric: tabular-nums; border: 0; cursor: pointer;
 }
 .queue-count::after {
   content: ""; position: absolute; left: 50%; top: 50%;
   width: max(100%, var(--hit)); height: max(100%, var(--hit)); transform: translate(-50%, -50%);
 }
 
-/* "Up next" — a teal-bordered PILL: a mono eyebrow + the song + the next singer. OVERLAID
-   (absolute) on the queue bar so appearing/vanishing in the last ~20 s never reflows the
-   lyrics. --upnext-mult is the old focus-mode 1.75× — now the only size (the stage is
-   always the 10-foot view). */
-.up-next {
-  --upnext-mult: 1.75;
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 4;
-  display: inline-flex; align-items: center; gap: calc(10 / 16 * var(--u) * var(--upnext-mult));
-  width: max-content; max-width: 100%;
-  padding: calc(8 / 16 * var(--u) * var(--upnext-mult)) calc(14 / 16 * var(--u) * var(--upnext-mult));
-  background: var(--surface-1); border: 1px solid color-mix(in srgb, var(--brand-2) 40%, transparent);
-  border-radius: var(--r-pill); box-shadow: var(--elev-1); white-space: nowrap; overflow: hidden;
-}
-.up-next:empty { display: none; }
-.up-next .up-lb { flex: none; font: 700 calc(10 / 16 * var(--u) * var(--upnext-mult))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--brand-2); }
-.up-next .up-song { min-width: 0; font-size: calc(13 / 16 * var(--u) * var(--upnext-mult)); color: var(--text); overflow: hidden; text-overflow: ellipsis; }
-/* the queued next singer — brand pink, tying it to the singer identity */
-.up-next .up-by { flex: none; font-size: calc(12.5 / 16 * var(--u) * var(--upnext-mult)); font-weight: 600; color: var(--brand); }
-/* Slide in from the right when it appears. Token duration → instant under reduced motion. */
-.up-next:not(:empty) { animation: upNextIn var(--dur-slow) var(--ease); }
-@keyframes upNextIn { from { opacity: 0; transform: translate(calc(-50% + 22 / 16 * var(--u)), -50%); } to { opacity: 1; transform: translate(-50%, -50%); } }
 
 /* Per-note verdicts (M9 styles them in scoring.css); empty until then. */
 .verdict:empty { display: none; }
 
-/* 3 — home: the idle stage (P4). Brand, "Select a song", the room QR and the tiles. It
-   fades in when body[data-idle="true"]. The control bar never hides while idle, so the
-   bottom keeps --bar-room clear for it. Landscape: tiles left, QR right. */
+/* 3 — home: the idle stage (P4). Brand, "Select a song" and the room QR (the tiles were removed —
+   Rae, 2026-11-24). It fades in when body[data-idle="true"]; the bottom keeps the footer's
+   height (--foot-h) clear. Landscape: the prompt left, the QR right. */
 .home {
-  --bar-room: calc(8.5 * var(--u));
   position: absolute; inset: 0; z-index: 3;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -152,22 +138,18 @@ body.video-mode .queue-bar, body.youtube-mode .queue-bar {
     "brand  brand"
     ".      ."
     "prompt qr"
-    "tiles  qr"
-    "tiles  room"
+    ".      qr"
+    ".      room"
     ".      ."
     "hints  hints";
   align-items: start;
-  padding: var(--edge-t) var(--edge-r) max(var(--edge-b), var(--bar-h, calc(var(--edge-b) + var(--bar-room)))) var(--edge-l);
+  padding: var(--edge-t) var(--edge-r) max(var(--edge-b), var(--foot-h, calc(var(--edge-b) + 4 * var(--u)))) var(--edge-l);
   opacity: 0; visibility: hidden;
   transition: opacity var(--dur-base) var(--ease), visibility 0s linear var(--dur-base), padding var(--dur-base) var(--ease);
 }
-/* M13: the tiles never draw under the bar. The bottom padding reserves the bar's height, but grid content
-   overflows into padding — on a short landscape phone with a panel open the wrapped tiles ran under the
-   play / key / tempo controls. Clip at the content box; it changes nothing while they fit. */
+/* M13: nothing draws under the footer — grid content would overflow into the bottom padding on a
+   short landscape phone. Clip at the content box; it changes nothing while it fits. */
 .home { overflow: clip; overflow-clip-margin: content-box; }
-/* With a panel open the home screen behind it is inert: its tiles step aside (on a narrow remainder they
-   would wrap into the bar's space; the brand, prompt and QR stay). */
-body[data-panel="right"] .home-tiles { visibility: hidden; }
 body[data-idle="true"] .home {
   opacity: 1; visibility: visible;
   transition: opacity var(--dur-base) var(--ease), visibility 0s, padding var(--dur-base) var(--ease);
@@ -175,29 +157,6 @@ body[data-idle="true"] .home {
 .home-brand { grid-area: brand; font-weight: 800; letter-spacing: .3px; font-size: var(--t-h2); }
 .home-brand span { color: var(--accent); } /* "Rae" — the wordplay, highlighted */
 .home-prompt { grid-area: prompt; font-size: var(--t-h1); font-weight: 800; letter-spacing: -.01em; line-height: 1.15; }
-.home-tiles {
-  grid-area: tiles; align-self: start;
-  display: flex; flex-wrap: wrap; gap: var(--gap); margin-top: var(--pad);
-}
-/* <button class="home-tile" data-tile="…"><svg class="icon">…</svg><span class="home-tile-label">
-   (home.js): icon over a label. Big targets: the D-pad landing spot when idle. */
-.home-tile {
-  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: calc(0.4 * var(--u));
-  min-width: calc(7.5 * var(--u)); min-height: max(var(--hit), calc(4.5 * var(--u)));
-  padding: var(--gap) var(--pad);
-  border-radius: var(--radius); border: 1px solid var(--border);
-  background: var(--surface-1); color: var(--text);
-  font-family: inherit; font-size: var(--t-body); line-height: 1.2;
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-}
-.home-tile .icon { width: calc(1.5 * var(--u)); height: calc(1.5 * var(--u)); }
-.home-tile-label { font-weight: 600; white-space: nowrap; }
-.home-tile:active { transform: scale(.96); }
-@media (hover: hover) {
-  .home-tile:hover { border-color: var(--brand-2); }
-}
 /* The room QR + code: only while the phone remote is on, and not when ⚙ says "never"
    (body[data-qr] mirrors remote.qrOnStage). An empty box (no QR library) stays hidden. */
 .home-qr {
@@ -207,7 +166,7 @@ body[data-idle="true"] .home {
   border-radius: var(--radius); background: var(--qr-bg);
 }
 .home-qr svg { display: block; width: 100%; height: 100%; }
-/* "Room ABC123" (home.js setRoom, plain text). */
+/* "Room ABC123" (remote-glue refreshQr, plain text). */
 .home-room {
   grid-area: room; display: none; justify-self: center;
   margin-inline-start: var(--pad); margin-top: var(--gap);
@@ -255,29 +214,164 @@ body.booting .boot-bar { opacity: 1; }
 }
 @keyframes boot-sweep { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
 
-/* ---- Status line --------------------------------------------------------------
-   The one role="status" line, OUTSIDE #stage so it is never made inert. Bottom-left in
-   the control bar's bottom strip (the dock reserves the room), above the bar's z. It is
-   part of the chrome: it fades with the control bar, so the singing stage stays clean
-   (its text is still announced — opacity does not hide it from assistive tech). */
+/* ---- The stage footer (Rae, 2026-11-24 — it replaces the playback dock) ----------------
+   At the bottom of the stage (it auto-hides while a song plays, below): the panel buttons (small
+   icons), the status line — the song on one line, the − + steps on the next — and the seek bar along
+   the very bottom edge. Portrait stacks the buttons above the status line at the left (a phone gets
+   the mixer strip); landscape puts them in the bottom-right corner (both below). Part of the stage (z 4, above the flow),
+   so a dialog or a panel makes it inert with the stage; beside an open panel it gives up
+   --panel-pad like the flow. app.js publishes its height as --foot-h. Only its controls take
+   taps — the stage under the empty middle stays the stage. */
+.stage-foot {
+  --seek-h: max(3px, calc(4 / 16 * var(--u)));
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: var(--s-2);
+  padding: 0 var(--edge-r) calc(var(--seek-h) + var(--s-2) + var(--safe-b) + var(--overscan)) var(--edge-l);
+  pointer-events: none;
+}
+.stage-foot > * { pointer-events: auto; }
+/* Auto-hide (shell.js, ui.footer.*): while a song plays the footer fades after a few idle seconds;
+   a tap, a mouse move or a key brings it back. The cursor hides with it, and the lyrics take the
+   strip back. */
+.stage-foot { transition: padding var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease); }
+body.foot-hidden .stage-foot {
+  opacity: 0; transform: translateY(calc(10 / 16 * var(--u)));
+  transition: opacity var(--dur-slow) var(--ease), transform var(--dur-slow) var(--ease);
+}
+body.foot-hidden .stage-foot > * { pointer-events: none; }
+body.foot-hidden { cursor: none; }
+body.foot-hidden .stage-flow { padding-bottom: var(--edge-b); }
+body[data-panel="right"] .stage-foot { padding-inline-end: calc(var(--panel-pad) + var(--edge-r)); }
+/* Over a picture (a background, a video or YouTube) a faint ground keeps the line readable. */
+body[data-bg="on"] .stage-foot, body.video-mode .stage-foot, body.youtube-mode .stage-foot {
+  background: linear-gradient(to top, color-mix(in srgb, var(--bg) 72%, transparent), transparent);
+}
+
+/* The status line, two lines: the song (the song count while idle, else ▶ Title — Artist), then
+   VOL · KEY · TEMPO · MELODY · OFFSET, each value between a − and a +. Small mono caps. */
 .status {
-  position: fixed; z-index: 30; pointer-events: none;
-  left: var(--edge-l); bottom: calc(var(--safe-b) + var(--overscan) + 0.25 * var(--u));
-  max-width: calc(100vw - var(--edge-l) - var(--edge-r));
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--s-2); min-width: 0; max-width: 100%;
   color: var(--text-muted);
   font: 600 calc(11 / 16 * var(--u))/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  transition: opacity var(--dur-base) var(--ease);
 }
-.status:empty { display: none; }
-body.controls-hidden .status { opacity: 0; transition-duration: var(--dur-slow); }
+.st-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-4); min-width: 0; max-width: 100%; }
+.st-item { display: inline-flex; align-items: center; gap: var(--s-1); white-space: nowrap; }
+.st-item[hidden] { display: none; }
+.st-now { display: inline-block; max-width: min(90vw, calc(40 * var(--u))); overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.st-val { min-width: 3.2ch; text-align: center; color: var(--text); font-variant-numeric: tabular-nums; }
+.st-btn {
+  width: calc(1.25 * var(--u)); height: calc(1.25 * var(--u)); padding: 0; flex: none;
+  border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--text-muted);
+  font: inherit; cursor: pointer;
+}
+.st-btn .icon { width: .85em; height: .85em; }
+@media (hover: hover) { .st-btn:hover { border-color: var(--brand-2); color: var(--text); } }
+/* Melody has no meaning without a MIDI melody: dimmed (still settable for the next song). */
+body.video-mode .st-step:has(#st-melody), body.youtube-mode .st-step:has(#st-melody),
+body.audio-mode .st-step:has(#st-melody) { opacity: .45; }
+
+/* The panel buttons, just above the status line (Rae): Songs · Queue · [Mixer] · [Next background] ·
+   Settings · Full screen — small icons only; the name is the tooltip and the accessible name. Touch
+   still gets --hit (44 px) targets (style.css). */
+.stage-corner { display: flex; align-items: center; gap: var(--s-1); flex: none; }
+.stage-corner button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: calc(1.9 * var(--u)); height: calc(1.9 * var(--u)); padding: 0;
+  border-radius: var(--r-md); border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent); color: var(--text);
+  font-family: inherit; font-size: var(--u); line-height: 1; cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+@media (hover: hover) { .stage-corner button:hover { border-color: var(--brand-2); } }
+.stage-corner button:active { transform: scale(.93); }
+
+/* The seek bar: a thin line on the bottom edge (above any TV overscan), full width; a taller
+   invisible strip above it takes the press, and it thickens while hovered or dragged. Nothing
+   to seek while idle. */
+.seek-track {
+  position: absolute; left: 0; right: 0; bottom: var(--overscan); height: var(--seek-h);
+  background: color-mix(in srgb, var(--text) 14%, transparent); cursor: pointer; touch-action: none;
+  transition: height var(--dur-fast) var(--ease);
+}
+.seek-track::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: max(14px, calc(0.9 * var(--u))); }
+@media (hover: hover) { .seek-track:hover { height: calc(var(--seek-h) * 2); } }
+.seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+body[data-idle="true"] .seek-track { visibility: hidden; }
+
+/* ---- Landscape, any size: the panel buttons in the bottom-right corner (Rae, 2026-11-24) -------
+   The status line on the left, the panel buttons at the bottom right, level with the − + line.
+   Where the two do not fit side by side (a landscape phone) the buttons wrap to their own line
+   below, still in the corner. The song line never sizes the status (contain), so a long title
+   cannot decide whether the buttons wrap: it ellipsizes in whatever width the status gets.
+   Portrait keeps the buttons just above the status line. */
+@media (orientation: landscape) {
+  .stage-foot { flex-direction: row; flex-wrap: wrap; align-items: flex-end; justify-content: flex-start; gap: var(--s-2) var(--s-4); }
+  .status { order: 1; flex: 1 1 auto; }
+  .st-line.st-song { align-self: stretch; contain: inline-size; }
+  .st-now { max-width: min(100%, calc(40 * var(--u))); }
+  .stage-corner { order: 2; margin-inline-start: auto; }
+}
+
+/* ---- Phones and small tablets held upright: the mixer strip (Rae, 2026-11-24) -----------------
+   A portrait screen under 800 px wide gets a bar. The panel buttons share the width as a tab bar,
+   and the five steps stand as even columns like a mixing desk: the name, + above, the value,
+   − below. Every target is --hit (44 px) whatever the input. The columns share one grid (subgrid),
+   so a value that wraps ("C♯m → D♯m" on a 360 px phone) moves every − down together. */
+@media (orientation: portrait) and (max-width: 799px) {
+  .stage-foot { align-items: stretch; gap: var(--s-3); }
+  .stage-corner { gap: var(--s-2); }
+  .stage-corner button { flex: 1 1 0; width: auto; min-width: 0; height: var(--hit); }
+  .status { align-items: stretch; gap: var(--s-3); font-size: max(10.5px, calc(11 / 16 * var(--u))); }
+  .st-now { max-width: 100%; }
+  .st-line.st-ctls {
+    display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-rows: auto var(--hit) auto var(--hit); gap: var(--s-1) var(--s-2);
+  }
+  .st-item.st-step {
+    display: grid; grid-row: span 4; grid-template-rows: subgrid;
+    align-items: center; justify-items: stretch; min-width: 0; text-align: center; white-space: normal;
+  }
+  .st-step > .st-lbl { grid-row: 1; }
+  .st-step > .st-btn:last-of-type { grid-row: 2; }     /* + */
+  .st-step > .st-val { grid-row: 3; min-width: 0; font-size: 1.3em; letter-spacing: 0; }
+  .st-step > .st-btn:first-of-type { grid-row: 4; }    /* − */
+  .st-step > .st-btn { width: 100%; height: var(--hit); min-width: 0; border-radius: var(--r-md); }
+  .st-btn .icon { width: 1.2em; height: 1.2em; }
+}
+/* Touch everywhere else (landscape, or a large tablet upright): the row stays, but each step stacks
+   its name over its value between the two 44 px buttons, so the five sit on one line on a
+   landscape phone, and the text (13 px at least) suits the buttons. The two blocks are the same
+   rules: touch as the input, or a coarse pointer before the first input has set a mode (style.css's
+   touch rule). */
+@media (orientation: landscape), (min-width: 800px) {
+  html[data-input="touch"] .status { font-size: max(13px, calc(11 / 16 * var(--u))); }
+  html[data-input="touch"] .st-item.st-step {
+    display: inline-grid; grid-template: "down lbl up" auto "down val up" auto / auto auto auto;
+    align-items: center; column-gap: var(--s-1); text-align: center;
+  }
+  html[data-input="touch"] .st-step > .st-lbl { grid-area: lbl; font-size: .8em; }
+  html[data-input="touch"] .st-step > .st-val { grid-area: val; letter-spacing: 0; }
+  html[data-input="touch"] .st-step > .st-btn:first-of-type { grid-area: down; }
+  html[data-input="touch"] .st-step > .st-btn:last-of-type { grid-area: up; }
+}
+@media (orientation: landscape) and (pointer: coarse), (min-width: 800px) and (pointer: coarse) {
+  html:not([data-input]) .status { font-size: max(13px, calc(11 / 16 * var(--u))); }
+  html:not([data-input]) .st-item.st-step {
+    display: inline-grid; grid-template: "down lbl up" auto "down val up" auto / auto auto auto;
+    align-items: center; column-gap: var(--s-1); text-align: center;
+  }
+  html:not([data-input]) .st-step > .st-lbl { grid-area: lbl; font-size: .8em; }
+  html:not([data-input]) .st-step > .st-val { grid-area: val; letter-spacing: 0; }
+  html:not([data-input]) .st-step > .st-btn:first-of-type { grid-area: down; }
+  html:not([data-input]) .st-step > .st-btn:last-of-type { grid-area: up; }
+}
 
 /* ---- Stage reflow beside an open panel (§4.2 rule 6) ---------------------------
    Every panel enters from the right. Where the panel is narrower than the screen the stage
    gives up --panel-pad on its right, so the lyrics are never covered and stay centred in
    what is left; the lyric canvas re-measures through its own ResizeObserver. Where the
    panel is the full width (a phone in portrait) --panel-pad is 0 and the panel covers
-   the stage. The control bar does the same in overlays.css. */
+   the stage. The footer does the same (below). */
 body[data-panel="right"] .stage-flow,
 body[data-panel="right"] .home { padding-inline-end: calc(var(--panel-pad) + var(--edge-r)); }
 /* The baked-in lyrics of a video are in the picture: it gives up the same width (no
@@ -286,17 +380,14 @@ body[data-panel="right"] .kv,
 body[data-panel="right"] .ytplayer { width: calc(100% - var(--panel-pad)); }
 
 /* ---- Orientation ---------------------------------------------------------------
-   Portrait (phone or tablet held upright): the home stacks in one centred column, and the
-   control bar wraps to more rows, so more room is kept clear for it. */
+   Portrait (phone or tablet held upright): the home stacks in one centred column. */
 @media (orientation: portrait) {
   .home {
-    --bar-room: calc(16 * var(--u));
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto auto auto auto minmax(0, 1fr) auto;
-    grid-template-areas: "brand" "." "prompt" "qr" "room" "tiles" "." "hints";
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "brand" "." "prompt" "qr" "room" "." "hints";
   }
   .home-prompt { text-align: center; }
-  .home-tiles { justify-content: center; }
   .home-qr { margin-inline-start: 0; margin-top: var(--pad); width: min(calc(10 * var(--u)), 26vh); }
   .home-room { margin-inline-start: 0; }
 }
@@ -304,5 +395,4 @@ body[data-panel="right"] .ytplayer { width: calc(100% - var(--panel-pad)); }
 /* ---- Reduced motion ------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
   .boot-bar::after { animation: none; width: 100%; opacity: .5; }
-  .home-tile:active { transform: none; }
 }
