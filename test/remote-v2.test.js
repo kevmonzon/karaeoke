@@ -490,8 +490,7 @@ test("restart and bg delegate", () => {
   const { glue, calls } = glueHarness();
   glue.applyCommand({ type: "restart", by: "Rae" });
   glue.applyCommand({ type: "bg", by: "Rae" });
-  for (const type of ["digit", "digit_delete", "digit_clear", "digit_commit"]) glue.applyCommand({ type, d: 1, by: "Rae" });
-  assert.deepEqual(calls, [["restart"], ["bgNext"]], "M8's digit commands fall through, ignored");
+  assert.deepEqual(calls, [["restart"], ["bgNext"]]);   // M8's digit commands: test/numpad.test.js
 });
 
 test("snapshot carries songRev and notice", () => {
@@ -525,6 +524,7 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   const { glue, calls } = glueHarness({
     settings: {
       "remote.guestPlayNow": false, "remote.guestPriority": true, "queue.fairPlay": true, "remote.push": false,
+      "remote.liveDigits": false, "keypad.enabled": true,
       "audio.key": 0, "audio.tempo": 1, "audio.volume": 1, "lyrics.offsetMs": 0, "guide.vocal.mute": false,
     },
   });
@@ -533,7 +533,7 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   assert.equal(mirrored["remote.guestPriority"], true);
   assert.equal(mirrored["queue.fairPlay"], true);
   assert.equal(mirrored["remote.push"], false, "the host's Instant-updates switch: false tells phones to poll");
-  assert.deepEqual([...REMOTE_READONLY_MIRROR].sort(), ["queue.fairPlay", "remote.guestPlayNow", "remote.guestPriority", "remote.push"]);
+  assert.deepEqual([...REMOTE_READONLY_MIRROR].sort(), ["keypad.enabled", "queue.fairPlay", "remote.guestPlayNow", "remote.guestPriority", "remote.liveDigits", "remote.push"]);
   assert.deepEqual(Object.keys(mirrored).sort(), [...REMOTE_SETTABLE, ...REMOTE_READONLY_MIRROR].sort());
 
   // Not settable: the allowlist and its ranges are exactly what they were before M7.

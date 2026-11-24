@@ -87,12 +87,21 @@
       </div>
     </section>
 
-    <!-- Tab 3: Search -->
+    <!-- Tab 3: Search. The 123 toggle shows the host's number pad (ui/numpad.js, M8); hidden when
+         the host turned the pad off (mirrored keypad.enabled === false). With the host's live digits
+         on, each pad key also types into the karaoke screen's Songs search and ⏎ reserves its top
+         hit in this guest's name; off, the pad types here only and ⏎ reserves this list's top hit. -->
     <section id="tab-search" class="panel">
-      <div class="search-bar">
-        <input id="r-search" type="search" inputmode="search" autocomplete="off"
-               placeholder="Search songs · number · artist" aria-label="Search" />
-        <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
+      <div class="search-top">
+        <div class="search-bar">
+          <input id="r-search" type="search" inputmode="search" autocomplete="off"
+                 placeholder="Search songs · number · artist" aria-label="Search" />
+          <button id="r-numpad-toggle" class="pad-toggle" type="button" title="Number pad"
+                  aria-label="Number pad" aria-pressed="false" aria-controls="r-numpad">123</button>
+          <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
+        </div>
+        <div id="r-numpad" class="numpad" role="group" aria-label="Number pad" hidden></div>
+        <p id="r-numpad-hint" class="hint numpad-hint" hidden></p>
       </div>
       <ul id="r-results" class="song-list"></ul>
       <p id="r-search-hint" class="empty">Type to search the songbook.</p>

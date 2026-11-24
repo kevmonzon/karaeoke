@@ -152,7 +152,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .l-foot .frow { padding: 6px 0; }
 
 /* --- Tab 3: Search --- */
-.search-bar { display: flex; gap: 8px; position: sticky; top: 0; padding-bottom: 10px; background: var(--bg); }
+/* The search row and the number pad stick together at the top while the results scroll under them. */
+.search-top { position: sticky; top: 0; z-index: 1; padding-bottom: 10px; background: var(--bg); }
+.search-bar { display: flex; gap: 8px; }
 #r-search { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); outline: none; }
 #r-search:focus { border-color: var(--accent); }
 .yt-toggle { width: 46px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 18px; opacity: .5; }
@@ -346,3 +348,37 @@ body.sheet-open { overflow: hidden; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 body.kiosk .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
 @media (prefers-reduced-motion: reduce) { .toast, .l-lyrics > .lyric-view, .l-lyrics > .lyric-stage { transition: none; } }
+
+/* ---------------------------------------------------------------------------
+   numpad — the Search tab's 123 pad (ui/numpad.js, M8): 1 2 3 / 4 5 6 / 7 8 9 /
+   ⌫ 0 ⏎, docked under the search row. Thumb-sized keys (well over 44 px), the
+   phone's own tokens, both themes. touch-action: manipulation stops a quick
+   "1 1" from reading as a double-tap zoom.
+   --------------------------------------------------------------------------- */
+.pad-toggle {
+  flex: 0 0 auto; min-width: 52px; padding: 0 10px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+  font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .02em;
+}
+.pad-toggle[hidden] { display: none; }
+.pad-toggle[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+.numpad {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+  margin-top: 10px;
+}
+.numpad[hidden] { display: none; }
+.numpad button {
+  min-height: 52px; min-width: 44px; padding: 0; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  font-size: 24px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums;
+  touch-action: manipulation;
+  transition: transform var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+.numpad button[data-key="del"] { background: var(--panel-2); color: var(--muted); }
+.numpad button[data-key="enter"] { background: var(--accent); border-color: var(--accent); color: var(--brand-ink); }
+.numpad button:active { transform: scale(.95); background: var(--panel-2); }
+.numpad button[data-key="enter"]:active { background: var(--accent); }
+.numpad button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.numpad-hint { margin: 8px 2px 0; text-align: center; }
+.numpad-hint[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) { .numpad button { transition: none; } .numpad button:active { transform: none; } }
