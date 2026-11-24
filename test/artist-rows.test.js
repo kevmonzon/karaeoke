@@ -318,9 +318,10 @@ test("listKeyPlan is unchanged by M6 (the artist list uses it as is)", () => {
   assert.deepEqual(listKeyPlan("End", 0, 26000), { move: 25999, edge: null, prevent: true });
 });
 
-// --- 6. library-view: the chips, the sort and the artist views (M6 lane I) ----------------------
+// --- 6. library-view: the whole library, the close tier and the artist views (M6 lane I) --------
 // A real Catalog through a stubbed fetch and a renderList / renderRows recorder (search-view's
-// approach); the search client is a fake with the search-client.js surface.
+// approach); the search client is a fake with the search-client.js surface. The songbook / type
+// chips and the sort were removed (2026-11-24): every list is every song, in Relevance order.
 import { Catalog } from "../src/js/catalog.js";
 import { createLibraryView, countLabel } from "../src/js/library-view.js";
 import { UNKNOWN_ARTIST } from "../src/js/library-browse.js";
@@ -381,69 +382,42 @@ function makeView(catalog, { client = null } = {}) {
 
 const by = (c, name) => c.songs.find((s) => s.name === name);
 const titles = (rows) => rows.map((s) => s.name);
-const chips = (sources = [], kinds = []) => ({ sources: new Set(sources), kinds: new Set(kinds) });
 
-test("library-view: the whole library is every song, the chips narrow it, and the filtered list is cached", async () => {
+test("library-view: the whole library is every song, as it is (no copy, no 100k cap)", async () => {
   const c = await loadCatalog();
   const { view, lib, status } = makeView(c);
+  assert.equal("setBrowse" in view, false, "no chip / sort state to hand in any more");
   view.renderAll();
-  assert.equal(lib.getList(), c.songs, "no chip, Relevance → catalog.songs itself (no copy, no 100k cap)");
-  view.setBrowse({ filters: chips(["SH"]) });
+  assert.equal(lib.getList(), c.songs, "catalog.songs itself");
+  assert.equal(lib.getList().at(-1).name, "Love Story", "the audio songs at the END of catalog.songs are listed");
   view.rerender("");
-  assert.deepEqual(titles(lib.getList()), ["Barcelona", "All You Need Is Love", "Halo"]);
-  assert.equal(status.at(-1), "3 songs", "a browse change says the count");
-  const first = lib.getList();
-  view.renderAll();
-  assert.equal(lib.getList(), first, "the same chips + sort reuse the cached list (keyed by catalog.songs)");
-  view.setBrowse({ filters: chips([], ["audio"]) });
-  view.rerender("");
-  assert.deepEqual(titles(lib.getList()), ["Love Story"], "the Audio chip finds the audio songs at the END of catalog.songs");
-  view.setBrowse({ filters: chips(["SH"]), sort: "title" });
-  view.rerender("");
-  assert.deepEqual(titles(lib.getList()), ["All You Need Is Love", "Barcelona", "Halo"]);
-  view.setBrowse({ filters: chips(["SH", "TJMEDIA"]), sort: "relevance" });
-  view.rerender("");
-  assert.equal(lib.getList().length, 5, "two songbook chips: both");
-  view.setBrowse({ filters: chips(["NOPE"]) });
-  view.rerender("");
-  assert.equal(lib.renders.at(-1).rows.length, 0);
-  assert.match(lib.renders.at(-1).empty.title, /filters/, "an empty list blames the chips, not the library");
+  assert.equal(lib.getList(), c.songs);
+  assert.equal(status.at(-1), "8 songs", "a re-render (a rebuild) says the count");
 });
 
-test("library-view: the chips apply to the search tiers, and a sort orders exact + close as one list with ≈ kept", async () => {
+test("library-view: the close tier asks the index for its own count and is appended after the exact rows", async () => {
   const c = await loadCatalog();
   const client = lateClient();
   const { view, lib } = makeView(c, { client });
-  view.setBrowse({ filters: chips(["TJMEDIA"]) });
   const done = view.renderSearchResults("love", null);
-  assert.deepEqual(titles(lib.getList()), ["Love Me Do", "Lovely Day"], "every exact row has the TJMEDIA chip");
-  assert.equal(client.pending.length, 1, "2 rows on screen < fuzzyBelow → the close tier is asked for");
-  assert.equal(client.pending[0].opts.limit, 1000, "with a chip on, the index is asked for more (the cap is applied after the chips)");
-  assert.deepEqual(client.pending[0].opts.exclude, c.search("love").map((s) => c.songs.indexOf(s)),
-    "the index skips every exact row, chips or not");
-  // The close tier answers with one row outside the chip and one inside.
+  const exact = c.search("love");
+  assert.deepEqual(lib.getList(), exact, "the exact tier, in Catalog.search order");
+  assert.equal(client.pending.length, 1, "fewer exact rows than fuzzyBelow → the close tier is asked for");
+  assert.deepEqual(client.pending[0].opts, { exclude: exact.map((s) => c.songs.indexOf(s)) },
+    "the exact rows are skipped; no over-fetch (the index's own cap applies)");
   client.pending[0].resolve([by(c, "Halo"), by(c, "Barcelona Nights")].map((s) => ({ i: c.songs.indexOf(s), score: 1 })));
   await done;
-  assert.deepEqual(titles(lib.getList()), ["Love Me Do", "Lovely Day"], "close rows outside the chips are dropped");
-
-  view.setBrowse({ filters: chips(), sort: "title" });
-  const done2 = view.renderSearchResults("barcelna", null);
-  client.pending.at(-1).resolve([by(c, "Halo"), by(c, "Barcelona Nights"), by(c, "Barcelona")].map((s) => ({ i: c.songs.indexOf(s), score: 1 })));
-  await done2;
   const last = lib.renders.at(-1);
-  assert.deepEqual(titles(last.rows), ["Barcelona", "Barcelona Nights", "Halo"], "sorted by title as ONE list");
-  assert.deepEqual(new Set(last.closeSet), new Set(last.rows), "the ≈ marks follow their songs through the sort");
+  assert.deepEqual(titles(last.rows), [...titles(exact), "Halo", "Barcelona Nights"], "close rows after, in the index's order");
+  assert.deepEqual([...last.closeSet], [by(c, "Halo"), by(c, "Barcelona Nights")], "≈ on the close rows only");
 });
 
-test("library-view: a chip drops YouTube rows and never asks YouTube", async () => {
+test("library-view: YouTube rows always come last, after the library rows", async () => {
   const c = await loadCatalog();
   const { view, lib } = makeView(c);
   const yt = { id: "youtube:x", kind: "youtube", code: "", name: "YT Love" };
   await view.renderSearchResults("love", [yt]);
-  assert.equal(lib.getList().at(-1), yt, "no chip: YouTube rows last, as before");
-  view.setBrowse({ filters: chips(["SH"]) });
-  await view.renderSearchResults("love", [yt]);
-  assert.ok(!lib.getList().includes(yt));
+  assert.deepEqual(lib.getList(), [...c.search("love"), yt]);
 });
 
 test("library-view: the Artists views — the index, a filter, one artist under ← Artists, topHit skips it", async () => {
@@ -472,12 +446,13 @@ test("library-view: the Artists views — the index, a filter, one artist under 
   assert.deepEqual(shown.slice(1), rows);
   assert.equal(view.topHit(), rows[0], "Enter takes the first SONG, never the back row");
   assert.match(status.at(-1), /2 songs$/);
-
-  view.setBrowse({ filters: chips(["SH"]) });
   view.rerender("");
-  assert.deepEqual(titles(lib.getList().slice(1)), ["All You Need Is Love"], "the chips apply to one artist's songs");
-  view.showArtists("");
-  assert.equal(lib.getList().find((a) => a.key === beatles.key).count, 1, "and to the artist index (cached per chip set)");
+  assert.deepEqual(lib.getList().slice(1), rows, "a re-render draws the same artist's songs again");
+
+  assert.equal(view.showArtists(""), items, "the index of every song is built once per catalog.songs array");
+  const unknown = view.showArtistSongs(UNKNOWN_ARTIST);
+  assert.deepEqual(titles(unknown), ["Anonymous Song"]);
+  assert.equal(lib.getList()[0].artist, "(Unknown artist)", "the back row names the placeholder bucket by its label");
 });
 
 test("library-view: a late close reply never draws songs over the artist list (or the hidden Rankings list)", async () => {

@@ -18,6 +18,7 @@ import * as nodeModule from "node:module";
 
 import {
   EQ_BANDS, EQ_Q, EQ_PRESETS, eqGainsFor, isFlat, fxLevelToGain, transposeForce,
+  MELODY_LEVELS, melodyLevel, melodyLevelSettings, nextMelodyLevel, melodyLevelLabel,
 } from "../src/js/music-fx.js";
 import { normalizeMeanSquare as nmsLoudness } from "../src/js/loudness.js";
 
@@ -508,3 +509,38 @@ test("init on a context without AudioWorklet rejects with the secure-page reason
   assert.equal(e.ready, false);
   assert.match(MIDI_INSECURE_TEXT, /localhost or https/);
 });
+
+// ---- the melody guide's five volume levels (Rae, 2026-11-24) ---------------------------------
+test("melody levels: Off, 25, 50, 75, 100 %", () => {
+  assert.deepEqual([...MELODY_LEVELS], [0, 0.25, 0.5, 0.75, 1]);
+  assert.deepEqual([0, 1, 2, 3, 4].map(melodyLevelLabel), ["Off", "25%", "50%", "75%", "100%"]);
+});
+
+test("melody level read from volume + mute", () => {
+  assert.equal(melodyLevel(1, false), 4);
+  assert.equal(melodyLevel(0.5, false), 2);
+  assert.equal(melodyLevel(0.6, false), 2, "between steps: the nearest");
+  assert.equal(melodyLevel(0.9, false), 4);
+  assert.equal(melodyLevel(1.5, false), 4, "an old 150 % reads as 100 %");
+  assert.equal(melodyLevel(0.2, false), 1);
+  assert.equal(melodyLevel(0.05, false), 0, "near-silent is Off");
+  assert.equal(melodyLevel(0.75, true), 0, "muted is Off whatever the volume");
+  assert.equal(melodyLevel(undefined, false), 4, "no stored volume: the default 100 %");
+});
+
+test("melody level → settings: Off mutes and keeps the volume", () => {
+  assert.deepEqual(melodyLevelSettings(0), { mute: true });
+  assert.deepEqual(melodyLevelSettings(1), { volume: 0.25, mute: false });
+  assert.deepEqual(melodyLevelSettings(4), { volume: 1, mute: false });
+  assert.deepEqual(melodyLevelSettings(9), { volume: 1, mute: false }, "clamped");
+  assert.deepEqual(melodyLevelSettings("2"), { volume: 0.5, mute: false });
+});
+
+test("the button steps Off → 25 → 50 → 75 → 100 → Off", () => {
+  let k = 0; const seen = [k];
+  for (let i = 0; i < 5; i++) { k = nextMelodyLevel(k); seen.push(k); }
+  assert.deepEqual(seen, [0, 1, 2, 3, 4, 0]);
+  // a muted 75 % starts the cycle again at 25 %
+  assert.equal(nextMelodyLevel(melodyLevel(0.75, true)), 1);
+});
+

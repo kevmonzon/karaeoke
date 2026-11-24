@@ -167,30 +167,15 @@ test("the kind icon follows the song's kind, like a library row", () => {
   }
 });
 
-test("the header shows the number and the songbook chip only when present", () => {
+test("the header shows no song number and no songbook (Rae, 2026-11-24)", () => {
   const { el, sheet } = setup();
-  sheet.show(SONG);
-  assert.equal(el.one(".sheet-code").textContent, "123");
-  const chip = el.one(".src-chip");
-  assert.equal(chip.textContent, "SH");
-  assert.equal(chip.getAttribute("data-src"), "SH");
-  assert.equal(chip.parentElement, el.one(".sheet-num"), "the chip sits under the number, as in a row");
-
-  sheet.show({ ...SONG, source: "" });
-  assert.equal(el.one(".src-chip"), null);
-  assert.equal(el.one(".sheet-code").textContent, "123");
-
-  sheet.show({ ...SONG, source: undefined, code: 0 });            // 0 is a real dial number
-  assert.equal(el.one(".sheet-code").textContent, "0");
-
-  sheet.show({ ...SONG, kind: "youtube", code: "", source: "" });  // YouTube: no number, no chip
-  assert.equal(el.one(".sheet-num"), null);
-  assert.equal(el.one(".sheet-code"), null);
-  assert.equal(el.one(".src-chip"), null);
-
-  sheet.show({ ...SONG, code: null, source: "PLATKAR" });          // a chip without a number
-  assert.equal(el.one(".sheet-code"), null);
-  assert.equal(el.one(".src-chip").textContent, "PLATKAR");
+  for (const s of [SONG, { ...SONG, code: 0 }, { ...SONG, code: null, source: "PLATKAR" }]) {
+    sheet.show(s);
+    assert.equal(el.one(".sheet-num"), null);
+    assert.equal(el.one(".sheet-code"), null);
+    assert.equal(el.one(".src-chip"), null);
+    assert.equal(el.one(".sheet-title").textContent, s.name);
+  }
 
   sheet.show({ id: "x", kind: "midi", code: 7 });                  // no name, no artist
   assert.equal(el.one(".sheet-title").textContent, "(untitled)");
@@ -204,7 +189,6 @@ test("titles and artists render as text, never HTML", () => {
   assert.equal(doc.htmlWrites, 0);
   assert.equal(el.one(".sheet-title").textContent, evil);
   assert.equal(el.one(".sheet-artist").textContent, `<b>${evil}</b>`);
-  assert.equal(el.one(".src-chip").textContent, "<i>SH</i>");
   assert.deepEqual(el.all("img"), []);
   assert.deepEqual(el.all("b"), []);
   assert.deepEqual(el.all("i"), []);

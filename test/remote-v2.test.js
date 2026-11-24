@@ -3,6 +3,7 @@
 // read-only mirror). Fake fetch, fake timers, fake push client — no network, no real EventSource.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { createRemoteHost, nextApplied, clampRemoteSetting, REMOTE_SETTABLE_PATHS } from "../src/js/remote-host.js";
 import { createRemoteGlue, REMOTE_SETTABLE, REMOTE_READONLY_MIRROR, NOTICE_MS } from "../src/js/remote-glue.js";
@@ -347,6 +348,7 @@ function glueHarness(over = {}) {
       play: record("play"), pause: record("pause"), next: record("next"),
       seek: record("seek"), setVolume: record("volume"), applySetting: record("setting"),
       playNow: record("playNow"), playNext: record("playNext"), restart: record("restart"), bgNext: record("bgNext"),
+      ...(over.actions ? over.actions(record) : {}),
     },
   });
   return { glue, calls, catalog, settings, advance: (ms) => { clockMs += ms; } };
@@ -490,7 +492,24 @@ test("restart and bg delegate", () => {
   const { glue, calls } = glueHarness();
   glue.applyCommand({ type: "restart", by: "Rae" });
   glue.applyCommand({ type: "bg", by: "Rae" });
-  assert.deepEqual(calls, [["restart"], ["bgNext"]]);   // M8's digit commands: test/numpad.test.js
+  assert.deepEqual(calls, [["restart"], ["bgNext"]]);
+});
+
+test("M8's live-digit commands are ignored like any unknown type", () => {
+  // The phone no longer sends them, but a page cached from before may and the relay still routes
+  // them: with every old switch on and a host that still offered digit actions, nothing happens.
+  const { glue, calls } = glueHarness({
+    settings: { "remote.liveDigits": true, "keypad.enabled": true, "remote.guestPlayNow": true },
+    actions: (record) => ({
+      digit: record("digit"), digitDelete: record("digitDelete"),
+      digitClear: record("digitClear"), digitCommit: record("digitCommit"),
+    }),
+  });
+  for (const type of ["digit", "digit_delete", "digit_clear", "digit_commit"]) {
+    glue.applyCommand({ type, d: 1, by: "Rae" });
+  }
+  assert.deepEqual(calls, []);
+  assert.equal(glue.snapshot().notice, "", "and no refusal either");
 });
 
 test("snapshot carries songRev and notice", () => {
@@ -524,7 +543,7 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   const { glue, calls } = glueHarness({
     settings: {
       "remote.guestPlayNow": false, "remote.guestPriority": true, "queue.fairPlay": true, "remote.push": false,
-      "remote.liveDigits": false, "keypad.enabled": true,
+      "remote.liveDigits": false, "keypad.enabled": true,   // M8's two: no longer mirrored (no phone pad)
       "audio.key": 0, "audio.tempo": 1, "audio.volume": 1, "lyrics.offsetMs": 0, "guide.vocal.mute": false,
     },
   });
@@ -533,8 +552,9 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   assert.equal(mirrored["remote.guestPriority"], true);
   assert.equal(mirrored["queue.fairPlay"], true);
   assert.equal(mirrored["remote.push"], false, "the host's Instant-updates switch: false tells phones to poll");
-  assert.deepEqual([...REMOTE_READONLY_MIRROR].sort(), ["keypad.enabled", "queue.fairPlay", "remote.guestPlayNow", "remote.guestPriority", "remote.liveDigits", "remote.push"]);
+  assert.deepEqual([...REMOTE_READONLY_MIRROR].sort(), ["queue.fairPlay", "remote.guestPlayNow", "remote.guestPriority", "remote.push"]);
   assert.deepEqual(Object.keys(mirrored).sort(), [...REMOTE_SETTABLE, ...REMOTE_READONLY_MIRROR].sort());
+  for (const p of ["remote.liveDigits", "keypad.enabled"]) assert.equal(p in mirrored, false, p);
 
   // Not settable: the allowlist and its ranges are exactly what they were before M7.
   assert.deepEqual(REMOTE_SETTABLE_PATHS, ["lyrics.offsetMs", "audio.key", "audio.tempo", "audio.volume", "guide.vocal.mute"]);
@@ -548,4 +568,21 @@ test("host disallow flags are mirrored but not guest-settable", () => {
   // A flag the host has no boolean for is not mirrored (the phone reads absent as not allowed).
   const bare = glueHarness({ settings: {} }).glue.snapshot().settings;
   for (const p of REMOTE_READONLY_MIRROR) assert.equal(p in bare, false, p);
+});
+
+// --- the phone page (structure only: remote.js boots a DOM on import) ----------------------------
+test("the phone has no number pad and prints no song numbers", () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const html = read("../src/remote.html");
+  const js = read("../src/js/remote.js");
+  const css = read("../src/css/remote.css");
+  assert.doesNotMatch(html, /r-numpad|>123</, "no 123 toggle, no pad");
+  assert.doesNotMatch(js, /ui\/numpad\.js/, "the retired pad module is not imported");
+  assert.doesNotMatch(js, /type: "digit/, "no live-digit command is sent");
+  assert.doesNotMatch(js, /cmdInOrder|PAD_RESYNC_MS/);
+  assert.doesNotMatch(js, /keypad\.enabled|remote\.liveDigits/, "nothing reads the retired mirror entries");
+  assert.doesNotMatch(js, /src-chip|el\("span", "code"|#\$\{/, "no dial code, songbook chip or #number on screen");
+  assert.doesNotMatch(css, /\.numpad|\.pad-toggle|\.src-chip|\.song \.code|\.song \.num\b/);
+  // The number tier stays: digits typed into the field still find songs by number.
+  assert.match(js, /orderNumberMatches\(catalog\.lookupCode\(normalizeCode\(q\), "all"\), SOURCES\)/);
 });

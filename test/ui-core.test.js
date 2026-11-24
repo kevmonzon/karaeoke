@@ -162,7 +162,7 @@ test("stack: swap closes one panel and opens another in one change", () => {
   assert.equal(changes.length, 1);
 });
 
-test("stack: the ten overlay ids match the spec", () => {
+test("stack: the nine overlay ids match the spec", () => {
   const P = (kind, modal, group, z, autoHideMs = 0) => ({ kind, modal, group, z, autoHideMs });
   assert.deepEqual(OVERLAY_DEFS, {
     controls:  P("bar",    false, null,     20),
@@ -172,11 +172,10 @@ test("stack: the ten overlay ids match the spec", () => {
     mixer:     P("panel",  true,  "panel",  40),
     settings:  P("panel",  true,  "panel",  40),
     song:      P("sheet",  true,  "sheet",  50),
-    recap:     P("dialog", true,  "dialog", 60),
     calibrate: P("dialog", true,  "dialog", 60),
     confirm:   P("dialog", true,  "dialog", 70),
   });
-  assert.equal(Object.keys(OVERLAY_DEFS).length, 10);
+  assert.equal(Object.keys(OVERLAY_DEFS).length, 9);
   assert.ok(Object.isFrozen(OVERLAY_DEFS));
   for (const d of Object.values(OVERLAY_DEFS)) assert.ok(Object.isFrozen(d));
 });
@@ -217,12 +216,14 @@ test("stack: an auto-hide period survives close and 0 disables it", () => {
 });
 
 test("stack: same-z dialogs stack in the order they opened", () => {
-  const { stack } = makeStack();
-  stack.open("calibrate");
-  stack.open("recap");
-  assert.deepEqual(stack.list(), ["calibrate", "recap"]);
-  assert.equal(stack.back(), "recap");
-  assert.equal(stack.back(), "calibrate");
+  // The app has one z-60 dialog since Tonight's recap went (2026-11-24): two custom ones keep the rule tested.
+  const d = { kind: "dialog", modal: true, group: "dialog", z: 60, autoHideMs: 0 };
+  const stack = createOverlayStack({ defs: { first: d, second: d } });
+  stack.open("first");
+  stack.open("second");
+  assert.deepEqual(stack.list(), ["first", "second"]);
+  assert.equal(stack.back(), "second");
+  assert.equal(stack.back(), "first");
   assert.equal(stack.back(), null);
 });
 

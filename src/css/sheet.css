@@ -5,8 +5,8 @@
  * a bottom sheet in portrait, its motion, and the focus ring every button gets. This file
  * styles only what song-sheet.js renders into it:
  *
- *   .sheet-head      kind chip · number (.sheet-code, the songbook .src-chip under it) ·
- *                    .sheet-meta (.sheet-title, .sheet-artist) — the song row's order and type
+ *   .sheet-head      kind chip · .sheet-meta (.sheet-title, .sheet-artist) — the song row's
+ *                    order and type
  *   .sheet-actions   one full-width <button data-act> per action, one per line
  *
  * The first action is the primary (brand fill); "Remove" reads as destructive (red border +
@@ -36,24 +36,6 @@
 .sheet-head .kind.vid { background: color-mix(in srgb, var(--brand) 20%, transparent); }
 .sheet-head .kind.aud { background: color-mix(in srgb, var(--gold) 22%, transparent); }
 .sheet-head .kind.yt  { background: color-mix(in srgb, var(--bad) 18%, transparent); }
-
-/* Number column: the dial number in tabular figures with the songbook chip under it. */
-.sheet-num {
-  flex: none;
-  display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
-  gap: calc(3 / 16 * var(--u));
-  line-height: 1.2;
-}
-.sheet-code {
-  color: var(--text-muted); font-size: var(--t-body); font-weight: 600;
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-/* The songbook chip — the look of a row's .src-chip (style.css scopes that one to .song). */
-.sheet-head .src-chip {
-  color: var(--text-muted); font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em;
-  white-space: nowrap; line-height: 1.4;
-  padding: 0 var(--s-1); border: 1px solid var(--border); border-radius: var(--r-pill);
-}
 
 /* Title and artist: they wrap (a long title is the one thing worth reading here), up to three
    and two lines, then ellipsize; an unbroken string breaks anywhere rather than overflow. */
@@ -122,61 +104,4 @@
 @media (prefers-reduced-motion: no-preference) {
   .sheet-actions button:active { transform: scale(.98); }
   html[data-input="keys"] .sheet-actions button:focus-visible { transform: scale(1.04); }
-}
-
-/* ---- numpad ---------------------------------------------------------------------------
-   The Songs panel's on-screen number pad (#numpad.numpad, M8; ui/numpad.js renders twelve
-   <button data-key> into it): 1 2 3 / 4 5 6 / 7 8 9 / ⌫ 0 ⏎, docked under the list
-   (overlays.css keeps it flex: none). Every key is at least --hit tall; the pad stops growing at
-   about 22 units wide and centres in a wide panel (padding, not a breakpoint). ⏎ is the brand
-   fill (it takes the top hit, like Enter in the field); ⌫ is quiet. `hidden` wins through the
-   global [hidden] rule in stage.css. Tokens only, so both themes follow. */
-#numpad {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--s-2);
-  padding: var(--gap) max(var(--pad), calc((100% - 22 * var(--u)) / 2));
-  border-top: 1px solid var(--border-soft);
-}
-#numpad button {
-  display: flex; align-items: center; justify-content: center;
-  min-width: 0; min-height: var(--hit); margin: 0;
-  padding: var(--s-1) var(--s-2);
-  border-radius: var(--radius); border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--text);
-  font-family: inherit; font-size: var(--t-h2); font-weight: 700; line-height: 1;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer; touch-action: manipulation;
-  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
-              filter var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
-}
-#numpad button[data-key="del"] {
-  background: transparent; border-color: var(--border-soft); color: var(--text-muted);
-}
-#numpad button[data-key="enter"] {
-  background: var(--brand); border-color: transparent; color: var(--brand-ink);
-}
-
-@media (hover: hover) {
-  #numpad button:hover { border-color: var(--brand-2); }
-  #numpad button[data-key="del"]:hover { background: var(--surface-1); color: var(--text); }
-  #numpad button[data-key="enter"]:hover { border-color: transparent; filter: brightness(1.08); }
-}
-
-/* Press feedback and the D-pad grow the sheet's buttons get (M4). Neither under reduced motion. */
-@media (prefers-reduced-motion: no-preference) {
-  #numpad button:active { transform: scale(.96); }
-  html[data-input="keys"] #numpad button:focus-visible { transform: scale(1.04); }
-}
-
-/* ---- numpad on a short Songs panel (M13) -----------------------------------------------------
-   The panel is ~30 units wide at every size, so its aspect ratio says how many units TALL it is: at
-   3:4 or wider it is under ~40 units (a landscape phone: 420 × 390 px), too short for the search row,
-   the browse rows, a few results AND a 3×4 pad (the pad ran off the bottom). There, while the pad is
-   open, the tabs and chips step aside (number entry does not browse) and the pad goes 6 × 2. A size
-   container, not a viewport breakpoint; a TV / desktop / 4K panel (≈ 0.6–0.7) keeps the 3 × 4 pad. */
-#ov-search { container: songs-panel / size; }
-@container songs-panel (min-aspect-ratio: 3 / 4) {
-  #ov-search.pad-open .browse-tabs,
-  #ov-search.pad-open .filter-chips { display: none; }
-  #ov-search.pad-open #numpad { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 }

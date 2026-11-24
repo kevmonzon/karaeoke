@@ -2,7 +2,7 @@
  * stage.css — the STAGE of the stage-first shell (M3).
  *
  * One full-screen stage on every screen. Library, queue, mixer, settings,
- * recap and the control bar are overlays above it (overlays.css). This file
+ * dialogs and the control bar are overlays above it (overlays.css). This file
  * owns the page base, #stage and its layers (bottom to top):
  *   0 background (#bg-layer) · 1 media (#kv, #ytplayer) · 2 flow (#stage-flow:
  *   queue bar, pitch guide, chords, lyrics, cards) · 3 home (idle) ·

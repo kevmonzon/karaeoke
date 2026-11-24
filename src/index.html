@@ -78,7 +78,7 @@
 
   <!-- THE STAGE: one full-screen surface on every device. Layers, bottom to top: background,
        media, the flow (queue bar · guide · chords · lyrics), the idle home layer, the HUD.
-       Everything else (songs, queue, mixer, settings, recap, controls) is an overlay below. -->
+       Everything else (songs, queue, mixer, settings, dialogs, controls) is an overlay below. -->
   <main id="stage" class="stage" tabindex="-1">
     <div id="bg-layer" class="bg-layer" aria-hidden="true"></div>
 
@@ -247,8 +247,6 @@
                placeholder="Search by title or artist…" autocomplete="off" />
         <button id="search-clear" class="search-clear" title="Clear search" aria-label="Clear search">✕</button>
       </div>
-      <span id="search-who" class="search-who" hidden></span>
-      <button id="btn-numpad" class="pill pill-btn icon" title="Number pad" aria-label="Number pad" aria-pressed="false" hidden>123</button>
       <div class="seg-filter" role="group" aria-label="Filters">
         <button id="btn-favorites" class="pill pill-btn icon" title="Favorites" aria-label="Favorites">★</button>
         <button id="btn-recent" class="pill pill-btn icon" title="Recently played" aria-label="Recently played">⟲</button>
@@ -256,10 +254,8 @@
       </div>
     </div>
     <div id="browse-tabs" class="browse-tabs" role="tablist" hidden></div>
-    <div id="filter-chips" class="filter-chips" role="group" aria-label="Filters" hidden></div>
     <ul id="song-list" class="song-list" role="list" aria-label="Song library"></ul>
     <div id="browse-pane" class="browse-pane" hidden></div>
-    <div id="numpad" class="numpad" role="group" aria-label="Number pad" hidden></div>
     <footer class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose · Back close</footer>
   </section>
 
@@ -651,10 +647,18 @@
         <div class="hint sub">Scored per note against the song's own melody, octave-forgivingly. MIDI songs only, and the mic must be on. Your best per song is remembered, and every scored song gets a row in Songs → Rankings (under the guest's name, or the host singer name).</div>
 
         <div class="sub-h">Guide vocal (melody)</div>
-        <label class="row"><span>Volume <em id="set-gv-vol-val">100%</em></span><input id="set-gv-vol" type="range" min="0" max="2" step="0.05" value="1" /></label>
-        <label class="row toggle"><span>Mute melody</span><input id="set-gv-mute" type="checkbox" /></label>
+        <label class="row">
+          <span>Melody volume</span>
+          <select id="set-gv-level">
+            <option value="0">Off</option>
+            <option value="1">25%</option>
+            <option value="2">50%</option>
+            <option value="3">75%</option>
+            <option value="4">100%</option>
+          </select>
+        </label>
         <label class="row toggle"><span>Solo melody (isolate)</span><input id="set-gv-solo" type="checkbox" /></label>
-        <div class="hint sub">Turn the melody up to learn a song, mute to perform, solo to isolate it.</div>
+        <div class="hint sub">The 🎵 button steps through the same five levels. Turn the melody up to learn a song, off to perform, solo to isolate it.</div>
       </section>
 
       <section>
@@ -783,10 +787,6 @@
           <span>Guests can jump the queue</span>
           <input id="set-guest-priority" type="checkbox" />
         </label>
-        <label class="row toggle">
-          <span>Show guests' number typing on screen</span>
-          <input id="set-live-digits" type="checkbox" />
-        </label>
         <div class="hint sub">Shows a QR on the queue panel (and on the stage: <strong>When idle</strong> = the home screen only, <strong>Always</strong> = also a small corner code during a song); phones scan it to open <code>/remote</code> and queue/search/control. Leave the URL blank to auto-detect. A guest's jump to the front of the queue is refused while fair play is on. <strong>Free-for-all:</strong> anyone who can reach the URL can control playback — keep it to a trusted network.</div>
       </section>
 
@@ -805,10 +805,6 @@
           </select>
         </label>
         <label class="row toggle">
-          <span>Show songbook on each row</span>
-          <input id="set-show-source" type="checkbox" />
-        </label>
-        <label class="row toggle">
           <span>Number keys open the song search</span>
           <input id="set-keypad" type="checkbox" />
         </label>
@@ -822,8 +818,6 @@
         <button id="rebuild-catalog" class="reset-btn">↻ Rebuild Catalog</button>
         <div id="rebuild-status" class="hint sub"></div>
         <div id="cache-status" class="hint sub"></div>
-        <button id="show-recap" class="reset-btn">🏆 Tonight's recap</button>
-        <div class="hint sub">Songs sung, who sang them, and the top scores. Resets after a long break.</div>
       </section>
 
       <section>
@@ -860,17 +854,6 @@
         <button id="erase-all" class="reset-btn danger">Erase all app data</button>
         <p class="hint">Factory reset: also clears your queue, recents, favorites, panel layout, phone-remote code, saved YouTube songs, and the cached soundfont. Irreversible.</p>
       </div>
-    </div>
-  </div>
-
-  <!-- Tonight's recap (⚙ → Library). Rendered from the performance log app.js keeps. -->
-  <div id="recap" class="recap ov ov-dialog" data-ov="recap" role="dialog" aria-modal="true" aria-labelledby="recap-title" hidden>
-    <div class="recap-card">
-      <div class="recap-head">
-        <h3 id="recap-title">🏆 Tonight</h3>
-        <button id="recap-close" data-ov-close class="gear" title="Close" aria-label="Close recap">✕</button>
-      </div>
-      <div id="recap-body" class="recap-body"></div>
     </div>
   </div>
 

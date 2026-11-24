@@ -169,10 +169,6 @@ export const DEFAULT_CONFIG = {
     enterAction: "auto",
   },
 
-  // The song list. showSource = the songbook (SH, PLATKAR, TJMEDIA, MIDI) under each song's
-  // number. Songs from a catalogue built before songbooks existed have none to show.
-  library: { showSource: true },
-
   // Song numbers from the keys (plan §5.3). A digit pressed on the stage opens the Songs panel
   // with that digit in the search field, where the number tier lists every songbook's match;
   // the panel's "123" button shows an on-screen number pad that types into the same field.
@@ -243,10 +239,6 @@ export const DEFAULT_CONFIG = {
     // A guest's "Play next" puts their song first in the queue. Refused while queue.fairPlay is
     // on; queue.maxPerGuest still counts it (plan §5.11).
     guestPriority: true,
-    // A guest's number pad types into THIS screen's song search, live, with their nickname beside
-    // it, and their ⏎ reserves the top hit (plan §5.12). Off = the phone searches its own copy of
-    // the songbook and sends an ordinary reservation. Needs keypad.enabled too.
-    liveDigits: true,
   },
 
   // Pitch guide — reads the guide melody from the MIDI and shows a scrolling

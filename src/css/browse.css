@@ -2,10 +2,12 @@
  * browse.css — the Songs panel's browse controls (M6; browse-ui.js renders them).
  *
  *   .browse-tabs   #browse-tabs: All · Artists · Rankings (.browse-tab, role=tab), one row
- *   .filter-chips  #filter-chips: the "Songbook" and "Type" groups (.chip-group > .chip-label +
- *                  .chip[aria-pressed]) and the sort (.browse-sort > label + select#browse-sort)
- *   .browse-pane   #browse-pane: the rankings view — .rank-filters (player / difficulty chips),
- *                  .rank-empty, .rank-scroll (the table's own scroll region), .rank-foot (Clear)
+ *   .browse-pane   #browse-pane: the rankings view — .rank-filters (the player / difficulty
+ *                  groups: .chip-group > .chip-label + .chip[aria-pressed]), .rank-empty,
+ *                  .rank-scroll (the table's own scroll region), .rank-foot (Clear)
+ *
+ * The Songs panel's songbook / type chip row and its sort select were removed (2026-11-24); the
+ * .chip rules below now serve only the rankings view's filters.
  *
  * The panel itself (overlays.css) is a full-height flex column, --panel-w wide. That width is
  * ~28–30 --u at every size (it is max(30u, 38vw), and --u is ~1.25vw), so everything here is laid
@@ -18,13 +20,13 @@
  * way the confirm dialog's .danger does (red border + tint, the label stays full --text).
  * ========================================================================== */
 
-.browse-tabs, .filter-chips, .browse-pane {
+.browse-tabs, .browse-pane {
   --chip-h: var(--hit);
   --tab-h: var(--hit);
   --chip-gap: calc(5 / 16 * var(--u));
 }
 @media (hover: hover) and (pointer: fine) {
-  .browse-tabs, .filter-chips, .browse-pane {
+  .browse-tabs, .browse-pane {
     --chip-h: calc(2 * var(--u));
     --tab-h: calc(2.5 * var(--u));
   }
@@ -52,14 +54,9 @@
 }
 .browse-tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--brand-2); }
 
-/* ---- Chips -----------------------------------------------------------------------------
-   One wrapping row of groups; each group wraps its own chips. A chip is a pill, --chip-h tall,
-   its own width (a short label still gets a 2.25u minimum), ellipsized past the panel width. */
-.filter-chips {
-  display: flex; flex-wrap: wrap; align-items: center;
-  gap: var(--s-2) var(--s-4);
-  padding: var(--s-3) var(--pad) var(--s-2);
-}
+/* ---- Chips (the rankings view's player / difficulty filters) -----------------------------
+   Each group wraps its own chips. A chip is a pill, --chip-h tall, its own width (a short label
+   still gets a 2.25u minimum), ellipsized past the panel width. */
 .chip-group {
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--chip-gap);
   min-width: 0; max-width: 100%;
@@ -82,25 +79,6 @@
               color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 .chip[aria-pressed="true"] { background: var(--chip-on-bg); border-color: var(--chip-on-bg); color: var(--chip-on-ink); }
-.chip-icon { margin-inline-end: calc(5 / 16 * var(--u)); font-size: var(--t-body); line-height: 1; }
-
-/* ---- Sort ------------------------------------------------------------------------------
-   Label + native select (its own picker, D-pad Left/Right steps it), pushed to the end of the
-   line it lands on. */
-.browse-sort {
-  display: flex; align-items: center; gap: var(--s-2);
-  margin-inline-start: auto; min-width: 0;
-}
-.browse-sort .chip-label { margin: 0; }
-.browse-sort select {
-  height: var(--chip-h); min-width: 0; max-width: 100%;
-  margin: 0; padding: 0 var(--s-3);
-  border: 1px solid var(--border); border-radius: var(--r-pill);
-  background-color: var(--chip-bg); color: var(--text);
-  font-family: inherit; font-size: var(--t-label); font-weight: 600;
-  cursor: pointer;
-  transition: border-color var(--dur-fast) var(--ease);
-}
 
 /* ---- Rankings view ---------------------------------------------------------------------
    Filters on top, the table scrolling in the middle, Clear always in view at the foot. */
@@ -196,7 +174,7 @@
 /* ---- Pointer and D-pad feedback --------------------------------------------------------- */
 @media (hover: hover) {
   .browse-tab:hover { color: var(--text); background: var(--surface-1); }
-  .chip:hover, .browse-sort select:hover { border-color: var(--brand-2); }
+  .chip:hover { border-color: var(--brand-2); }
   .chip[aria-pressed="true"]:hover { filter: brightness(1.06); }
   .rank-clear:hover { background: color-mix(in srgb, var(--bad) 28%, transparent); }
 }

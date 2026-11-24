@@ -15,6 +15,7 @@
  */
 
 import { getCacheStatus } from "./asset-cache.js";
+import { melodyLevel, melodyLevelSettings } from "./music-fx.js";
 // The dialog's own "why calibration cannot run" (pure), so the button says exactly what it says.
 import { calibrateUnavailable } from "./ui/calibrate-ui.js";
 
@@ -117,8 +118,6 @@ const SETTINGS_SCHEMA = [
   { id: "set-maxper", path: "queue.maxPerGuest", type: "range", fmt: (v) => (+v ? `${v}` : "off") },
   { id: "set-reactions", path: "reactions.enabled", type: "check" },
   { id: "set-reactions-sound", path: "reactions.sound", type: "check" },
-  { id: "set-gv-vol", path: "guide.vocal.volume", type: "range", fmt: pct },
-  { id: "set-gv-mute", path: "guide.vocal.mute", type: "check" },
   { id: "set-gv-solo", path: "guide.vocal.solo", type: "check" },
   // microphone
   { id: "set-mic-vol", path: "mic.volume", type: "range", fmt: pct },
@@ -153,7 +152,6 @@ const SETTINGS_SCHEMA = [
   // library search: close matches (typos), what Enter does, the songbook chip on each row
   { id: "set-search-fuzzy", path: "search.fuzzy", type: "check" },
   { id: "set-enter-action", path: "search.enterAction", type: "select" },
-  { id: "set-show-source", path: "library.showSource", type: "check" },
   // song numbers (M8): number keys open the search; a digit-opened panel's idle clear
   { id: "set-keypad", path: "keypad.enabled", type: "check" },
   { id: "set-keypad-idle", path: "keypad.idleSec", type: "range", fmt: (v) => `${+v} s` },
@@ -166,7 +164,6 @@ const SETTINGS_SCHEMA = [
   { id: "set-guest-playnow", path: "remote.guestPlayNow", type: "check" },
   { id: "set-guest-priority", path: "remote.guestPriority", type: "check" },
   // M8: a guest's number pad types live into this screen's search
-  { id: "set-live-digits", path: "remote.liveDigits", type: "check" },
 ];
 
 // Synonyms so intuitive words find a control whose visible label doesn't contain
@@ -213,8 +210,7 @@ const SEARCH_KEYWORDS = {
   "set-chords": "guitar chord lane strum",
   "set-chords-simplify": "guitar chord triad",
   "set-guide": "melody piano roll pitch",
-  "set-gv-vol": "melody vocal",
-  "set-gv-mute": "melody vocal",
+  "set-gv-level": "melody vocal guide volume level mute off quarter half",
   "set-gv-solo": "melody vocal isolate",
   "set-mic-vol": "microphone gain",
   "set-mic-aec": "feedback echo cancellation howl",
@@ -227,7 +223,6 @@ const SEARCH_KEYWORDS = {
   "set-youtube": "online stream byoc",
   "set-search-fuzzy": "fuzzy typo spelling misspelled approximate similar search",
   "set-enter-action": "enter key return reserve queue play now search",
-  "set-show-source": "songbook source sh platkar tjmedia midi chip number",
   "set-keypad": "keypad number pad digits song number code dial remote keys 0 9 123",
   "set-keypad-idle": "keypad number digits idle timeout clear close seconds",
   "set-remote": "phone qr code queue guest party mobile control",
@@ -235,7 +230,6 @@ const SEARCH_KEYWORDS = {
   "set-remote-push": "phone instant push realtime latency polling stream sse fast",
   "set-guest-playnow": "phone guest play now stop interrupt singer permission",
   "set-guest-priority": "phone guest play next priority jump front queue permission",
-  "set-live-digits": "phone guest keypad number pad digits live typing mirror nickname",
   "mic-enable": "microphone singing voice",
   "rebuild-catalog": "library refresh scan songs",
   "set-score": "points rating videoke sing grade",
@@ -308,7 +302,7 @@ export function matchesQuery(text, query) {
  *   onOpen: the overlay's open hook · updateCalibrateBtn(note?): re-evaluate "Calibrate…" ·
  *   setBgCategories(names): the Background → Category folders for the kind on show (M11)
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData, onShowRecap }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -343,7 +337,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #mic-calibrate, #rebuild-catalog, #export-data, #import-data, #show-recap"; // matchable controls + action buttons
+  const LEAF_SEL = ".row, #mic-enable, #mic-calibrate, #rebuild-catalog, #export-data, #import-data"; // matchable controls + action buttons
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -545,6 +539,11 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     // autoBind's own listener ran first (registered first), so the setting is already stored.
     const eqPreset = $("set-eq-preset");
     if (eqPreset) eqPreset.addEventListener("change", updateEqCustom);
+    // The melody's five levels (Rae, 2026-11-24): one select drives guide.vocal.mute + .volume.
+    const gvLevel = $("set-gv-level");
+    if (gvLevel) gvLevel.addEventListener("change", () => {
+      for (const [k, v] of Object.entries(melodyLevelSettings(gvLevel.value))) settings.set(`guide.vocal.${k}`, v);
+    });
 
     // --- action buttons (not settings) ---
     $("rebuild-catalog").onclick = async () => {
@@ -588,9 +587,6 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
       if (s && s.value) { s.value = ""; applyFilter(""); } // drop any active search filter
       resetCatState();                  // clears karaeoke.settingsUI.v1 → default panel layout
     };
-
-    const recapBtn = $("show-recap");
-    if (recapBtn && onShowRecap) recapBtn.onclick = () => onShowRecap();
 
     // Backup / restore. Favorites, the queue and every setting exist ONLY in this browser, so
     // the panel must offer a way out that isn't the delete button. Import reloads: modules read
@@ -655,6 +651,8 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
 
   function syncSettingsUI() {
     autoSync();
+    const gvLevel = $("set-gv-level");
+    if (gvLevel) gvLevel.value = String(melodyLevel(settings.get("guide.vocal.volume"), settings.get("guide.vocal.mute")));
     updateEqCustom();
     updateBgCategories();   // after autoSync: it puts back the stored category's option and value
     updateBgCamera();

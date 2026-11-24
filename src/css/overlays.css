@@ -55,11 +55,9 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 }
 .scrim.open { opacity: 1; }
 body[data-ov="song"] .scrim,
-body[data-ov="recap"] .scrim,
 body[data-ov="calibrate"] .scrim,
 body[data-ov="confirm"] .scrim { background: var(--scrim); backdrop-filter: blur(3px); }
 body[data-ov="song"] .scrim { z-index: 45; }
-body[data-ov="recap"] .scrim,
 body[data-ov="calibrate"] .scrim { z-index: 55; }
 body[data-ov="confirm"] .scrim { z-index: 65; }
 
@@ -138,7 +136,7 @@ body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
 }
 .ov-head h2 { margin: 0; font: 800 calc(12 / 16 * var(--u))/1 var(--font-mono); letter-spacing: .18em; text-transform: uppercase; color: var(--text); }
 
-/* Every close button (.ov-close, and the settings / recap ✕ that carry data-ov-close). */
+/* Every close button (.ov-close, and the settings ✕ that carries data-ov-close). */
 .ov-close, [data-ov-close] {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: var(--hit); height: var(--hit); padding: 0;
@@ -154,8 +152,8 @@ body[data-panel="right"] #ov-controls { padding-inline-end: var(--panel-pad); }
 /* The scrolling body of each panel takes the height that is left. */
 .ov-panel > .song-list,
 .ov-panel > .queue-list { flex: 1 1 auto; min-height: 0; }
-.ov-panel > .search-row, .ov-panel > .browse-tabs, .ov-panel > .filter-chips,
-.ov-panel > .numpad, .ov-panel > .queue-actions, .ov-panel > .remote-qr { flex: none; }
+.ov-panel > .search-row, .ov-panel > .browse-tabs,
+.ov-panel > .queue-actions, .ov-panel > .remote-qr { flex: none; }
 /* The Queue panel keeps the old queue column's inset around its QR card, list and actions. */
 #ov-queue > :not(.ov-head) { margin-inline: var(--s-4); }
 /* Clear all (M5): a full-size touch target at the foot of the queue. */
@@ -198,7 +196,7 @@ html[data-input="keys"] .key-hints:empty { display: none; }
   .ov-sheet.open { transform: translate(-50%, 0); }
 }
 
-/* ---- Dialogs (recap, calibrate, confirm) ------------------------------------------
+/* ---- Dialogs (calibrate, confirm) ------------------------------------------
    Centred over the tinted scrim; they fade. */
 .ov-dialog {
   position: fixed; left: 50%; top: 50%; z-index: 60;
@@ -248,25 +246,6 @@ html[data-input="keys"] .key-hints:empty { display: none; }
 }
 .ov-toast.open { opacity: 1; }
 body[data-panel="right"] .ov-toast { left: calc((100vw - var(--panel-pad)) / 2); }
-
-/* ---- Guest digits (M8) ----------------------------------------------------------------
-   #search-who names the guest whose phone is typing into the Songs field ("📱 Kai"). It shows
-   only while a guest owns the field; the global [hidden] rule keeps it (and #btn-numpad while
-   keypad.enabled is off) out. The pressed 123 button is .pill-btn.active (style.css); the pad
-   itself is sheet.css's numpad block. */
-.search-who {
-  flex: none; max-width: 40%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  padding: var(--s-1) var(--s-2); border-radius: calc(20 / 16 * var(--u));
-  background: var(--chip-on-bg); color: var(--chip-on-ink);
-  font-size: calc(12 / 16 * var(--u)); font-weight: 700;
-}
-/* "123" is three characters: the round single-glyph .pill-btn.icon crams it edge to edge, so this
-   one is a pill (same height) with a smaller bold label. */
-#btn-numpad {
-  width: auto; padding: 0 calc(10 / 16 * var(--u));
-  font-size: calc(12 / 16 * var(--u)); font-weight: 700; font-variant-numeric: tabular-nums;
-}
 
 /* ---- calibrate (M9) -------------------------------------------------------------------
    The inside of #ov-calibrate, built by ui/calibrate-ui.js: title, the step's sentence (the

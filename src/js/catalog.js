@@ -28,6 +28,12 @@ export function normalizeCode(text) {
   return digits.replace(/^0+(?=\d)/, "");
 }
 
+/** Pure: true when `text`, trimmed, is one or more ASCII digits (/^\d+$/). "" and mixed text → false.
+ *  (Moved here from ui/numpad.js when the number pad was removed: number keys and search still use it.) */
+export function digitsOnly(text) {
+  return /^\d+$/.test(String(text ?? "").trim());   // \d without the u flag is ASCII 0–9 only
+}
+
 /** Relevance score for a matched song (higher = better). Title hits weigh more than artist;
  *  exact / prefix / whole-query-in-title get bonuses; shorter titles win ties. */
 export function scoreMatch(song, q, tokens) {

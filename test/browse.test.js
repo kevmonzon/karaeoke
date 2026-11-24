@@ -1,18 +1,20 @@
 /*
- * browse.test.js — the library-browse helpers (M6): artist keys, songbook / kind filters and their
- * facets, the four sort modes, the artist index and its typed filter, and a 121k-song scale run.
+ * browse.test.js — the library-browse helpers (M6): artist keys, the artist index, one artist's
+ * songs by title, the typed artist filter, and a 121k-song scale run. (The songbook / kind filters,
+ * their facets and the library-wide sort were removed with the Songs panel's chips, 2026-11-24.)
  * Run with:  node --test    (or  npm test)
  *
- * The scale test checks the SHAPE of every result (a permutation, every neighbouring pair in
- * order under a reference comparator, ties in input order) — never a wall-clock threshold.
+ * The scale test checks the SHAPE of every result (counts, every neighbouring pair in order under
+ * a reference comparator, ties in input order) — never a wall-clock threshold.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import * as browse from "../src/js/library-browse.js";
 import {
-  UNKNOWN_ARTIST, UNKNOWN_ARTIST_LABEL, KINDS, SORTS,
-  artistKey, presentFacets, applyFilters, sortSongs, buildArtistIndex, songsByArtist, filterArtists,
+  UNKNOWN_ARTIST, UNKNOWN_ARTIST_LABEL,
+  artistKey, buildArtistIndex, songsByArtist, filterArtists,
 } from "../src/js/library-browse.js";
 import { SOURCES } from "../src/js/catalog.js";
 
@@ -22,8 +24,6 @@ function song(name, artistName = "", { code = nextId, source = "MIDI", kind = "m
   nextId++;
   return { code, name, artistName, langName: "", type: "MIDI", source, kind, id: `${kind}:${code}:${nextId}` };
 }
-const yt = (title, channel = "Some Channel") =>
-  ({ kind: "youtube", id: `youtube:${title}`, code: "", videoId: title, name: title, artistName: channel });
 const names = (list) => list.map((s) => s.name);
 
 const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -37,12 +37,12 @@ function rng(seed) {   // mulberry32
   };
 }
 
-// --- constants ---------------------------------------------------------------------
-test("the kinds and sorts are frozen and in display order", () => {
-  assert.deepEqual(KINDS.map((k) => k.id), ["midi", "audio", "video"]);
-  assert.deepEqual(SORTS.map((s) => s.id), ["relevance", "title", "artist", "code"]);
-  assert.ok(Object.isFrozen(KINDS) && Object.isFrozen(KINDS[0]) && Object.isFrozen(SORTS) && Object.isFrozen(SORTS[3]));
+// --- exports -----------------------------------------------------------------------
+test("the artist helpers are all that is left: no filters, facets or sorts", () => {
   assert.equal(UNKNOWN_ARTIST_LABEL, "(Unknown artist)");
+  for (const gone of ["KINDS", "SORTS", "presentFacets", "applyFilters", "sortSongs"]) {
+    assert.equal(gone in browse, false, `${gone} was removed with the Songs panel's chips and sort`);
+  }
 });
 
 // --- artistKey -----------------------------------------------------------------------
@@ -71,162 +71,6 @@ test("artistKey folds placeholders", () => {
   // The unknown key cannot be spelled by a real name: control characters fold like spaces.
   assert.equal(artistKey("\u0000unknown"), UNKNOWN_ARTIST);
   assert.equal(artistKey("\u0000Queen"), "queen");
-});
-
-// --- presentFacets -------------------------------------------------------------------------
-test("facets list only what is present, in order", () => {
-  const songs = [
-    song("a", "", { source: "MIDI", kind: "video" }),
-    song("b", "", { source: "", kind: "midi" }),
-    song("c", "", { source: "SH", kind: "video" }),
-    song("d", "", { source: "MIDI", kind: "midi" }),
-    yt("e"),
-    song("f", "", { source: "OTHER", kind: "karaoke-box" }),
-  ];
-  assert.deepEqual(presentFacets(songs), { sources: ["SH", "MIDI"], kinds: ["midi", "video"] });
-
-  const all = SOURCES.flatMap((source) => KINDS.map((k) => song("x", "", { source, kind: k.id }))).reverse();
-  assert.deepEqual(presentFacets(all), { sources: SOURCES, kinds: ["midi", "audio", "video"] });
-
-  // An old catalogue (no songbook on any record) offers no source chip at all.
-  assert.deepEqual(presentFacets([song("a", "", { source: "" })]), { sources: [], kinds: ["midi"] });
-  assert.deepEqual(presentFacets([]), { sources: [], kinds: [] });
-  assert.deepEqual(presentFacets(null), { sources: [], kinds: [] });
-});
-
-// --- applyFilters ----------------------------------------------------------------------------------
-const LIB = [
-  song("sh midi", "", { source: "SH", kind: "midi" }),
-  song("plat midi", "", { source: "PLATKAR", kind: "midi" }),
-  song("sh audio", "", { source: "SH", kind: "audio" }),
-  song("none video", "", { source: "", kind: "video" }),
-  song("tj video", "", { source: "TJMEDIA", kind: "video" }),
-  song("plat audio", "", { source: "PLATKAR", kind: "audio" }),
-];
-
-test("no filter returns the same array", () => {
-  assert.equal(applyFilters(LIB), LIB);
-  assert.equal(applyFilters(LIB, {}), LIB);
-  assert.equal(applyFilters(LIB, { sources: null, kinds: null }), LIB);
-  assert.equal(applyFilters(LIB, { sources: new Set(), kinds: new Set() }), LIB);
-  const empty = [];
-  assert.equal(applyFilters(empty, { sources: new Set() }), empty);
-});
-
-test("source filter", () => {
-  const out = applyFilters(LIB, { sources: new Set(["SH"]) });
-  assert.deepEqual(names(out), ["sh midi", "sh audio"]);
-  assert.notEqual(out, LIB);
-  assert.deepEqual(names(applyFilters(LIB, { sources: new Set(["PLATKAR", "SH"]) })),
-    ["sh midi", "plat midi", "sh audio", "plat audio"]);            // catalogue order, not chip order
-  assert.deepEqual(applyFilters(LIB, { sources: new Set(["MIDI"]) }), []);
-  assert.equal(LIB.length, 6);                                     // the input is untouched
-});
-
-test("kind filter", () => {
-  assert.deepEqual(names(applyFilters(LIB, { kinds: new Set(["video"]) })), ["none video", "tj video"]);
-  assert.deepEqual(names(applyFilters(LIB, { kinds: new Set(["audio", "midi"]) })),
-    ["sh midi", "plat midi", "sh audio", "plat audio"]);
-});
-
-test("both filters intersect", () => {
-  assert.deepEqual(names(applyFilters(LIB, { sources: new Set(["PLATKAR"]), kinds: new Set(["audio"]) })), ["plat audio"]);
-  assert.deepEqual(names(applyFilters(LIB, { sources: new Set(["SH", "TJMEDIA"]), kinds: new Set(["video", "midi"]) })),
-    ["sh midi", "tj video"]);
-  // An empty axis is no filter on that axis.
-  assert.deepEqual(names(applyFilters(LIB, { sources: new Set(["TJMEDIA"]), kinds: new Set() })), ["tj video"]);
-});
-
-test("youtube records vs filters", () => {
-  const rows = [LIB[0], yt("Halo karaoke"), LIB[3]];
-  assert.equal(applyFilters(rows, {}), rows);                                   // kept: nothing filters
-  assert.deepEqual(names(applyFilters(rows, { sources: new Set(["SH"]) })), ["sh midi"]);
-  assert.deepEqual(names(applyFilters(rows, { kinds: new Set(["midi", "video"]) })), ["sh midi", "none video"]);
-  // Even a kind set that names "youtube" is an active kind filter.
-  assert.deepEqual(names(applyFilters(rows, { kinds: new Set(["youtube"]) })), []);
-});
-
-// --- sortSongs ------------------------------------------------------------------------------------------
-test("sort by title is locale-aware and stable", () => {
-  const input = [
-    song("zebra"), song("Éclair"), song("apple"), song("Banana"), song("eagle"), song("Echo"),
-    song("Song 10"), song("Song 2"),
-  ];
-  const before = input.slice();
-  const out = sortSongs(input, "title");
-  assert.deepEqual(names(out), ["apple", "Banana", "eagle", "Echo", "Éclair", "Song 2", "Song 10", "zebra"]);
-  assert.notEqual(out, input);
-  assert.deepEqual(input, before);                                  // a copy; the input is not reordered
-
-  // Ties: same title → artist, then number; a full tie keeps the input order.
-  const a = song("Halo", "Beyoncé", { code: 30 }), b = song("Halo", "Adele", { code: 50 });
-  const c = song("halo", "beyonce", { code: 10 }), d = song("HALO", "Beyoncé", { code: 30, kind: "audio" });
-  const e = song("Halo", "Beyoncé", { code: 30, kind: "video" });
-  assert.deepEqual(sortSongs([d, a, e, c, b], "title"), [b, c, d, a, e]);
-  assert.deepEqual(sortSongs([e, a, d, c, b], "title"), [b, c, e, a, d]);
-  const one = [a];
-  assert.notEqual(sortSongs(one, "title"), one);                    // still a copy
-  assert.deepEqual(sortSongs([], "title"), []);
-});
-
-test("sort stays correct as new titles arrive", () => {
-  // Each call may bring titles the previous calls never saw; the order must not depend on history.
-  assert.deepEqual(names(sortSongs([song("delta"), song("bravo")], "title")), ["bravo", "delta"]);
-  assert.deepEqual(names(sortSongs([song("echo"), song("charlie"), song("bravo"), song("alpha"), song("delta")], "title")),
-    ["alpha", "bravo", "charlie", "delta", "echo"]);
-  assert.deepEqual(names(sortSongs([song("Delta"), song("ALPHA"), song("Bravo2"), song("bravo10")], "title")),
-    ["ALPHA", "Bravo2", "bravo10", "Delta"]);
-
-  // Long lists share one rank table: a second long list whose titles and artists the first never
-  // had must still interleave correctly with what the table already holds.
-  const evens = Array.from({ length: 5000 }, (_, i) => song(`Track ${i * 2}`, `Band ${i % 50}`));
-  const odds = Array.from({ length: 5000 }, (_, i) => song(`track ${9999 - i * 2}`, `band ${i % 70}`));
-  assert.equal(sortSongs(evens, "title").length, 5000);
-  const mixed = [...odds, ...evens.slice(0, 2500)];
-  const num = (s) => Number(s.name.split(" ")[1]);
-  const byTitle = sortSongs(mixed, "title");
-  assert.equal(byTitle.length, 7500);
-  for (let i = 1; i < byTitle.length; i++) assert.ok(num(byTitle[i - 1]) < num(byTitle[i]), `title at ${i}`);
-  const byArtist = sortSongs(mixed, "artist");
-  for (let i = 1; i < byArtist.length; i++) {
-    const c = COLLATOR.compare(artistKey(byArtist[i - 1].artistName), artistKey(byArtist[i].artistName));
-    assert.ok(c < 0 || (c === 0 && COLLATOR.compare(byArtist[i - 1].name, byArtist[i].name) < 0), `artist at ${i}`);
-  }
-});
-
-test("sort by artist groups spellings and puts unknown artists last", () => {
-  const input = [
-    song("b", "Queen"), song("x", ""), song("a", "ABBA"), song("c", "queen"), song("y", "Unknown"),
-    song("a", " Queen "), song("b", "abba"), song("w", "N/A"),
-  ];
-  const out = sortSongs(input, "artist");
-  assert.deepEqual(out.map((s) => `${s.artistName.trim()}|${s.name}`),
-    ["ABBA|a", "abba|b", "Queen|a", "Queen|b", "queen|c", "N/A|w", "|x", "Unknown|y"]);
-});
-
-test("sort by code is numeric", () => {
-  const input = [
-    song("ten", "", { code: 10 }), song("nine", "", { code: 9 }), song("blank", "", { code: "", kind: "video" }),
-    song("hundred", "", { code: 100 }), song("str42", "", { code: "42" }), song("zero", "", { code: 0 }),
-  ];
-  assert.deepEqual(names(sortSongs(input, "code")), ["zero", "nine", "ten", "str42", "hundred", "blank"]);
-
-  // Same number: songbook in SOURCES order (none last), then kind (midi, audio, video).
-  const same = [
-    song("none", "", { code: 7, source: "" }), song("midi-vid", "", { code: 7, source: "MIDI", kind: "video" }),
-    song("sh-audio", "", { code: 7, source: "SH", kind: "audio" }), song("tj", "", { code: 7, source: "TJMEDIA" }),
-    song("sh-midi", "", { code: 7, source: "SH", kind: "midi" }), song("midi-midi", "", { code: 7, source: "MIDI" }),
-    song("plat", "", { code: 7, source: "PLATKAR" }),
-  ];
-  assert.deepEqual(names(sortSongs(same, "code")), ["sh-midi", "sh-audio", "plat", "tj", "midi-midi", "midi-vid", "none"]);
-});
-
-test("relevance leaves order alone", () => {
-  const input = [song("b"), song("a"), song("c")];
-  for (const mode of ["relevance", undefined, null, "", "bogus", "__proto__", "constructor", "toString"]) {
-    assert.equal(sortSongs(input, mode), input, String(mode));
-  }
-  assert.deepEqual(names(input), ["b", "a", "c"]);
 });
 
 // --- buildArtistIndex ------------------------------------------------------------------------------------
@@ -273,6 +117,25 @@ test("songsByArtist matches the key", () => {
   assert.deepEqual(songsByArtist(songs, "nobody"), []);
   // Every entry of an index finds exactly its count.
   for (const a of buildArtistIndex(songs)) assert.equal(songsByArtist(songs, a.key).length, a.count, a.name);
+  assert.deepEqual(songsByArtist(null, "abba"), []);
+});
+
+test("songsByArtist orders titles with the collator, then by number, then as given", () => {
+  const input = [
+    song("zebra", "Band"), song("Éclair", "Band"), song("apple", "Band"), song("Banana", "Band"), song("eagle", "Band"),
+    song("Echo", "Band"), song("Song 10", "Band"), song("Song 2", "Band"),
+  ];
+  const before = input.slice();
+  const out = songsByArtist(input, "band");
+  assert.deepEqual(names(out), ["apple", "Banana", "eagle", "Echo", "Éclair", "Song 2", "Song 10", "zebra"]);
+  assert.notEqual(out, input);
+  assert.deepEqual(input, before, "a copy; the input is not reordered");
+
+  // Titles the collator calls equal (case, accents) are ordered by number; numberless last; a full tie keeps input order.
+  const a = song("Halo", "Band", { code: 30 }), b = song("HALO", "Band", { code: 5 }), c = song("halo", "Band", { code: "" });
+  const d = song("Haló", "Band", { code: "30", kind: "audio" }), e = song("Halo", "Band", { code: 30, kind: "video" });
+  assert.deepEqual(songsByArtist([c, d, a, e, b], "band"), [b, d, a, e, c]);
+  assert.deepEqual(songsByArtist([e, a, c, b, d], "band"), [b, e, a, d, c]);
 });
 
 // --- filterArtists -------------------------------------------------------------------------------------------
@@ -305,7 +168,7 @@ test("filterArtists: an empty query returns the same array", () => {
 });
 
 // --- scale ------------------------------------------------------------------------------------------------------
-test("scale: 121,000 songs sort, filter and index into the right shape", () => {
+test("scale: 121,000 songs index into the right shape, and one artist's songs come out by title", () => {
   const rand = rng(6);
   const pickOf = (arr) => arr[Math.floor(rand() * arr.length)];
   const letters = "abcdefghijklmnopqrstuvwxyzéñ";
@@ -330,47 +193,7 @@ test("scale: 121,000 songs sort, filter and index into the right shape", () => {
     songs[i] = { code, name: title, artistName: artist, kind, source, id: `${kind}:${i}` };
   }
   const pos = new Map(songs.map((s, i) => [s, i]));
-
-  const isPermutation = (out) => {
-    assert.equal(out.length, N);
-    const seen = new Set(out);
-    assert.equal(seen.size, N);
-    for (const s of out) assert.ok(pos.has(s));
-  };
   const num = (s) => (s.code === "" ? Infinity : s.code);
-  const cmpNum = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-  const artistCmp = (a, b) => {
-    const ka = artistKey(a.artistName), kb = artistKey(b.artistName);
-    if (ka === kb) return 0;
-    if (ka === UNKNOWN_ARTIST) return 1;
-    if (kb === UNKNOWN_ARTIST) return -1;
-    return COLLATOR.compare(ka, kb);
-  };
-  const srcRank = (s) => (SOURCES.includes(s.source) ? SOURCES.indexOf(s.source) : SOURCES.length);
-  const kindRank = (s) => KINDS.findIndex((k) => k.id === s.kind);
-  const reference = {
-    title: (a, b) => COLLATOR.compare(a.name, b.name) || artistCmp(a, b) || cmpNum(num(a), num(b)),
-    artist: (a, b) => artistCmp(a, b) || COLLATOR.compare(a.name, b.name),
-    code: (a, b) => cmpNum(num(a), num(b)) || srcRank(a) - srcRank(b) || kindRank(a) - kindRank(b),
-  };
-  for (const mode of ["title", "artist", "code"]) {
-    const out = sortSongs(songs, mode);
-    isPermutation(out);
-    // Sorted ⇔ every neighbouring pair is in order; a full tie keeps the input order (stable).
-    for (let i = 1; i < N; i++) {
-      const c = reference[mode](out[i - 1], out[i]);
-      assert.ok(c < 0 || (c === 0 && pos.get(out[i - 1]) < pos.get(out[i])), `${mode} out of order at ${i}`);
-    }
-    assert.equal(sortSongs(songs, mode).every((s, i) => s === out[i]), true, `${mode} is deterministic`);
-  }
-  assert.equal(sortSongs(songs, "relevance"), songs);
-
-  // Filters and facets.
-  assert.deepEqual(presentFacets(songs), { sources: SOURCES, kinds: ["midi", "audio", "video"] });
-  assert.equal(applyFilters(songs, { sources: new Set(), kinds: null }), songs);
-  const filtered = applyFilters(songs, { sources: new Set(["SH", "TJMEDIA"]), kinds: new Set(["midi", "video"]) });
-  assert.equal(filtered.length, songs.filter((s) => (s.source === "SH" || s.source === "TJMEDIA") && s.kind !== "audio").length);
-  for (let i = 1; i < filtered.length; i++) assert.ok(pos.get(filtered[i - 1]) < pos.get(filtered[i]));
 
   // The artist index: one entry per key, counts add up, sorted by name, unknown last.
   const index = buildArtistIndex(songs);
@@ -382,11 +205,19 @@ test("scale: 121,000 songs sort, filter and index into the right shape", () => {
   assert.deepEqual(index.at(-1), { key: UNKNOWN_ARTIST, name: UNKNOWN_ARTIST_LABEL, count: keys.get(UNKNOWN_ARTIST) });
   for (let i = 1; i < index.length - 1; i++) assert.ok(COLLATOR.compare(index[i - 1].name, index[i].name) <= 0, `index at ${i}`);
 
-  // songsByArtist and filterArtists on the big index.
+  // songsByArtist (the biggest real artist, and the unknown bucket — ~8% of the library) and
+  // filterArtists on the big index. Sorted ⇔ every neighbouring pair is in order (title, then
+  // number); a full tie keeps the input order.
   const big = [...index].sort((a, b) => b.count - a.count).find((a) => a.key !== UNKNOWN_ARTIST);
-  const theirs = songsByArtist(songs, big.key);
-  assert.equal(theirs.length, big.count);
-  for (let i = 1; i < theirs.length; i++) assert.ok(COLLATOR.compare(theirs[i - 1].name, theirs[i].name) <= 0);
+  for (const key of [big.key, UNKNOWN_ARTIST]) {
+    const theirs = songsByArtist(songs, key);
+    assert.equal(theirs.length, keys.get(key));
+    for (let i = 1; i < theirs.length; i++) {
+      const [x, y] = [theirs[i - 1], theirs[i]];
+      const c = COLLATOR.compare(x.name, y.name) || (num(x) < num(y) ? -1 : num(x) > num(y) ? 1 : 0);
+      assert.ok(c < 0 || (c === 0 && pos.get(x) < pos.get(y)), `${JSON.stringify(key)} out of order at ${i}`);
+    }
+  }
   const firstWord = big.name.split(" ")[0];
   const found = filterArtists(index, firstWord);
   assert.ok(found.includes(big));

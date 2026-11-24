@@ -1,6 +1,6 @@
 /* Ka-Rae-oke — offline karaoke styling: the COMPONENT rules (song rows, queue rows, playbar,
    steppers, settings body, pitch guide, chords, lyrics, title/score cards, mixer rows,
-   reactions, recap body). Page geometry lives in stage.css (the stage + its layers) and
+   reactions). Page geometry lives in stage.css (the stage + its layers) and
    overlays.css (control bar, panels, sheets, dialogs, scrim, focus ring).
    Palette + scale come from tokens.css (loaded first, see index.html). The app's legacy
    variable names are ALIASED to the semantic tokens. Every size is a multiple of the scale
@@ -176,8 +176,8 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
   height: var(--row-h); /* library-ui measures a rendered row, so this is the one source */
   /* Chrome scales with --u so the highlight box, gaps, icon column and controls stay
      proportional to the scaled text — otherwise big TV text crams a tiny box.
-     --song-lead = the kind-icon column + the fixed number column (code over the songbook chip). */
-  --song-lead: calc(30 / 16 * var(--u)) calc(56 / 16 * var(--u));
+     --song-lead = the kind-icon column (rows show no song number — Rae, 2026-11-24). */
+  --song-lead: calc(30 / 16 * var(--u));
   display: grid; grid-template-columns: var(--song-lead) 1fr auto auto;
   align-items: center; gap: calc(8 / 16 * var(--u));
   padding: calc(7 / 16 * var(--u)) calc(12 / 16 * var(--u));
@@ -191,17 +191,8 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 .song .meta { display: flex; flex-direction: column; min-width: 0; }
 .song .title { font-size: calc(14 / 16 * var(--u)); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .artist { color: var(--muted); font-size: calc(12 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Number column: the dial number in tabular figures (so titles line up down the list), with the
-   songbook chip under it. A close-match row gets one more track, for its "≈" before the ★.
-   The chip sits UNDER the number inside the fixed lead column, so it costs the title no width;
-   it stays visible at every size (the panel is full width on a phone, wider than the old column). */
+/* A close-match row gets one more track, for its "≈" before the ★. */
 .song.close-match { grid-template-columns: var(--song-lead) 1fr auto auto auto; }
-.song .num { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-width: 0; line-height: 1.2; }
-.song .code { color: var(--muted); font-size: var(--t-label); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.song .src-chip {
-  color: var(--muted); font-size: var(--t-tiny); font-weight: 600; letter-spacing: .02em; white-space: nowrap;
-  padding: 0 var(--s-1); border: 1px solid var(--border); border-radius: var(--r-pill);
-}
 .song .close-mark { color: var(--muted); font-size: var(--t-body); font-weight: 700; line-height: 1; }
 button.add {
   background: var(--surface-2); border: 1px solid var(--border); color: var(--text);
@@ -434,7 +425,6 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 .qsong .title { font-size: calc(14 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist { color: var(--muted); font-size: calc(12 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist .by { color: var(--accent-2); }
-.queue-list .code { color: var(--accent-2); font-weight: 700; }
 .queue-list .qt { flex: 1; font-size: calc(13 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hint { color: var(--muted); font-size: calc(12 / 16 * var(--u)); margin-top: calc(14 / 16 * var(--u)); }
 
@@ -547,8 +537,19 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 /* Mic toggle in the transport row */
 .transport .mic-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
 .transport .mic-toggle:disabled { opacity: .35; cursor: not-allowed; }
-/* Melody toggle: lit when the melody guide vocal is audible (guide.vocal.mute === false). */
+/* Melody button: lit while the melody is audible; each press steps Off · 25 · 50 · 75 · 100 %
+   (app.js stepMelody). Its level is a short bar under the note — a quarter of its width per level —
+   so the room can read it without opening Settings. */
 .transport .melody-toggle.on { background: var(--accent-2); border-color: var(--accent-2); color: #05060a; }
+.transport .melody-toggle { position: relative; }
+.transport .melody-toggle[data-level]::after {
+  content: ""; position: absolute; left: 30%; bottom: 16%; height: max(2px, calc(3 / 16 * var(--u)));
+  width: calc(40% * var(--melody-lv, 0) / 4); border-radius: 2px; background: currentColor;
+}
+.transport .melody-toggle[data-level="1"] { --melody-lv: 1; }
+.transport .melody-toggle[data-level="2"] { --melody-lv: 2; }
+.transport .melody-toggle[data-level="3"] { --melody-lv: 3; }
+.transport .melody-toggle[data-level="4"] { --melody-lv: 4; }
 /* Melody is MIDI-only — no melody channel in a baked video/YouTube song, so dim + disable it there. */
 body.video-mode .transport .melody-toggle,
 body.youtube-mode .transport .melody-toggle,
@@ -654,45 +655,6 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-radius: calc(4 / 16 * var(--u)); font-size: calc(12 / 16 * var(--u)); }
 
-/* ---------------------------------------------------------------------------
-   Tonight's recap (⚙ → Library, or the home tile). The #recap element is the
-   `recap` dialog (.ov-dialog, overlays.css), which supplies the position, the
-   tinted scrim behind it and the fade. The visual card is .recap-card, so the
-   dialog box itself stays bare here (no card inside a card).
-   --------------------------------------------------------------------------- */
-.ov-dialog.recap {
-  width: min(92vw, calc(640 / 16 * var(--u)));
-  padding: 0; background: none; border: 0; box-shadow: none; overflow: visible;
-}
-.recap-card {
-  width: min(calc(640 / 16 * var(--u)), 100%); max-height: 82vh; display: flex; flex-direction: column;
-  background: var(--surface-0); border: 1px solid var(--border);
-  border-radius: var(--r-lg); box-shadow: var(--elev-2); overflow: hidden;
-}
-.recap-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: calc(16 / 16 * var(--u)) calc(20 / 16 * var(--u)); border-bottom: 1px solid var(--border-soft);
-}
-.recap-head h3 { margin: 0; font-size: calc(18 / 16 * var(--u)); }
-.recap-body { padding: calc(18 / 16 * var(--u)) calc(20 / 16 * var(--u)) calc(22 / 16 * var(--u)); overflow-y: auto; }
-
-.recap-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(10 / 16 * var(--u)); margin-bottom: calc(18 / 16 * var(--u)); }
-.recap-stat {
-  background: var(--surface-2); border: 1px solid var(--border-soft);
-  border-radius: var(--r-md); padding: calc(12 / 16 * var(--u)); text-align: center;
-}
-.recap-stat b {
-  display: block; font-size: calc(26 / 16 * var(--u)); font-weight: 800;
-  font-variant-numeric: tabular-nums; color: var(--brand); line-height: 1.1;
-}
-.recap-stat span { font-size: calc(11 / 16 * var(--u)); color: var(--text-muted); }
-
-.recap-list { list-style: none; margin: 0; padding: 0; }
-.recap-list li {
-  display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px calc(12 / 16 * var(--u));
-  padding: calc(10 / 16 * var(--u)) 2px; border-bottom: 1px solid var(--border-soft);
-}
-.recap-list li:last-child { border-bottom: 0; }
 .rc-title { font-weight: 600; }
 .rc-meta { grid-column: 1; font-size: calc(12 / 16 * var(--u)); color: var(--text-muted); }
 .rc-score {

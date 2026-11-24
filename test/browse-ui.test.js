@@ -1,11 +1,12 @@
 /*
  * browse-ui.test.js — the Songs panel's browse controls (M6, src/js/ui/browse-ui.js): the three
- * tabs and their keys, the songbook / type chips, the sort select, and the rankings view (rows as
- * text, player / difficulty filters, Clear, the empty state), plus setTab / reset and which
- * container shows on which tab. The DOM parts run against a small hand-built fake with only the
- * surface the module documents: createElement, setAttribute, textContent, appendChild /
- * replaceChildren, addEventListener, hidden, parentElement — plus activeElement / focus() /
- * contains() and a select's `value`, which the module feature-detects. innerHTML is a trap.
+ * tabs and their keys, and the rankings view (rows as text, player / difficulty filters, Clear,
+ * the empty state), plus setTab / reset and which container shows on which tab. The songbook /
+ * type chips and the sort select were removed (2026-11-24); a test below checks they stay gone.
+ * The DOM parts run against a small hand-built fake with only the surface the module documents:
+ * createElement, setAttribute, textContent, appendChild / replaceChildren, addEventListener,
+ * hidden, parentElement — plus activeElement / focus() / contains(), which the module
+ * feature-detects. innerHTML is a trap.
  * Run with:  node --test
  */
 
@@ -13,7 +14,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { BROWSE_TABS, createBrowseUI } from "../src/js/ui/browse-ui.js";
-import { KINDS, SORTS } from "../src/js/library-browse.js";
 
 // --- a minimal fake DOM ---------------------------------------------------------------------
 class El {
@@ -92,9 +92,7 @@ const AT = Date.UTC(2026, 10, 24, 20, 30);
 const entry = (player, score, difficulty = "normal", i = 0) =>
   ({ player, songId: `midi:${i}`, song: `Song ${i}`, artist: `Artist ${i}`, score, difficulty, at: AT + i * 60000 });
 
-const FACETS = { sources: ["SH", "PLATKAR", "TJMEDIA"], kinds: ["midi", "audio"] };
-
-function setup({ facets = FACETS, rankings = [], getRankings = null } = {}) {
+function setup({ rankings = [], getRankings = null } = {}) {
   const doc = makeDoc();
   const panel = doc.body.appendChild(doc.createElement("section"));
   const mk = (id) => {
@@ -104,40 +102,29 @@ function setup({ facets = FACETS, rankings = [], getRankings = null } = {}) {
     return el;
   };
   const tabsEl = mk("browse-tabs");
-  const chipsEl = mk("filter-chips");
   const paneEl = mk("browse-pane");
   doc.made.length = 0;
-  const calls = { tab: [], filters: [], sort: [], clear: 0, facets: 0, rankings: [] };
-  const state = { facets, rankings };
+  const calls = { tab: [], clear: 0, rankings: [] };
+  const state = { rankings };
   const rank = getRankings || ((f) => rankingsOf(state.rankings)(f));
   const ui = createBrowseUI({
-    tabsEl, chipsEl, paneEl, doc,
-    getFacets: () => { calls.facets++; return state.facets; },
+    tabsEl, paneEl, doc,
     getRankings: (f) => { calls.rankings.push({ ...f }); return rank(f); },
     onTab: (id) => calls.tab.push(id),
-    onFilters: (f) => calls.filters.push(f),
-    onSort: (m) => calls.sort.push(m),
     onClearRankings: () => { calls.clear++; },
   });
   const tabBtns = () => tabsEl.all("[role=\"tab\"]");
   const tabBtn = (id) => tabsEl.one(`[data-tab="${id}"]`);
-  const srcChip = (v) => (v === "" ? chipsEl.one(".chip-group-src").all(".chip").find((c) => c.textContent === "All")
-    : chipsEl.one(`[data-src="${v}"]`));
-  const kindChip = (v) => chipsEl.one(`[data-kind="${v}"]`);
   const playerChip = (name) => paneEl.one(".chip-group-player").all(".chip").find((c) => c.textContent === name);
   const diffChip = (v) => (v === "" ? paneEl.one(".chip-group-diff").all(".chip").find((c) => c.textContent === "All")
     : paneEl.one(`[data-difficulty="${v}"]`));
-  const sortEl = () => chipsEl.one("#browse-sort");
   const rows = () => paneEl.one("tbody").children;
   const clearBtn = () => paneEl.one("[data-act=\"clear-rankings\"]");
   const emptyEl = () => paneEl.one(".rank-empty");
-  return { doc, panel, tabsEl, chipsEl, paneEl, ui, calls, state, tabBtns, tabBtn, srcChip, kindChip,
-    playerChip, diffChip, sortEl, rows, clearBtn, emptyEl };
+  return { doc, panel, tabsEl, paneEl, ui, calls, state, tabBtns, tabBtn, playerChip, diffChip, rows, clearBtn, emptyEl };
 }
 const pressed = (b) => b.getAttribute("aria-pressed") === "true";
 const keydown = (el, key, extra = {}) => el.fire("keydown", { key, ...extra });
-const sorted = (set) => [...set].sort();
-const shown = (el, root) => { for (let n = el; n; n = n.parentElement) { if (n.hidden) return false; if (n === root) return true; } return false; };
 
 // --- tabs -----------------------------------------------------------------------------------
 
@@ -233,207 +220,62 @@ test("a click selects a tab; the selected tab again reports nothing", () => {
   assert.deepEqual(r.calls.tab, ["rankings", "artists"]);
 });
 
-// --- chips ----------------------------------------------------------------------------------
+// --- the Songs panel's chips and sort are gone (2026-11-24) ----------------------------------
 
-test("a chip toggles aria-pressed and reports the filter set", () => {
-  const r = setup();
+test("no songbook / type chips and no sort select: the tabs are the only controls above the list", () => {
+  const r = setup({ rankings: [entry("Rae", 90)] });
   r.ui.render();
-  assert.equal(r.chipsEl.hidden, false);
-  const sh = r.srcChip("SH");
-  assert.equal(sh.tagName, "BUTTON");
-  assert.equal(sh.getAttribute("type"), "button");
-  assert.equal(pressed(sh), false);
-  assert.equal(pressed(r.srcChip("")), true, "All is pressed while no songbook is");
+  const everything = [...r.panel.walk()];
+  assert.ok(!everything.some((el) => el.tagName === "SELECT"), "no sort <select>");
+  assert.equal(r.panel.one("#browse-sort"), null);
+  assert.equal(r.panel.all("[data-src]").length + r.panel.all("[data-kind]").length, 0, "no songbook / type chips");
+  assert.equal(r.panel.all(".chip").length, 0, "no chip at all while the rankings view is closed");
+  assert.ok(!("filters" in r.ui) && !("sort" in r.ui), "no filters / sort on the returned object");
+  assert.deepEqual(Object.keys(r.ui).sort(), ["refreshPane", "render", "reset", "setTab", "tab"]);
 
-  sh.click();
-  assert.equal(pressed(sh), true);
-  assert.equal(pressed(r.srcChip("")), false);
-  assert.equal(r.calls.filters.length, 1);
-  assert.deepEqual(sorted(r.calls.filters[0].sources), ["SH"]);
-  assert.deepEqual(sorted(r.calls.filters[0].kinds), []);
-
-  r.srcChip("PLATKAR").click();   // multi-select
-  assert.deepEqual(sorted(r.calls.filters[1].sources), ["PLATKAR", "SH"]);
-  r.kindChip("audio").click();
-  assert.equal(pressed(r.kindChip("audio")), true);
-  assert.equal(pressed(r.kindChip("midi")), false);
-  assert.deepEqual(sorted(r.calls.filters[2].kinds), ["audio"]);
-  assert.deepEqual(sorted(r.calls.filters[2].sources), ["PLATKAR", "SH"]);
-
-  sh.click();                     // toggles back off
-  assert.equal(pressed(sh), false);
-  assert.deepEqual(sorted(r.ui.filters.sources), ["PLATKAR"]);
-  r.kindChip("audio").click();
-  assert.deepEqual(sorted(r.ui.filters.kinds), []);
-
-  // the reported sets and the getter are copies
-  const f = r.ui.filters;
-  f.sources.add("TJMEDIA");
-  r.calls.filters[0].sources.add("TJMEDIA");
-  assert.deepEqual(sorted(r.ui.filters.sources), ["PLATKAR"]);
-  // a click on a chip's icon counts as the chip; a click on a group label is nothing
-  r.kindChip("midi").one(".chip-icon").click();
-  assert.deepEqual(sorted(r.ui.filters.kinds), ["midi"]);
-  const before = r.calls.filters.length;
-  r.chipsEl.one(".chip-label").click();
-  r.chipsEl.click();
-  assert.equal(r.calls.filters.length, before);
+  // the only chips are the rankings view's own (player, and difficulty when there is a choice)
+  r.ui.setTab("rankings");
+  assert.ok(r.panel.all(".chip").length > 0);
+  assert.ok(r.panel.all(".chip").every((c) => r.paneEl.contains(c)), "every chip lives in the rankings view");
 });
 
-test("All clears the other chips", () => {
+test("render keeps the current tab, and builds the tabs once", () => {
   const r = setup();
   r.ui.render();
-  r.srcChip("SH").click();
-  r.srcChip("TJMEDIA").click();
-  r.kindChip("midi").click();
-  r.srcChip("").click();
-  assert.equal(pressed(r.srcChip("")), true);
-  assert.equal(pressed(r.srcChip("SH")), false);
-  assert.equal(pressed(r.srcChip("TJMEDIA")), false);
-  assert.equal(pressed(r.kindChip("midi")), true, "All clears only the songbook chips");
-  const last = r.calls.filters.at(-1);
-  assert.deepEqual(sorted(last.sources), []);
-  assert.deepEqual(sorted(last.kinds), ["midi"]);
-  const n = r.calls.filters.length;
-  r.srcChip("").click();          // already all: nothing changed, nothing reported
-  assert.equal(r.calls.filters.length, n);
-});
-
-test("the two groups: labelled, in order, and a group with no present values is hidden", () => {
-  const r = setup({ facets: { sources: ["SH", "MIDI"], kinds: ["video", "midi", "youtube"] } });
-  r.ui.render();
-  const groups = r.chipsEl.all("[role=\"group\"]");
-  assert.equal(groups.length, 2);
-  const label = (g) => r.chipsEl.one(`#${g.getAttribute("aria-labelledby")}`).textContent;
-  assert.deepEqual(groups.map(label), ["Songbook", "Type"]);
-  assert.deepEqual(groups[0].all(".chip").map((c) => c.textContent), ["All", "SH", "MIDI"]);
-  // kinds in KINDS order with their icons; a kind KINDS does not know is not a chip
-  const kindChips = groups[1].all(".chip");
-  assert.deepEqual(kindChips.map((c) => c.dataset.kind), ["midi", "video"]);
-  for (const c of kindChips) {
-    const k = KINDS.find((x) => x.id === c.dataset.kind);
-    assert.equal(c.one(".chip-icon").textContent, k.icon);
-    assert.equal(c.one(".chip-icon").getAttribute("aria-hidden"), "true");
-    assert.equal(c.one(".chip-text").textContent, k.label);
-  }
-
-  r.state.facets = { sources: [], kinds: ["midi"] };   // an old catalogue: no songbooks
-  r.ui.render();
-  assert.equal(r.chipsEl.one(".chip-group-src").hidden, true);
-  assert.equal(r.chipsEl.one(".chip-group-src").all(".chip").length, 0);
-  assert.equal(r.chipsEl.one(".chip-group-kind").hidden, false);
-  r.state.facets = { sources: [], kinds: [] };
-  r.ui.render();
-  assert.equal(r.chipsEl.one(".chip-group-kind").hidden, true);
-  assert.equal(r.chipsEl.hidden, false, "the sort is still there");
-  assert.ok(shown(r.sortEl(), r.chipsEl));
-
-  // getFacets missing or throwing renders no chips rather than throwing
-  const r2 = setup({ facets: null });
-  r2.ui.render();
-  assert.equal(r2.chipsEl.one(".chip-group-src").hidden, true);
-  const errs = [];
-  const orig = console.error;
-  console.error = (e) => errs.push(e);
-  try {
-    const r3 = setup();
-    r3.state.facets = undefined;
-    Object.defineProperty(r3.state, "facets", { get() { throw new Error("not loaded"); } });
-    r3.ui.render();
-    assert.equal(r3.chipsEl.one(".chip-group-kind").hidden, true);
-  } finally { console.error = orig; }
-  assert.equal(errs.length, 1);
-});
-
-test("the sort select reports its mode", () => {
-  const r = setup();
-  r.ui.render();
-  const sel = r.sortEl();
-  assert.equal(sel.tagName, "SELECT");
-  assert.equal(sel.parentElement.parentElement, r.chipsEl);
-  assert.deepEqual(sel.children.map((op) => op.value), SORTS.map((s) => s.id));
-  assert.deepEqual(sel.children.map((op) => op.textContent), SORTS.map((s) => s.label));
-  assert.equal(r.ui.sort, "relevance");
-  assert.equal(sel.value, "relevance");
-  const lbl = r.chipsEl.one("[for=\"browse-sort\"]");
-  assert.equal(lbl.tagName, "LABEL");
-  assert.equal(lbl.textContent, "Sort");
-
-  sel.value = "title";
-  sel.fire("change");
-  assert.equal(r.ui.sort, "title");
-  assert.deepEqual(r.calls.sort, ["title"]);
-  sel.fire("change");             // unchanged → nothing
-  sel.value = "nonsense";         // not a SORTS id → ignored
-  sel.fire("change");
-  assert.equal(r.ui.sort, "title");
-  sel.value = "code";
-  sel.fire("change");
-  assert.deepEqual(r.calls.sort, ["title", "code"]);
-  assert.deepEqual(r.calls.filters, [], "a sort is not a filter");
-
-  r.ui.render();                  // a re-render keeps the sort and the select
-  assert.equal(r.sortEl(), sel);
-  assert.equal(sel.value, "code");
-  assert.equal(r.ui.sort, "code");
-});
-
-test("render keeps the current tab, filters and sort where still valid", () => {
-  const r = setup();
-  r.ui.render();
-  r.srcChip("SH").click();
-  r.srcChip("PLATKAR").click();
-  r.kindChip("audio").click();
-  r.sortEl().value = "artist";
-  r.sortEl().fire("change");
   r.tabBtn("artists").click();
-  const n = { filters: r.calls.filters.length, sort: r.calls.sort.length, tab: r.calls.tab.length };
-
-  r.srcChip("SH").focus();
-  r.state.facets = { sources: ["SH", "TJMEDIA"], kinds: ["midi"] };   // PLATKAR and audio are gone
+  const n = r.calls.tab.length;
+  const before = r.tabBtns();
+  r.tabBtn("artists").focus();
   r.ui.render();
-  assert.deepEqual(sorted(r.ui.filters.sources), ["SH"]);
-  assert.deepEqual(sorted(r.ui.filters.kinds), []);
-  assert.equal(r.ui.sort, "artist");
   assert.equal(r.ui.tab, "artists");
-  assert.equal(pressed(r.srcChip("SH")), true);
-  assert.equal(pressed(r.srcChip("")), false);
-  assert.equal(r.srcChip("PLATKAR"), null);
-  assert.equal(r.doc.activeElement, r.srcChip("SH"), "focus follows the rebuilt chip");
-  assert.deepEqual({ filters: r.calls.filters.length, sort: r.calls.sort.length, tab: r.calls.tab.length }, n,
-    "render fires no callbacks");
-
-  r.kindChip("midi").focus();
-  r.state.facets = { sources: ["SH", "TJMEDIA"], kinds: ["video"] };
-  r.ui.render();
-  assert.equal(r.doc.activeElement, r.srcChip(""), "a vanished chip hands focus to the group's first chip");
+  assert.deepEqual(r.tabBtns(), before, "the same three buttons");
+  assert.equal(r.doc.activeElement, r.tabBtn("artists"), "focus is left alone");
+  assert.equal(r.calls.tab.length, n, "render fires no callbacks");
   assert.equal(r.doc.htmlWrites, 0);
 });
 
 // --- which container shows on which tab -----------------------------------------------------
 
-test("chips and sort are hidden on Rankings, the pane on All and Artists", () => {
+test("the rankings view shows on Rankings only", () => {
   const r = setup({ rankings: [entry("Rae", 90)] });
   r.ui.render();
-  assert.equal(r.chipsEl.hidden, false);
   assert.equal(r.paneEl.hidden, true);
   assert.equal(r.calls.rankings.length, 0, "the rankings are not read while hidden");
   r.tabBtn("artists").click();
-  assert.equal(r.chipsEl.hidden, false);
   assert.equal(r.paneEl.hidden, true);
   r.tabBtn("rankings").click();
-  assert.equal(r.chipsEl.hidden, true);
   assert.equal(r.paneEl.hidden, false);
   assert.equal(r.tabsEl.hidden, false);
   assert.equal(r.paneEl.getAttribute("role"), "tabpanel");
   assert.equal(r.paneEl.getAttribute("aria-labelledby"), "browse-tab-rankings");
   assert.equal(r.calls.rankings.length, 1, "switching to Rankings reads them");
 
-  // a chip that had focus hands it to the selected tab when its row goes away
-  r.tabBtn("all").click();
-  r.srcChip("SH").focus();
-  r.ui.setTab("rankings");
-  assert.equal(r.doc.activeElement, r.tabBtn("rankings"));
+  // a rankings chip that had focus hands it to the selected tab when the view goes away
+  r.playerChip("Rae").focus();
+  assert.equal(r.doc.activeElement, r.playerChip("Rae"));
+  r.ui.setTab("all");
+  assert.equal(r.paneEl.hidden, true);
+  assert.equal(r.doc.activeElement, r.tabBtn("all"));
 });
 
 test("setTab and reset", () => {
@@ -442,7 +284,6 @@ test("setTab and reset", () => {
   assert.equal(r.ui.tab, "rankings");
   assert.equal(r.tabsEl.hidden, false);
   assert.equal(r.paneEl.hidden, false);
-  assert.equal(r.chipsEl.hidden, true);
   assert.deepEqual(r.calls.tab, ["rankings"]);
   r.ui.setTab("rankings");        // already there: no-op
   r.ui.setTab("bogus");
@@ -452,29 +293,15 @@ test("setTab and reset", () => {
 
   r.playerChip("Ana").click();
   r.diffChip("hard").click();
-  r.ui.setTab("all");
-  r.srcChip("SH").click();
-  r.kindChip("midi").click();
-  r.sortEl().value = "title";
-  r.sortEl().fire("change");
   r.ui.setTab("artists");
-  const n = { tab: r.calls.tab.length, filters: r.calls.filters.length, sort: r.calls.sort.length };
+  const n = r.calls.tab.length;
 
   r.ui.reset();
   assert.equal(r.ui.tab, "all");
-  assert.deepEqual(sorted(r.ui.filters.sources), []);
-  assert.deepEqual(sorted(r.ui.filters.kinds), []);
-  assert.equal(r.ui.sort, "relevance");
-  assert.equal(r.sortEl().value, "relevance");
-  assert.equal(pressed(r.srcChip("")), true);
-  assert.equal(pressed(r.srcChip("SH")), false);
-  assert.equal(pressed(r.kindChip("midi")), false);
   assert.equal(r.tabBtn("all").getAttribute("aria-selected"), "true");
   assert.equal(r.tabBtn("artists").getAttribute("tabindex"), "-1");
   assert.equal(r.paneEl.hidden, true);
-  assert.equal(r.chipsEl.hidden, false);
-  assert.deepEqual({ tab: r.calls.tab.length, filters: r.calls.filters.length, sort: r.calls.sort.length }, n,
-    "reset fires no callbacks");
+  assert.equal(r.calls.tab.length, n, "reset fires no callbacks");
 
   // the rankings filters were reset too
   r.calls.rankings.length = 0;
@@ -577,7 +404,6 @@ test("the rankings view filters by player and difficulty through getRankings", (
   r.diffChip("").click();
   assert.deepEqual(r.calls.rankings.at(-1), { player: "", difficulty: "" });
   assert.equal(r.rows().length, 4);
-  assert.deepEqual(r.calls.filters, [], "rankings filters are not library filters");
 });
 
 test("Clear calls onClearRankings and is hidden with no rows", () => {
@@ -709,17 +535,17 @@ test("a single difficulty shows no difficulty chips", () => {
   assert.ok(r2.paneEl.one('[data-difficulty="normal"]') && r2.paneEl.one('[data-difficulty="hard"]'), "two difficulties: chips");
 });
 
-test("createBrowseUI needs its three containers", () => {
+test("createBrowseUI needs its two containers", () => {
   const doc = makeDoc();
   const el = () => doc.createElement("div");
-  assert.throws(() => createBrowseUI({ chipsEl: el(), paneEl: el(), doc }), TypeError);
-  assert.throws(() => createBrowseUI({ tabsEl: el(), paneEl: el(), doc }), TypeError);
-  assert.throws(() => createBrowseUI({ tabsEl: el(), chipsEl: el(), doc }), TypeError);
+  assert.throws(() => createBrowseUI({ paneEl: el(), doc }), TypeError);
+  assert.throws(() => createBrowseUI({ tabsEl: el(), doc }), TypeError);
   assert.throws(() => createBrowseUI(), TypeError);
-  // the getters work before render, and report the defaults
-  const ui = createBrowseUI({ tabsEl: el(), chipsEl: el(), paneEl: el(), doc });
+  // the getter works before render, and reports the default
+  const ui = createBrowseUI({ tabsEl: el(), paneEl: el(), doc });
   assert.equal(ui.tab, "all");
-  assert.equal(ui.sort, "relevance");
-  assert.deepEqual(sorted(ui.filters.sources), []);
-  assert.ok(ui.filters.sources instanceof Set && ui.filters.kinds instanceof Set);
+  // a caller still passing the removed chip / sort options is not broken by them
+  const old = createBrowseUI({ tabsEl: el(), paneEl: el(), doc, chipsEl: el(), getFacets: () => { throw new Error("unused"); } });
+  old.render();
+  assert.equal(old.tab, "all");
 });

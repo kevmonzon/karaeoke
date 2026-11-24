@@ -29,24 +29,16 @@ const NOTICE_MAX = 200;   // serve.py keeps this many characters of it (NOTICE_M
  * Host settings mirrored to phones READ-ONLY, so a phone can hide what the host refuses (Play now,
  * Play next) instead of offering a button that only ever earns a "not allowed", and follow the
  * host's `remote.push` ("Instant updates": off forces polling everywhere, e.g. behind a proxy that
- * breaks the event stream — the phone stops its push client when it reads false). M8 adds the number
- * pad's two: `keypad.enabled` (false → the phone hides its `123` pad) and `remote.liveDigits` (false →
- * the phone's pad searches only the phone and its ⏎ sends an ordinary reservation). They are NOT in
+ * breaks the event stream — the phone stops its push client when it reads false). They are NOT in
  * REMOTE_SETTABLE: a guest `setting` command for one of them is ignored like any other unknown path.
  * Mirrored only when the host's settings hold a boolean for them (config.js gives the defaults); a
- * phone should read a missing gate as "not allowed", and a missing remote.push / keypad.enabled /
- * remote.liveDigits as on.
+ * phone should read a missing gate as "not allowed" and a missing remote.push as "push allowed".
+ * (M8's `keypad.enabled` and `remote.liveDigits` left the mirror with the phone's number pad: the
+ * phone has nothing left that reads them.)
  */
-export const REMOTE_READONLY_MIRROR = Object.freeze([
-  "remote.guestPlayNow", "remote.guestPriority", "queue.fairPlay", "remote.push",
-  "remote.liveDigits", "keypad.enabled",
-]);
-// The host gates' defaults when a setting is missing altogether (plan P11 / Q9: Play now off; §5.3 /
-// §5.12: the number pad and guests' live digits on).
-const GATE_DEFAULTS = Object.freeze({
-  "remote.guestPlayNow": false, "remote.guestPriority": true, "queue.fairPlay": false,
-  "remote.liveDigits": true, "keypad.enabled": true,
-});
+export const REMOTE_READONLY_MIRROR = Object.freeze(["remote.guestPlayNow", "remote.guestPriority", "queue.fairPlay", "remote.push"]);
+// The host gates' defaults when a setting is missing altogether (plan P11 / Q9: Play now off).
+const GATE_DEFAULTS = Object.freeze({ "remote.guestPlayNow": false, "remote.guestPriority": true, "queue.fairPlay": false });
 
 const $ = (id) => document.getElementById(id);
 const nickname = (by) => String(by || "").slice(0, MAX_NICKNAME);
@@ -88,10 +80,8 @@ export function renderQr(el, text) {
  * @param {() => object|null} deps.getNowPlaying  the `now` block, built by app.js
  * @param {(msg:string)=>void} deps.setStatus
  * @param {object} deps.actions      playback-touching operations, all implemented in app.js:
- *   enqueue, removeFromQueue, reorderQueue, play, pause, next, seek, setVolume, applySetting,
- *   (M7) playNow(song, by), playNext(song, by), restart(), bgNext() (a no-op until M11), and
- *   (M8) digit(d, by), digitDelete(by), digitClear(by), digitCommit(by, { playIfIdle }) — a guest's
- *   live number entry into the host's Songs search (plan §5.12); app.js owns the field and the panel
+ *   enqueue, removeFromQueue, reorderQueue, play, pause, next, seek, setVolume, applySetting, and
+ *   (M7) playNow(song, by), playNext(song, by), restart(), bgNext() (a no-op until M11)
  * @param {object} [deps.storage]
  * @param {() => number} [deps.clock]  ms, for the notice's 5 s life (Date.now; injected in tests)
  * (A `positionFocusQr` dependency is still accepted and ignored: the focus-mode QR it placed
@@ -140,8 +130,6 @@ export function createRemoteGlue({
     setStatus(text);
   }
   const notAllowed = (by) => refuse(`${by || "A guest"}: not allowed by the host`);
-  /** Guests' live digits reach the host's search only while both switches are on (missing = on). */
-  const digitsLive = () => gate("remote.liveDigits") && gate("keypad.enabled");
 
   /** Optional reservation cap — the digital form of "don't hog the mic". 0 = off; the host ("") is never capped. */
   function overCap(by) {
@@ -266,29 +254,9 @@ export function createRemoteGlue({
         }
         case "restart": actions.restart(); break;
         case "bg": if (typeof actions.bgNext === "function") actions.bgNext(); break;
-        // M8 — a guest's live number entry (plan §5.12): the phone's pad types into the HOST's Songs
-        // search, where the number tier lists every songbook's match. All four are ignored when the
-        // host turned guests' live digits off (the phone then searches on its own and sends a plain
-        // `enqueue`) or the number pad off altogether (§5.3: remote digit commands are ignored).
-        case "digit": {
-          // One decimal digit, as a NUMBER: "3", 10, -1 and 1.5 are refused, so nothing but 0–9
-          // can ever reach the search field from the network.
-          if (!digitsLive() || !Number.isInteger(cmd.d) || cmd.d < 0 || cmd.d > 9) break;
-          actions.digit(cmd.d, nickname(cmd.by));
-          break;
-        }
-        case "digit_delete": if (digitsLive()) actions.digitDelete(nickname(cmd.by)); break;
-        case "digit_clear":  if (digitsLive()) actions.digitClear(nickname(cmd.by)); break;
-        case "digit_commit": {
-          // The guest's Enter: the top hit, reserved in their name — so the per-guest cap applies
-          // exactly as for `enqueue` (same refusal, same notice). It plays at once only when the host
-          // allows guests Play now AND app.js finds the stage idle; app.js decides the idle half.
-          if (!digitsLive()) break;
-          const by = nickname(cmd.by);
-          if (overCap(by)) break;
-          actions.digitCommit(by, { playIfIdle: gate("remote.guestPlayNow") === true });
-          break;
-        }
+        // M8's live-digit commands ("digit", "digit_delete", "digit_clear", "digit_commit") are gone
+        // with the phone's number pad. The relay may still route them (a phone page cached from
+        // before): like any unknown type they fall through and change nothing on the TV.
         // The id check is what stops a stale index deleting the wrong song — a guest's index
         // can be ~2 s out of date by the time the command lands. See queue.js.
         case "remove":

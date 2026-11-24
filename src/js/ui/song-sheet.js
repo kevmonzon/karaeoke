@@ -30,9 +30,6 @@ const KIND_ICON = {
   audio:   { glyph: "🎵", cls: "aud", title: "Audio + lyrics" },
 };
 const kindIcon = (kind) => (Object.prototype.hasOwnProperty.call(KIND_ICON, kind) ? KIND_ICON[kind] : KIND_ICON.midi);
-// A dial number is shown whenever the song has one — 0 included; YouTube songs have "".
-const hasCode = (s) => s.code !== "" && s.code != null;
-const sourceOf = (s) => (s.source == null ? "" : String(s.source).trim());
 
 /**
  * The actions a mode offers, in display order. Pure.
@@ -151,17 +148,7 @@ export function createSongSheet({ el, onAction, doc = globalThis.document, now }
     icon.setAttribute("title", k.title);
     add(head, icon);
 
-    const source = sourceOf(song);
-    if (hasCode(song) || source) {
-      const num = add(head, make(d, "span", "sheet-num"));
-      if (hasCode(song)) add(num, make(d, "span", "sheet-code", String(song.code)));
-      if (source) {
-        const chip = make(d, "span", "src-chip", source);
-        chip.setAttribute("data-src", source);
-        chip.setAttribute("title", `Songbook: ${source}`);
-        add(num, chip);
-      }
-    }
+    // No song number or songbook here: Rae removed the numbers from the screen (2026-11-24).
 
     const meta = add(head, make(d, "div", "sheet-meta"));
     const name = song.name ? String(song.name) : "(untitled)";

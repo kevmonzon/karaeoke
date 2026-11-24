@@ -3,7 +3,7 @@
  *
  * app.js had grown EIGHT persisted stores (settings, session, favorites, the ⚙ panel layout,
  * the remote room code, saved-YouTube pointers + blocklist, per-song bests, learned song
- * lengths, tonight's recap), each with its own hand-rolled
+ * lengths), each with its own hand-rolled
  * `try { JSON.parse(localStorage.getItem(k)) } catch {}` pair. Same five lines, ten times,
  * each an opportunity to forget the try (localStorage throws outright in some privacy modes,
  * and a full quota throws on write) or to mis-handle the null.

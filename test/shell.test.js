@@ -690,9 +690,9 @@ test("shell: setIdle, setKind and setStatus write the document", () => {
 // --- home --------------------------------------------------------------------------------
 test("home: homeTiles keeps order and drops disabled ids", () => {
   assert.deepEqual(HOME_TILES.map((t) => t.id),
-    ["songs", "artists", "rankings", "favorites", "queue", "tonight", "settings"]);
+    ["songs", "artists", "rankings", "favorites", "queue", "settings"]);
   assert.deepEqual(homeTiles(["settings", "songs", "queue", "tonight", "favorites"]).map((t) => t.id),
-    ["songs", "favorites", "queue", "tonight", "settings"]);
+    ["songs", "favorites", "queue", "settings"], "Tonight is gone (2026-11-24): an old id is ignored");
   assert.deepEqual(homeTiles([]), []);
   for (const t of HOME_TILES) assert.ok(t.label && t.icon, t.id);
 });

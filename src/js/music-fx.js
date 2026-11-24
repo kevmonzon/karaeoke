@@ -83,6 +83,39 @@ export function fxLevelToGain(level) {
   return clamp(level, 0, 4) / 2;
 }
 
+/**
+ * The melody guide's five volume levels (Rae, 2026-11-24): Off, 25 %, 50 %, 75 %, 100 %. Level 0 is
+ * guide.vocal.mute = true (the volume is kept, so the phone's mute toggle brings it back); levels 1–4
+ * unmute at that volume. The 🎵 button and its key step through them; Settings picks one.
+ */
+export const MELODY_LEVELS = Object.freeze([0, 0.25, 0.5, 0.75, 1]);
+
+/** The level 0..4 that { volume, mute } plays at: muted or near-silent → 0, else the nearest step
+ *  (a volume stored above 100 % before the levels existed reads as 100 %). */
+export function melodyLevel(volume, mute) {
+  const v = typeof volume === "number" && Number.isFinite(volume) ? volume : 1;
+  if (mute === true || v < 0.125) return 0;
+  return clamp(Math.round(v * 4), 1, 4);
+}
+
+/** The settings for level `k` (clamped 0..4): { mute: true } for Off — the volume is left alone —
+ *  else { volume, mute: false }. */
+export function melodyLevelSettings(k) {
+  const n = clamp(Math.round(Number(k) || 0), 0, 4);
+  return n === 0 ? { mute: true } : { volume: MELODY_LEVELS[n], mute: false };
+}
+
+/** The button's next level after `level`: Off → 25 → 50 → 75 → 100 → Off. */
+export function nextMelodyLevel(level) {
+  return (clamp(Math.round(Number(level) || 0), 0, 4) + 1) % 5;
+}
+
+/** "Off" or "50%" — the toast and the button's label. */
+export function melodyLevelLabel(level) {
+  const n = clamp(Math.round(Number(level) || 0), 0, 4);
+  return n === 0 ? "Off" : `${n * 25}%`;
+}
+
 /** Drums are transposed with the key only when the setting asks for it (default false). The `force` argument of synth.transposeChannel. */
 export function transposeForce(drumsSetting) {
   return drumsSetting === true;

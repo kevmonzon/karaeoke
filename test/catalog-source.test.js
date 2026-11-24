@@ -206,3 +206,12 @@ test("adopt does not re-tag records that have an id", () => {
   assert.deepEqual(c.lookupCode(5).map((s) => s.name), ["First", "Second", "Third"]);
   assert.equal(c.getById("midi:5").name, "First");
 });
+
+test("digitsOnly accepts digits and rejects mixed text and empty", async () => {
+  const { digitsOnly } = await import("../src/js/catalog.js");
+  for (const t of ["0", "7", "123", "00123", " 42 ", "\t9\n", 123]) assert.equal(digitsOnly(t), true, JSON.stringify(t));
+  for (const t of ["", "   ", "12a", "a12", "1 2", "-1", "1.5", "+3", "١٢٣", "１２３", null, undefined, NaN, {}]) {
+    assert.equal(digitsOnly(t), false, JSON.stringify(t));
+  }
+});
+

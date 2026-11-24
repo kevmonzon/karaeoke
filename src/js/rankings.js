@@ -4,7 +4,7 @@
  * CONTRACT STUB written by the orchestrator. Lane B fills the bodies; the exports, names and
  * signatures are the contract lanes C and I code against — do not change them.
  *
- * Storage handling mirrors recap.js / store.js jsonStore: a corrupt value reads as an empty list,
+ * Storage handling mirrors store.js jsonStore: a corrupt value reads as an empty list,
  * a throwing storage never crashes the app. The key carries the `karaeoke.` prefix, so the
  * existing Backup / Restore / Erase-all features cover it with no change.
  *

@@ -141,7 +141,6 @@ const kindSpan = (s) => {
   return `<span class="kind ${k.cls}" title="${k.title}">${k.glyph}</span>`;
 };
 // A dial number is shown whenever the song has one — 0 included; YouTube rows have "".
-const hasCode = (s) => s.code !== "" && s.code != null;
 
 /**
  * @param {object} cb
@@ -150,7 +149,6 @@ const hasCode = (s) => s.code !== "" && s.code != null;
  * @param {(index)=>void} cb.onRemoveFromQueue  remove queue item at index (✕)
  * @param {(song)=>void}  cb.onToggleFavorite   star / un-star a song (★)
  * @param {(song)=>boolean} cb.isFavorite       is this song currently starred?
- * @param {()=>boolean}   [cb.showSource]       LIVE: show the songbook chip (library.showSource)
  * @param {(song, rowEl)=>void} [cb.onActivate]  optional (M5: the song sheet): a click or tap on a
  *        row body, and Enter on a row, call this and nothing else — no select, no play, and the
  *        row has no double-click handler. ★ / ＋ never activate the row; Space still selects and
@@ -164,7 +162,7 @@ const hasCode = (s) => s.code !== "" && s.code != null;
  *        artist-kind row (an artist, or the BACK_ROW). Never the song sheet; ★ / ＋ do not exist there.
  * @returns {{ renderRows, renderList, renderQueue, getSelectedSong, getList, setNowPlaying, refresh, focusRow, focusQueueRow }}
  */
-export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, showSource = () => true, onActivate = null, onQueueActivate = null, onEdge = null, onArtist = null }) {
+export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFavorite, isFavorite, onActivate = null, onQueueActivate = null, onEdge = null, onArtist = null }) {
   const viewport = $("song-list"); // the scroll container (overflow-y: auto, position: relative)
   const rowH = () => measureRow(viewport);
   // No spacer element: the full scroll height comes from a `#song-list::after` pseudo-element sized
@@ -177,7 +175,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
   let nowPlaying = null;
   let emptyState = null;   // {title, hint} shown when `songs` is empty — see renderWindow
   let closeSet = null;     // Set of the rows that are close matches (marked "≈"), or null
-  let chips = true;        // library.showSource, read once per window render
   // Roving tabindex: exactly ONE row is a tab stop, and the arrow keys move which. Without
   // this the 65k-row list was unreachable by keyboard entirely — you could Tab to the search
   // box and every button around it, but never to a song, which on a ten-foot app driven from
@@ -219,7 +216,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     li.dataset.index = i;
     li.innerHTML =
       `<span class="kind artist-ico" aria-hidden="true"></span>` +
-      `<span class="num"></span>` +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
     li.querySelector(".kind").textContent = back ? "←" : "👤";
     const n = a && Number.isFinite(a.count) ? a.count : null;
@@ -238,8 +234,8 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     return li;
   }
 
-  // A row: kind icon · number (the songbook chip under it) · title / artist · [≈] · ★ · ＋.
-  // The number column is a fixed width so titles line up; the chip shares it, costing no width.
+  // A row: kind icon · title / artist · [≈] · ★ · ＋. (No song number or songbook chip since Rae
+  // removed them on 2026-11-24 — the search still finds a song by its number.)
   function makeSongRow(s, i, h) {
     const close = !!closeSet && closeSet.has(s);
     const li = document.createElement("li");
@@ -251,17 +247,7 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
     li.dataset.index = i;
     li.innerHTML =
       kindSpan(s) +
-      `<span class="num"><span class="code"></span></span>` +
       `<span class="meta"><span class="title"></span><span class="artist"></span></span>`;
-    li.querySelector(".code").textContent = hasCode(s) ? String(s.code) : "";
-    if (chips && s.source) {
-      const chip = document.createElement("span");
-      chip.className = "src-chip";
-      chip.dataset.src = s.source;
-      chip.textContent = s.source;
-      chip.title = `Songbook: ${s.source}`;
-      li.querySelector(".num").appendChild(chip);
-    }
     li.querySelector(".title").textContent = s.name || "(untitled)";
     li.querySelector(".artist").textContent = s.artistName || "";
     if (close) {
@@ -328,7 +314,6 @@ export function createLibraryUI({ onPlay, onQueue, onRemoveFromQueue, onToggleFa
       viewport.replaceChildren(li);
       return;
     }
-    chips = !!showSource();
     const vh = viewport.clientHeight || 1;
     const top = viewport.scrollTop;
     const h = rowH();

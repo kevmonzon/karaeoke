@@ -26,7 +26,6 @@ export const OVERLAY_DEFS = Object.freeze({
   mixer:     def("panel",  true,  "panel",  40),
   settings:  def("panel",  true,  "panel",  40),
   song:      def("sheet",  true,  "sheet",  50),
-  recap:     def("dialog", true,  "dialog", 60),
   calibrate: def("dialog", true,  "dialog", 60),
   confirm:   def("dialog", true,  "dialog", 70),
 });

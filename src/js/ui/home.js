@@ -14,7 +14,6 @@ export const HOME_TILES = Object.freeze([
   tile("rankings", "Rankings", "i-up"),
   tile("favorites", "Favorites", "i-star"),
   tile("queue", "Queue", "i-queue"),
-  tile("tonight", "Tonight", "i-melody"),
   tile("settings", "Settings", "i-settings"),
 ]);
 

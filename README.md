@@ -42,7 +42,7 @@ offline after first-run setup.
 | 🎹 | **MIDI synthesis** via SpessaSynth (WebAssembly + AudioWorklet) — no external audio files per song |
 | 🖥️ | **Stage-first everywhere** — one full-screen stage on every device; Songs, Queue, Mixer and Settings slide in from the right, one control bar hides while you sing, and a home screen (tiles + QR) shows when nothing is playing |
 | 📜 | **Videoke lyrics** — two fixed rows that take turns, outlined text and a count-in after each break (or the classic smooth-scrolling column), with a per-syllable wipe parsed from each song's own MIDI meta events |
-| 🔎 | **Forgiving search** — typo-tolerant (≈ close matches), a number finds that number in **every songbook** (SH, PLATKAR, TJMEDIA, MIDI), plus **Artists** and **Rankings** tabs, songbook/type chips and sorting |
+| 🔎 | **Forgiving search** — typo-tolerant (≈ close matches), a number finds that number in **every songbook** (SH, PLATKAR, TJMEDIA, MIDI), plus **Artists** and **Rankings** tabs |
 | 🎮 | **TV remote / D-pad / keyboard** — everything works with arrows, OK and Back alone; colour keys, media keys and number keys are shortcuts |
 | 🎙️ | **Live microphone** mixed with the music: echo, reverb, chorus, pitch-shift, **real-time auto-tune**, feedback/noise control, and a **latency calibration** |
 | 🏆 | **Score** — every note judged (PERFECT … MISS) against the song's own guide melody, three difficulties, a full-stage score card and a **leaderboard** |
@@ -55,8 +55,8 @@ offline after first-run setup.
 | 🎞️ | **Video karaoke** — drop in `.mp4`/`.webm` files; play full-stage with real-time **key change** + volume >100% |
 | 🎵 | **Audio + lyrics** — drop a recorded audio file + a matching `.lrc`/`.kar`/`.vtt`/`.txt` sidecar; plays with lyrics + a **real-time key change** |
 | 🌐 | **YouTube karaoke search (BYOC)** — optionally find & play karaoke videos from YouTube (Chromium-only; needs a network) |
-| 📱 | **Phone remote** — guests scan a QR to search, reserve and control from their phones, with **instant updates**, the TV's lyrics on their own screen, and a number pad |
-| 🎉 | **Party features** — fair-play queue ordering, a per-guest song cap, emoji reactions that float on the screen, and a recap of the night |
+| 📱 | **Phone remote** — guests scan a QR to search, reserve and control from their phones, with **instant updates**, and the TV's lyrics on their own screen |
+| 🎉 | **Party features** — fair-play queue ordering, a per-guest song cap and emoji reactions that float on the screen |
 | 💾 | **Runs locally** — after first-run setup your MIDI & video songs play with **no network** (the soundfont + song files are cached in the browser) |
 
 > **About:** *Ka-Rae-oke* is an independent, client-side karaoke player, reconstructed for
@@ -170,8 +170,9 @@ Example: `1 - Bryan Chong - Tahan - International - MIDI.mid`
 
 - `code` is the videoke **dial number**. It is not unique: the same number can exist in several
   songbooks, and a number search lists them all (§6).
-- `songbook` is one of **SH**, **PLATKAR**, **TJMEDIA** or **MIDI** — it is shown on each song row
-  and can be filtered with the Songbook chips. SH and PLATKAR files carry no language field:
+- `songbook` is one of **SH**, **PLATKAR**, **TJMEDIA** or **MIDI** — a number search lists the
+  songbooks in that order, and typing a songbook's name finds its songs. SH and PLATKAR files carry
+  no language field:
   `{code} - {artist} - {title} - SH.kar`. A file with no songbook tag still catalogs (it just has
   no songbook).
 - These payloads may be **raw-DEFLATE-compressed MIDI**; the app inflates them
@@ -180,9 +181,9 @@ Example: `1 - Bryan Chong - Tahan - International - MIDI.mid`
 Then **rebuild the catalog** (see 5.4).
 
 > 🔁 **Upgrading from an older version?** Rebuild the catalog once (⚙ → Sources → Library →
-> ↻ Rebuild Catalog). Older catalogs have no songbooks, so the Songbook chips and the songbook
-> under each number stay empty until you do — and some SH / PLATKAR songs listed with "SH" or
-> "PLATKAR" as their title get their real titles back.
+> ↻ Rebuild Catalog). Older catalogs have no songbooks (so a number search can't order them by
+> songbook) until you do — and some SH / PLATKAR songs listed with "SH" or "PLATKAR" as their title
+> get their real titles back.
 
 ### 5.2 Video karaoke → `data/videos/`
 
@@ -273,7 +274,7 @@ with the lyrics, and everything else on top of it.
 - **The queue bar** (top of the stage) shows the song, artist, singer and key, and a **⏭ N** badge
   for the songs waiting — tap it to open the queue.
 - **The home screen** appears whenever nothing is loaded: the **Ka-Rae-oke** logo, tiles (**Songs,
-  Artists, Rankings, Favorites, Queue, Tonight, Settings**) and, while the phone remote is on, a
+  Artists, Rankings, Favorites, Queue, Settings**) and, while the phone remote is on, a
   big **QR + room code** for guests. It never flashes between queued songs.
 - **Size it for the room** with **⚙ → Display → Font size** (Extra small / Small / Medium /
   Large). **Extra small** is for a desk monitor with a mouse: its buttons are smaller than a
@@ -295,21 +296,18 @@ number).
   3. **Close matches**, marked **≈** — words a typo or two away (`barcelna` → Barcelona). They are
      looked for only when the exact list is short and a word has 4+ letters, and always come after
      the exact ones (⚙ → Sources → Library → **Also show close matches (typos)**).
-- Each row shows the song's **number** with its **songbook** under it (hide that with **Show
-  songbook on each row**).
+- Rows show the **title and artist** only — no song numbers on screen. Typing a number still finds
+  the song.
 - **Enter** in the search box takes the top row: by default it **reserves** it while a song is
   playing and **plays it at once** when the stage is idle (⚙ → Sources → Library → **Enter in
   search**: also *Always reserve* or *Always play now*).
 - **Tabs — All · Artists · Rankings.** *Artists* lists every artist with a song count (Enter opens
   their songs, with **← Artists** on top to go back; typing filters the names). *Rankings* is the
   leaderboard (see Score below).
-- **Chips and sort.** *Songbook* (All · SH · PLATKAR · TJMEDIA · MIDI) and *Type* (🎤 MIDI · 🎵 Audio
-  · 🎞️ Video) chips filter every list on the All and Artists tabs — only the songbooks and types in
-  your library appear. The sort menu orders a list by **Relevance**, **Title**, **Artist** or
-  **Number**. Tabs, chips and sort reset when the page reloads.
+- The list always shows **every song**, best match first — there are no category filters or sort
+  menu. The tab resets to All when the page reloads.
 - The **★ Favorites** and **⟲ Recent** pills toggle those lists; the **🌐** pill toggles **YouTube
-  search** (on by default; it still only queries when your local results are thin, and not while a
-  chip is on); **123** shows the number pad.
+  search** (on by default; it still only queries when your local results are thin).
 - **Tap, click or press Enter on a song** to open its **action sheet**: **Reserve** (add to the
   queue), **Play next** (first in the queue), **Play now**, **★ Favorite**, **Cancel**. A
   double-click does *not* play — Play now is one tap in the sheet. The row's own **★** and **＋**
@@ -319,18 +317,15 @@ number).
   **Clear all** empties the queue after asking. The queue advances by itself between songs (MIDI,
   audio, video and YouTube alike).
 
-### 🔢 Song numbers (number keys & the 123 pad)
-Press a **digit** anywhere on the stage — a keyboard's number row, the numpad or a TV remote's
-number keys — and **Songs** opens with it in the search box, listing every songbook's song with
-that number. Keep typing, then **Enter** takes the top row (as above) — or press **↓** to move
-down to a particular songbook's row and **Enter** for its action sheet. The song keeps playing
-meanwhile. A panel opened this way that still holds
-only a number closes by itself after **8 s** with no key or tap (⚙ → Sources → Library → **Clear
-an untouched song number after**); a panel you opened yourself never does.
-
-No number keys? The **123** pill beside the search box shows an on-screen pad: **1–9, 0, ⌫, ⏎**
-(⏎ = Enter). Phones have the same pad (see the remote, below). **Number keys open the song search**
-turns all of this off.
+### 🔢 Song numbers (number keys)
+Song numbers are not shown on screen, but they still work for anyone dialing from a printed
+songbook: press a **digit** anywhere on the stage — a keyboard's number row, the numpad or a TV
+remote's number keys — and **Songs** opens with it in the search box, listing every songbook's song
+with that number. Keep typing, then **Enter** takes the top row (as above) — or press **↓** to move
+down to another row and **Enter** for its action sheet. The song keeps playing meanwhile. A panel
+opened this way that still holds only a number closes by itself after **8 s** with no key or tap
+(⚙ → Sources → Library → **Clear an untouched song number after**); a panel you opened yourself
+never does. **Number keys open the song search** turns this off.
 
 ### 🎮 TV remote, D-pad & keyboard
 Every screen works with **the arrows, OK (Enter) and Back** alone, so a TV remote or a game-pad
@@ -341,7 +336,7 @@ D-pad drives the whole app.
 - **Back** does one thing per press: clears a search box that has text, then closes the top panel
   or dialog, then hides the control bar. It never stops the song.
 - **Colour keys:** **Red** = Songs · **Green** = Queue · **Yellow** = next background ·
-  **Blue** = melody on/off. **Media keys** play, pause, stop, skip and restart; **Channel + / −**
+  **Blue** = melody volume (next level). **Media keys** play, pause, stop, skip and restart; **Channel + / −**
   change the key. The OS media controls (headset buttons, the lock screen) work too.
 - While you use the keys, short **key hints** appear at the bottom of the home screen and panels
   (⚙ → Display → **Show key hints**).
@@ -349,8 +344,9 @@ D-pad drives the whole app.
 Full list in [§8](#8-keyboard-shortcuts).
 
 ### Playback controls (the control bar)
-- **Restart**, **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (toggle the melody guide
-  vocal on/off), and **🎤 Mic**.
+- **Restart**, **Play/Pause** (or **Space**), **Next**, **🎵 Melody** (each press steps the melody
+  guide's volume: **Off → 25% → 50% → 75% → 100% → Off**; the bar under its note shows the level),
+  and **🎤 Mic**.
 - **Seek bar** — click/drag to scrub (the current / total time flank it).
 - **Key ±** — transpose in semitones (the resulting key is named next to it).
 - **Tempo ±** — 0.5×–1.5× playback rate (a −/＋ stepper, like Key).
@@ -361,7 +357,7 @@ Full list in [§8](#8-keyboard-shortcuts).
 
 Keep the bar up all the time with **⚙ → Display → Always show playback controls**, or change how
 long it waits with **Auto-hide after** (1–15 s, default 3 s). A change made from the keyboard or a
-TV remote flashes a short note on the stage ("Key +1", "Tempo 1.05×", "Melody off").
+TV remote flashes a short note on the stage ("Key +1", "Tempo 1.05×", "Melody 50%").
 
 ### Lyrics
 Two looks, under ⚙ → Display → Lyrics → **Style**:
@@ -433,10 +429,10 @@ turns the whole thing (or just the card, or golden notes) off. Bests and ranking
 browser.
 
 ### 🎼 Guide vocal
-Turn the detected **melody channel** up to learn a song, **mute** it to perform, or **solo**
-it to isolate the tune (⚙ → Singing → Score → *Guide vocal (melody)*). The **🎵** button on the
-control bar — and **M**, the Blue key, and the **Melody** toggle on the phone remote — is a quick
-mute/unmute for it.
+The detected **melody channel** has five volume levels — **Off, 25%, 50%, 75%, 100%** — up to learn
+a song, off to perform. The **🎵** button on the control bar (and **M** or the Blue key) steps to the
+next level; ⚙ → Singing → Score → *Guide vocal (melody)* → **Melody volume** picks one, and **Solo**
+isolates the tune. The **Melody** toggle on the phone remote turns it off and back on at its level.
 
 ### 🔊 Sound (the music)
 Under ⚙ → **Music**:
@@ -524,7 +520,7 @@ checking once a second by itself and tries the stream again a minute later. The 
 the state (**Phones: instant / connecting… / polling**), and so does the phone's **You** tab. Five tabs:
 - **Now** — the current song with restart, play/pause, next, seek, **key / tempo / volume** (tempo
   is a −/＋ stepper), a **🎵 Melody** On/Off toggle so a singer can silence the melody guide from
-  their phone (mirrors the host's 🎵 button), the live score, and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
+  their phone (on brings it back at the level the host's 🎵 button set), the live score, and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
 - **🎤 Lyrics** — the current song's lyrics **on your own phone**, in time with the room, in the
   same **Stage** look as the TV (or **Scroll** — pick it on the You tab). Handy when you're away from
   the TV, or reading ahead. Works for MIDI and audio+lyrics songs; video / YouTube songs have their
@@ -533,19 +529,12 @@ the state (**Phones: instant / connecting… / polling**), and so does the phone
   lyric offset moves everyone's).
 - **Search** — the TV's own search: numbers across every songbook, exact matches, then **≈** close
   matches; plus optional 🌐 YouTube. **Tap a song** for **Reserve**, **Play next** and **Play now** —
-  the last two only when the host allows them (see below). The **123** button shows the number pad.
+  the last two only when the host allows them (see below). Typing a number finds that song number.
 - **Queue** — the live queue with an "added by" name and a rough **"~7 min"** wait for each song,
   plus move up / down, remove, and **⤒ Play next** (when the host allows jumping the queue).
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size,
   **how the lyrics look on your phone** (lyric style, lyric lines 2–8 for Scroll, lyrics size
   70–180% — yours alone; the karaoke screen keeps its own layout), and the connection status + room code.
-
-**The phone's number pad.** With **Show guests' number typing on screen** on (the default), each key
-on a guest's pad also types into the **TV's** Songs search — it opens there with "📱 *nickname*"
-beside the number, without moving the TV's focus — and the guest's **⏎** reserves the TV's top row
-in their name (or plays it at once, if *Guests can play a song now* is on and nothing is playing).
-Off, the pad searches the phone's own list and ⏎ reserves its top result. Either way the host's
-reservation cap still counts.
 
 **What guests may do** — ⚙ → Sources → Remote:
 
@@ -554,7 +543,6 @@ reservation cap still counts.
 | **Instant updates** | on | the live event stream; off = phones check once a second |
 | **Guests can play a song now** | **off** | a guest's *Play now* stops whoever is singing, so it waits for the host's say-so |
 | **Guests can jump the queue** | on | a guest's *Play next* puts their song first; refused while **Fair play** is on, and counted against the per-guest cap |
-| **Show guests' number typing on screen** | on | the phone's pad types live into the TV's search (above) |
 
 A request the host doesn't allow is refused, and the phone says so ("not allowed by the host").
 
@@ -586,10 +574,6 @@ lyric monitor — the stage lyrics alone, no header or tabs.
 - **Reactions** (⚙ → Sources → Reactions) — a guest taps 👏 🎉 🔥 ❤️ 😂 🙌 on their phone and it floats up
   the karaoke screen; 👏 also fires a burst of applause (synthesized — the app ships no audio
   files). Only those six can ever appear, since this is a stranger's phone drawing on your TV.
-- **Tonight's recap** (the home screen's **Tonight** tile, or ⚙ → Sources → Library → 🏆) — songs
-  sung, singers, and top scores for the night. A
-  six-hour gap starts a new night. Nothing is recorded or uploaded; it's the data the queue and
-  scorer already produce, kept in order.
 
 ### 💾 Backup & reset
 Your queue, recents, favorites, settings, scores, rankings, each song's learned loudness and
@@ -634,11 +618,11 @@ Defaults are in *italics*.
 | 🎵 **Music → Key detection** | Auto-detect key (*on*) · Show key by title (*on*) |
 | 🎵 **Music → Chords** | Show chord lane (*off*) · Simplify (*off*) |
 | 🎤 **Singing → Pitch guide** | Show pitch guide (*on*) · Look-ahead (2 – 10 s, *5 s*) · Band height · Melody channel (*auto* or 1 – 16) · Overlay my pitch (*on*) · Soft pitch trail (*on*) · Live score on the guide (*on*) |
-| 🎤 **Singing → Score** | Score my singing (*on*) · Score card when a song ends (*on*) · Golden notes count double (*on*) · Feedback while singing (*Per note* / Per line / Both / Off) · Difficulty (Easy / *Normal* / Hard, from the next song) · Keep rankings (*on*) · Host singer name (*Host*) · Guide vocal: Volume (0 – 200%, *100%*), Mute melody, Solo melody (*off*) |
+| 🎤 **Singing → Score** | Score my singing (*on*) · Score card when a song ends (*on*) · Golden notes count double (*on*) · Feedback while singing (*Per note* / Per line / Both / Off) · Difficulty (Easy / *Normal* / Hard, from the next song) · Keep rankings (*on*) · Host singer name (*Host*) · Guide vocal: Melody volume (Off / 25% / 50% / 75% / *100%*), Solo melody (*off*) |
 | 🎤 **Singing → Microphone & voice** | Enable microphone · Mic volume (0 – 150%, *90%*) · Echo cancellation (*on*) · Noise suppression (*on*) · Auto gain (*off*) · High-pass (*on*) · Noise gate (*on*) · Gate threshold (−70 – −20 dB, *−50 dB*) · Mic latency (0 – 500 ms, *100 ms*) + **Calibrate…** · Echo / Reverb / Chorus (*off*) with their mix · Pitch shift (*off*, ±12 st) · Auto-tune (*off*) · Strength (*100%*) · Snap to (*Melody guide* / Key / scale / Chromatic) · Key (*Auto (detected)* / C … B) · Scale (*Major* / Minor / Pentatonic / Chromatic) |
 | 🔎 **Sources → YouTube search** | Enabled (*on*; also the 🌐 pill) · Query YouTube when local has (fewer than 1 – 10 hits, or always; *< 2*) · Debounce (0.5 – 10 s, *3 s*) · Max results (5 – 40, *20*) · Append keyword (*karaoke*) |
-| 🔎 **Sources → Remote** | Enabled (*on*) · QR on the stage (*When idle* / Always / Never) · URL override (*blank = auto-detect*) · Instant updates (*on*) · Guests can play a song now (***off***) · Guests can jump the queue (*on*) · Show guests' number typing on screen (*on*) |
-| 🔎 **Sources → Library** | Also show close matches (typos) (*on*) · Enter in search (*reserve while singing, play when idle* / Always reserve / Always play now) · Show songbook on each row (*on*) · Number keys open the song search (*on*) · Clear an untouched song number after (3 – 30 s, *8 s*) · the live song count · ↻ Rebuild Catalog · 🏆 Tonight's recap |
+| 🔎 **Sources → Remote** | Enabled (*on*) · QR on the stage (*When idle* / Always / Never) · URL override (*blank = auto-detect*) · Instant updates (*on*) · Guests can play a song now (***off***) · Guests can jump the queue (*on*) |
+| 🔎 **Sources → Library** | Also show close matches (typos) (*on*) · Enter in search (*reserve while singing, play when idle* / Always reserve / Always play now) · Number keys open the song search (*on*) · Clear an untouched song number after (3 – 30 s, *8 s*) · the live song count · ↻ Rebuild Catalog |
 | 🔎 **Sources → Queue** | Fair play (*off*) · Max reservations per guest (*off*, 1 – 6) |
 | 🔎 **Sources → Reactions** | Let phones send reactions (*on*) · Play applause (*on*) |
 | **Below the categories** | Reset to defaults · **Backup** — ⭳ Export app data / ⭱ Import app data… (every setting and library list as one JSON file) · Erase all app data |
@@ -861,11 +845,11 @@ karaoke-clone/
     │                              score-presentation),
     │                            library & search (catalog · compact-catalog · search-core · search-client ·
     │                              library-ui · library-view · library-browse · rankings · duration-hints),
-    │                            the night (queue · queue-order · session · recap · reactions · backgrounds),
+    │                            the night (queue · queue-order · session · reactions · backgrounds),
     │                            remote (remote-host · remote-glue · remote-push · remote [phone] · sync-clock),
     │                            settings & storage (settings · settings-ui · store · asset-cache)
     │   ├── ui/               ← the stage-first shell and the keys: overlay-stack · overlays-dom · shell ·
-    │   │                        home · song-sheet · browse-ui · numpad · calibrate-ui ·
+    │   │                        home · song-sheet · browse-ui · calibrate-ui ·
     │   │                        keymap · actions · spatial-nav · nav-dom · input-mode
     │   ├── workers/          ← pitch-worker (pitch detection) · search-worker (the typo index)
     │   └── worklets/         ← mic-dsp (noise gate + pitch shift) · capture (calibration's raw mic)
@@ -890,7 +874,7 @@ karaoke-clone/
 | **No sound when a MIDI song plays** | The first play loads the 31 MB soundfont — wait a few seconds. If still silent, check `data/soundfont.sf2` exists (re-run setup) and that your OS volume/output is right. |
 | **"Invalid MIDI Header! Expected 'MThd'…"** | A song file isn't valid MIDI. The app handles compressed MIDI automatically; a truly corrupt file should be removed from `kar_raw/`. |
 | **Search is empty / song missing** | Rebuild the catalog (⚙ → Sources → Library → ↻ Rebuild Catalog, or `python tools/build-catalog.py`). |
-| **No songbook chips / no songbook under the numbers / songs titled "SH" or "PLATKAR"** | The catalog predates songbooks — rebuild it once (as above). |
+| **A number search doesn't list songbooks in order / songs titled "SH" or "PLATKAR"** | The catalog predates songbooks — rebuild it once (as above). |
 | **A double-click doesn't play the song any more** | By design: a click or tap opens the song's action sheet, and **Play now** is one tap there. |
 | **Browser zoom doesn't make the stage bigger** | The stage sizes itself from the screen. Use ⚙ → Display → **Font size** (and **Lyrics size** for the lyrics alone). |
 | **The TV cuts off the edges** | ⚙ → Display → **Overscan** moves the stage in from the edges. |

@@ -1,36 +1,34 @@
 /*
- * browse-ui.js — the Songs panel's browse controls: tabs, filter chips, sort, the rankings table
- * (M6, plan §5.6 / §5.7 / §5.9).
+ * browse-ui.js — the Songs panel's browse controls: the tabs and the rankings table
+ * (M6, plan §5.7 / §5.9).
  *
- * CONTRACT STUB written by the orchestrator. Lane C fills the bodies; the exports, names and
- * signatures are the contract lane I codes against — do not change them.
+ * It owns ONLY: the tabs inside tabsEl and the rankings view inside paneEl. It does NOT draw songs
+ * or artists — the virtual list (#song-list, library-ui.js) does (R8). It never persists anything
+ * (view state resets on reload). It never touches the overlay stack: "Clear" only calls
+ * onClearRankings. The songbook / type chips and the sort select that used to sit under the tabs
+ * were removed (2026-11-24): the list always shows every song, in Relevance order. The player /
+ * difficulty chips inside the rankings view are the rankings' own filters and stay.
  *
- * It owns ONLY: the tabs inside tabsEl, the chips and the sort <select id="browse-sort"> inside
- * chipsEl, and the rankings view inside paneEl. It does NOT draw songs or artists — the virtual
- * list (#song-list, library-ui.js) does (R8). It never persists anything (view state resets on
- * reload). It never touches the overlay stack: "Clear" only calls onClearRankings.
- *
- * Implementation notes (lane C):
- *   - Every element is built once and then only updated: the tabs at the first render(), the chip
- *     groups' shells and the sort select at the first render(), the rankings view's shell the first
- *     time it is shown. Only the chips themselves (when the present values change) and the table's
- *     rows are rebuilt. When a rebuild removes the focused chip, focus moves to the chip with the
- *     same value, else the group's next sensible stop, else the selected tab — never to <body>.
- *   - One delegated listener per container, added at construction (click / change / keydown).
+ * Implementation notes:
+ *   - Every element is built once and then only updated: the tabs at the first render(), the
+ *     rankings view's shell the first time it is shown. Only the rankings chips (when the players /
+ *     difficulties change) and the table's rows are rebuilt. When a rebuild removes the focused
+ *     chip, focus moves to the chip with the same value, else the view's next sensible stop, else
+ *     the selected tab — never to <body>.
+ *   - One delegated listener per container, added at construction (click / keydown).
  *     No inline handlers, no inline styles, no innerHTML: every string goes through textContent.
  *   - The DOM surface used: createElement, setAttribute, textContent, appendChild,
  *     replaceChildren (else textContent + appendChild), addEventListener, hidden, parentElement.
- *     Feature-detected: doc.activeElement, el.focus, el.contains, select.value / selectedIndex,
- *     scrollTop / clientHeight / scrollHeight, getBoundingClientRect, Intl.DateTimeFormat.
- *   - Callbacks fire only on a real change (a click on the selected tab, or on "All" with no
- *     songbook chip on, reports nothing). setTab(id) for the tab already shown is a no-op.
- *     render() and reset() fire no callbacks; read `filters` / `sort` / `tab` after them.
+ *     Feature-detected: doc.activeElement, el.focus, el.contains, scrollTop / clientHeight /
+ *     scrollHeight, getBoundingClientRect, Intl.DateTimeFormat.
+ *   - Callbacks fire only on a real change (a click on the selected tab reports nothing).
+ *     setTab(id) for the tab already shown is a no-op. render() and reset() fire no callbacks;
+ *     read `tab` after them.
  *   - The rankings table scrolls inside its own region (.rank-scroll, tabindex 0, role region):
  *     with focus on it ArrowUp / ArrowDown scroll it and are prevented; at the top / bottom they
  *     are released, so the D-pad router moves on (to the chips above, to Clear below).
  */
 
-import { KINDS, SORTS } from "../library-browse.js";
 import { DIFFICULTIES } from "../rankings.js";
 
 export const BROWSE_TABS = Object.freeze([
@@ -40,8 +38,6 @@ export const BROWSE_TABS = Object.freeze([
 ]);
 
 const TAB_IDS = BROWSE_TABS.map((t) => t.id);
-const SORT_IDS = SORTS.map((s) => s.id);
-const DEFAULT_SORT = SORT_IDS.includes("relevance") ? "relevance" : SORT_IDS[0];
 const MAX_ROWS = 50;
 const LIST_ID = "song-list";                       // what the All / Artists tabs control
 const EMPTY_TEXT = "No rankings yet — finish a song with scoring on.";
@@ -88,35 +84,23 @@ function formatDate(at) {
 /**
  * @param {object} o
  * @param {HTMLElement} o.tabsEl   #browse-tabs   (role=tablist; this module fills it and unhides it)
- * @param {HTMLElement} o.chipsEl  #filter-chips  (this module fills it and unhides it on All/Artists)
  * @param {HTMLElement} o.paneEl   #browse-pane   (the rankings view; shown only on the Rankings tab)
- * @param {() => {sources: string[], kinds: string[]}} o.getFacets   library-browse presentFacets of the catalogue
  * @param {(f: {player: string, difficulty: string}) => {rows: object[], players: string[], difficulties: string[]}} o.getRankings
  * @param {(id: string) => void} [o.onTab]            after the tab changed (by a click, a key or setTab)
- * @param {(f: {sources: Set<string>, kinds: Set<string>}) => void} [o.onFilters]   after a chip changed
- * @param {(mode: string) => void} [o.onSort]          after the sort changed
  * @param {() => void} [o.onClearRankings]             the rankings view's "Clear" button
  * @param {Document} [o.doc]
  * @returns {{
- *   render(): void,          // (re)build tabs, chips (from getFacets) and the sort select; keeps the
- *                            // current tab / filters / sort where still valid; unhides tabsEl/chipsEl
+ *   render(): void,          // build the tabs (once) and unhide tabsEl; keeps the current tab
  *   setTab(id: string): void,// programmatic switch (home tiles); calls onTab
  *   readonly tab: string,    // "all" | "artists" | "rankings"
- *   readonly filters: {sources: Set<string>, kinds: Set<string>},   // copies; empty Set = no filter
- *   readonly sort: string,   // library-browse SORTS id
  *   refreshPane(): void,     // re-render the rankings view (a new ranking, a clear)
- *   reset(): void,           // tab all, no filters, sort relevance (no callbacks fired)
+ *   reset(): void,           // tab all, rankings filters All (no callbacks fired)
  * }}
  *
  * Tabs: <button role="tab" aria-selected aria-controls> in BROWSE_TABS order; a roving tabindex
  *   (selected = 0, others -1); ArrowLeft/ArrowRight move AND select (automatic activation) and call
  *   preventDefault; at the first/last tab the arrow is NOT prevented (the D-pad router moves on).
  *   Click selects.
- * Chips: two labelled groups — "Songbook" (All · each present source) and "Type" (each present kind,
- *   with its KINDS icon) — each chip a <button type="button" aria-pressed>. Multi-select; "All" clears
- *   the songbook chips and is pressed when none is; a group with no present values is not shown.
- *   Then the sort <select id="browse-sort"> with SORTS. Chips and sort are visible on All and
- *   Artists, hidden on Rankings.
  * Rankings view (paneEl): player chips (All + rankingPlayers) and difficulty chips (All + present
  *   difficulties), a table of at most 50 rows: # · Player · Song (title, artist under it) · Score ·
  *   Difficulty · Date (short, local), and a "Clear" button (hidden when there are no rows). An empty
@@ -126,8 +110,8 @@ function formatDate(at) {
  */
 export function createBrowseUI(o = {}) {
   const opts = o || {};
-  const { tabsEl, chipsEl, paneEl, getFacets, getRankings, onTab, onFilters, onSort, onClearRankings } = opts;
-  for (const [name, el] of [["tabsEl", tabsEl], ["chipsEl", chipsEl], ["paneEl", paneEl]]) {
+  const { tabsEl, paneEl, getRankings, onTab, onClearRankings } = opts;
+  for (const [name, el] of [["tabsEl", tabsEl], ["paneEl", paneEl]]) {
     if (!el || typeof el.appendChild !== "function" || typeof el.addEventListener !== "function") {
       throw new TypeError(`createBrowseUI: \`${name}\` is required`);
     }
@@ -135,16 +119,13 @@ export function createBrowseUI(o = {}) {
 
   // --- state (view state only: nothing here is ever persisted) -------------------------------
   let tab = "all";
-  const sources = new Set();
-  const kinds = new Set();
-  let sort = DEFAULT_SORT;
   let player = "";             // rankings filter, "" = all players
   let difficulty = "";         // rankings filter, "" = every difficulty
-  let rendered = false;        // render() has run (tabs + chips built, containers unhidden)
+  let rendered = false;        // render() has run (tabs built, tabsEl unhidden)
 
   // Every interactive element this module made → what it is. The delegated listeners and the
   // focus keeper both read it, so a stale element (from before a rebuild) is never acted on.
-  const owned = new Map();     // element → { kind: "tab"|"src"|"kind"|"sort"|"player"|"diff"|"clear"|"region", value }
+  const owned = new Map();     // element → { kind: "tab"|"player"|"diff"|"clear"|"region", value }
   const tabBtn = new Map();    // tab id → button
 
   // --- small DOM helpers ---------------------------------------------------------------------
@@ -265,13 +246,11 @@ export function createBrowseUI(o = {}) {
   /** Show what the current tab shows; render the rankings view when it is the one. */
   function applyTab() {
     if (tabsBuilt) paintTabs();
-    const before = [snapshot(chipsEl), snapshot(paneEl)];
-    chipsEl.hidden = !rendered || tab === "rankings";
+    const before = snapshot(paneEl);
     paneEl.hidden = tab !== "rankings";
     if (tab === "rankings") renderPane();
-    // focus left in a container that just went away moves to the selected tab
-    if (before[0] && chipsEl.hidden) settle(before[0], chipsEl, [selectedTabIfShown]);
-    if (before[1] && paneEl.hidden) settle(before[1], paneEl, [selectedTabIfShown]);
+    // focus left in the rankings view when it goes away moves to the selected tab
+    if (before && paneEl.hidden) settle(before, paneEl, [selectedTabIfShown]);
   }
 
   function selectTab(id, { focus = false } = {}) {
@@ -326,15 +305,7 @@ export function createBrowseUI(o = {}) {
     selectTab(TAB_IDS[next], { focus: true });
   });
 
-  // --- chips + sort ----------------------------------------------------------------------------
-  let chipsBuilt = false;
-  let srcGroup = null;
-  let kindGroup = null;
-  let srcLabel = null;
-  let kindLabel = null;
-  let sortSelect = null;
-  let facetSig = null;         // the present values the chips were last built from
-
+  // --- chips (the rankings view's player / difficulty filters) -------------------------------
   function labelledGroup(d, className, labelId, text) {
     const g = make(d, "div", `chip-group ${className}`);
     g.setAttribute("role", "group");
@@ -344,137 +315,14 @@ export function createBrowseUI(o = {}) {
     return [g, label];
   }
 
-  function chip(d, kind, value, label, { icon = "", title = "" } = {}) {
-    const b = make(d, "button", "chip");
+  function chip(d, kind, value, label, { title = "" } = {}) {
+    const b = make(d, "button", "chip", label);
     b.setAttribute("type", "button");
-    if (icon) {
-      const i = make(d, "span", "chip-icon", icon);
-      i.setAttribute("aria-hidden", "true");
-      add(b, i);
-      add(b, make(d, "span", "chip-text", label));
-    } else {
-      b.textContent = label;
-    }
     if (title) b.setAttribute("title", title);
     press(b, false);
     owned.set(b, { kind, value });
     return b;
   }
-
-  function buildChips() {
-    if (chipsBuilt) return;
-    chipsBuilt = true;
-    const d = D();
-    [srcGroup, srcLabel] = labelledGroup(d, "chip-group-src", "browse-lbl-src", "Songbook");
-    [kindGroup, kindLabel] = labelledGroup(d, "chip-group-kind", "browse-lbl-kind", "Type");
-    const sortWrap = make(d, "div", "browse-sort");
-    const sortLabel = make(d, "label", "chip-label", "Sort");
-    sortLabel.setAttribute("for", "browse-sort");
-    sortSelect = make(d, "select", "browse-sort-select");
-    sortSelect.setAttribute("id", "browse-sort");
-    for (const s of SORTS) {
-      const op = make(d, "option", "", s.label);
-      op.setAttribute("value", s.id);
-      op.value = s.id;
-      add(sortSelect, op);
-    }
-    owned.set(sortSelect, { kind: "sort", value: "" });
-    add(sortWrap, sortLabel);
-    add(sortWrap, sortSelect);
-    replace(chipsEl, [srcGroup, kindGroup, sortWrap]);
-  }
-
-  function readFacets() {
-    let f = null;
-    if (typeof getFacets === "function") {
-      try { f = getFacets(); } catch (e) { report(e); }
-    }
-    const present = new Set(strings(f && f.kinds));
-    return {
-      sources: strings(f && f.sources),
-      kinds: KINDS.filter((k) => present.has(k.id)).map((k) => k.id),
-    };
-  }
-
-  function rebuildChips(f) {
-    const sig = JSON.stringify([f.sources, f.kinds]);
-    if (sig === facetSig) return;
-    facetSig = sig;
-    const snap = snapshot(chipsEl);
-    const d = D();
-    const old = [];
-    for (const [el, info] of owned) if (info.kind === "src" || info.kind === "kind") old.push(el);
-    forget(old);
-
-    const srcChips = f.sources.length
-      ? [chip(d, "src", "", "All", { title: "Every songbook" }),
-        ...f.sources.map((s) => chip(d, "src", s, s, { title: `Songbook ${s}` }))]
-      : [];
-    const kindChips = f.kinds.map((id) => {
-      const k = KINDS.find((x) => x.id === id);
-      return chip(d, "kind", id, k.label, { icon: k.icon });
-    });
-    for (const c of srcChips) if (owned.get(c).value) c.setAttribute("data-src", owned.get(c).value);
-    for (const c of kindChips) c.setAttribute("data-kind", owned.get(c).value);
-    replace(srcGroup, [srcLabel, ...srcChips]);
-    replace(kindGroup, [kindLabel, ...kindChips]);
-    srcGroup.hidden = srcChips.length === 0;
-    kindGroup.hidden = kindChips.length === 0;
-    paintChips();
-    settle(snap, chipsEl, [
-      () => srcChips.find((c) => shownIn(c, chipsEl)) || null,
-      () => kindChips.find((c) => shownIn(c, chipsEl)) || null,
-      () => (sortSelect && shownIn(sortSelect, chipsEl) ? sortSelect : null),
-      selectedTabIfShown,
-    ]);
-  }
-
-  function paintChips() {
-    for (const [el, info] of owned) {
-      if (info.kind === "src") press(el, info.value === "" ? sources.size === 0 : sources.has(info.value));
-      else if (info.kind === "kind") press(el, kinds.has(info.value));
-    }
-  }
-
-  function syncSort() {
-    if (!sortSelect) return;
-    try { sortSelect.value = sort; } catch { /* a select without a writable value */ }
-    for (const op of sortSelect.children || sortSelect.options || []) {
-      if (op && typeof op === "object") op.selected = op.value === sort;
-    }
-  }
-  function readSort() {
-    if (!sortSelect) return sort;
-    if (typeof sortSelect.value === "string" && SORT_IDS.includes(sortSelect.value)) return sortSelect.value;
-    const ops = sortSelect.options || sortSelect.children || [];
-    const op = ops[sortSelect.selectedIndex];
-    return op && SORT_IDS.includes(op.value) ? op.value : sort;
-  }
-
-  const filtersCopy = () => ({ sources: new Set(sources), kinds: new Set(kinds) });
-
-  chipsEl.addEventListener("click", (ev) => {
-    const b = findOwned(ev && ev.target, "src", "kind");
-    if (!b) return;
-    const { kind, value } = owned.get(b);
-    if (kind === "src") {
-      if (value === "") {
-        if (sources.size === 0) return;     // All is already on: nothing changed
-        sources.clear();
-      } else if (sources.has(value)) sources.delete(value);
-      else sources.add(value);
-    } else if (kinds.has(value)) kinds.delete(value);
-    else kinds.add(value);
-    paintChips();
-    call(onFilters, filtersCopy());
-  });
-  chipsEl.addEventListener("change", (ev) => {
-    if (!sortSelect || !ev || ev.target !== sortSelect) return;
-    const mode = readSort();
-    if (mode === sort) return;
-    sort = mode;
-    call(onSort, mode);
-  });
 
   // --- the rankings view -----------------------------------------------------------------------
   let paneBuilt = false;
@@ -700,13 +548,6 @@ export function createBrowseUI(o = {}) {
   // --- the public surface --------------------------------------------------------------------
   function render() {
     buildTabs();
-    buildChips();
-    const f = readFacets();
-    for (const s of [...sources]) if (!f.sources.includes(s)) sources.delete(s);
-    for (const k of [...kinds]) if (!f.kinds.includes(k)) kinds.delete(k);
-    rebuildChips(f);
-    paintChips();
-    syncSort();
     rendered = true;
     tabsEl.hidden = false;
     applyTab();
@@ -724,14 +565,9 @@ export function createBrowseUI(o = {}) {
 
   function reset() {
     tab = "all";
-    sources.clear();
-    kinds.clear();
-    sort = DEFAULT_SORT;
     player = "";
     difficulty = "";
-    paintChips();
     paintPaneChips();
-    syncSort();
     applyTab();
   }
 
@@ -739,8 +575,6 @@ export function createBrowseUI(o = {}) {
     render,
     setTab,
     get tab() { return tab; },
-    get filters() { return filtersCopy(); },
-    get sort() { return sort; },
     refreshPane,
     reset,
   };

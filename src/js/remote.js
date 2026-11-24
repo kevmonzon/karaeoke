@@ -22,12 +22,10 @@
  * search worker. A song is named to the host as ref { i, code } — row i of the compact list is the
  * host's catalog.songs[i]; the host checks the code and falls back to a code lookup.
  *
- * NUMBER PAD (M8): the Search tab's `123` toggle shows the host's pad (ui/numpad.js). With the host's
- * live digits on (mirrored `remote.liveDigits`), every pad key also types into the karaoke screen's
- * Songs search (`digit` / `digit_delete` / `digit_clear`, sent strictly in order) and ⏎ is
- * `digit_commit` — the screen's top hit, in this guest's name; off, the pad types here only and ⏎
- * reserves this list's top hit with an ordinary `enqueue`. The toggle hides when the host turns the
- * pad off (mirrored `keypad.enabled`).
+ * NUMBERS: the phone has no number pad and never types onto the karaoke screen (M8's `123` pad and
+ * guests' live digits are gone), and it prints no song number — no dial code, no songbook chip.
+ * Digits typed into the search field still find songs by number (the number tier above). The code
+ * still travels inside ref { i, code }: it is how the host checks which song a row means.
  *
  * LYRICS: the host publishes a lyric DOCUMENT for the song it is playing (lyrics-doc.js); the
  * phone fetches it when `songRev` changes and renders it with the host's own engines (stage or
@@ -45,7 +43,6 @@ import { parseLyricsDoc } from "./lyrics-doc.js";
 import { syncClock, clockTime } from "./sync-clock.js";
 import { queueEta, formatEta } from "./queue-order.js";
 import { REACTIONS } from "./reactions.js";
-import { createNumpad, applyPadKey, digitsOnly } from "./ui/numpad.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", audio: "🎵", video: "🎞️", youtube: "🌐" };
@@ -101,17 +98,6 @@ let lyricRaf = 0;        // rAF handle — runs ONLY while the tab is visible (p
 let lyricStale = false;
 let clock = null;        // sync-clock state (see sync-clock.js)
 const LYRIC_RETRY_MS = [300, 700, 1500, 3000, 5000];   // the host publishes right after a song loads
-// --- Search tab: the number pad (M8) -----------------------------------------
-let numpad = null;       // createNumpad over #r-numpad
-let padOpen = false;     // the 123 toggle (this page's life only; never persisted)
-let liveField = "";      // what the karaoke screen's search should hold after our digit commands
-let liveAt = -Infinity;  // performance.now() of the last digit command sent
-let digitChain = Promise.resolve();   // digit commands go out one at a time, in order
-// A pad key this long after the previous one first re-types the whole number on the screen: the
-// host may have cleared its field meanwhile (its idle clear is 3–30 s, keypad.idleSec), and a ⏎
-// must never commit a different number than the one this phone shows.
-const PAD_RESYNC_MS = 2500;
-const ORDERED_SEND_MS = 2000;   // a stuck POST must not hold up the digits behind it for ever
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -123,7 +109,6 @@ async function boot() {
   wireNow();
   wireLyrics();
   wireSearch();
-  wirePad();
   wireSheet();
   wireSettings();
   wireReactions();
@@ -219,8 +204,7 @@ function showGate(msg) {
   syncPolling();
   clearInterval(uiTimer); uiTimer = null;
   state = null; lastRev = -1; lastEventAt = -Infinity;
-  liveField = ""; liveAt = -Infinity;   // the next room's screen starts from a re-typed number
-  clock = null;            // stop the lyric clock free-running behind the gate
+  clock = null;           // stop the lyric clock free-running behind the gate
   resetLyrics();
   closeSheet();
   document.body.classList.remove("connected");
@@ -378,7 +362,7 @@ function applyView(d) {
   lastEventAt = stamp / 1000;
   reconcile();     // drop optimistic overrides the host has now caught up to
   refreshClock();
-  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); renderPad(); refreshLyrics();
+  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); refreshLyrics();
   showNotice(d.notice);
   followHostPush(d.settings);   // after the view is applied: it may have come over the stream it stops
   renderConn();
@@ -423,37 +407,20 @@ function applyTick(t) {
 // when the host comes back. renderConn shows "waiting".
 function noRoom() {
   state = null; clock = null;
-  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); renderPad(); refreshLyrics();
+  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); refreshLyrics();
   renderConn();
 }
 
 // Send an intent to the host — always carries the guest nickname AND the room code (gated).
-const commandInit = (obj, code) => ({
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ ...obj, by: prefs.nickname || "", room: code }),
-});
 function cmd(obj) {
   if (!room) return;
   try {
-    fetch("/api/remote/command", commandInit(obj, room))
-      .then(() => { if (pushStatus !== "push") poll(); }).catch(() => {});   // push delivers the result itself
+    fetch("/api/remote/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...obj, by: prefs.nickname || "", room }),
+    }).then(() => { if (pushStatus !== "push") poll(); }).catch(() => {});   // push delivers the result itself
   } catch (_) {}
-}
-
-// The same, but strictly in order: each waits for the previous one's answer (or ORDERED_SEND_MS).
-// Separate fetches may travel on separate connections and reach the relay out of order, and for
-// digits order IS the meaning — "1 2 3" landing as "1 3 2" would put a different song on the screen.
-// The room is captured now, so a digit typed in one room is never delivered to the next.
-function cmdInOrder(obj) {
-  const code = room;
-  if (!code) return;
-  digitChain = digitChain.then(() => {
-    let sent;
-    try { sent = fetch("/api/remote/command", commandInit(obj, code)).catch(() => {}); }
-    catch (_) { return undefined; }
-    return Promise.race([sent, new Promise((r) => setTimeout(r, ORDERED_SEND_MS))]);
-  }).then(() => { if (pushStatus !== "push" && room) poll(); }, () => {});
 }
 
 // The host's read-only gates, mirrored in its settings (absent on an older host: allowed).
@@ -574,7 +541,7 @@ function showTab(name) {
   activeTab = name;
   for (const p of document.querySelectorAll(".panel")) p.classList.toggle("active", p.id === `tab-${name}`);
   for (const b of document.querySelectorAll(".tabbar .tab")) b.classList.toggle("active", b.dataset.tab === name);
-  if (name === "search" && !padOpen) $("r-search").focus();   // an open pad stands in for the keyboard
+  if (name === "search") $("r-search").focus();
   if (name === "queue") renderQueue();
   // Lyrics are fetched + animated ONLY while their tab is on screen (no wasted fetch/rAF).
   syncLyricLoop();
@@ -916,126 +883,17 @@ function setLyricHead(now, note) {
 // ---------------------------------------------------------------------------
 let searchGen = 0;
 let results = { q: "", rows: [], close: [], yt: [], looking: false };
-let searchDeb = null;      // the typing debounce (the pad's keys ride it too)
-const SEARCH_DEBOUNCE_MS = 150;
 
 function wireSearch() {
   const input = $("r-search");
-  input.oninput = () => { clearTimeout(searchDeb); searchDeb = setTimeout(() => runSearch(input.value), SEARCH_DEBOUNCE_MS); };
+  let deb;
+  input.oninput = () => { clearTimeout(deb); deb = setTimeout(() => runSearch(input.value), 150); };
   // Enter: search now and drop the keyboard so the results are visible.
-  input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(searchDeb); runSearch(input.value); input.blur(); } };
+  input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(deb); runSearch(input.value); input.blur(); } };
   $("r-yt").onclick = () => { ytOn = !ytOn; $("r-yt").classList.toggle("on", ytOn); runSearch(input.value); };
 }
 
 function refreshSearch() { runSearch($("r-search").value); }
-
-// --- the number pad ------------------------------------------------------------------------
-// The host's mirrored switches; absent (an older host, or before the first view) = on.
-const padAllowed = () => hostSetting("keypad.enabled") !== false;
-const liveDigits = () => hostSetting("remote.liveDigits") !== false;
-
-function wirePad() {
-  numpad = createNumpad({ el: $("r-numpad"), onKey: onPadKey });
-  numpad.render();
-  $("r-numpad-toggle").onclick = () => setPadOpen(!padOpen);
-  renderPad();
-}
-
-function setPadOpen(open) {
-  padOpen = !!open && padAllowed();
-  renderPad();
-  if (padOpen) $("r-search").blur();   // the pad replaces the on-screen keyboard
-}
-
-// The toggle follows the host's keypad.enabled live; the hint says where the digits go.
-function renderPad() {
-  if (!numpad) return;
-  const allowed = padAllowed();
-  if (!allowed) padOpen = false;
-  const toggle = $("r-numpad-toggle");
-  toggle.hidden = !allowed;
-  toggle.setAttribute("aria-pressed", String(padOpen));
-  if (padOpen) numpad.show(); else numpad.hide();
-  const hint = $("r-numpad-hint");
-  hint.hidden = !padOpen;
-  hint.textContent = liveDigits()
-    ? "Your number shows on the karaoke screen · ⏎ takes the top song"
-    : "Searching this phone · ⏎ reserves the top song";
-}
-
-// The field shows exactly what the pad typed; the list follows on the typing debounce, so a quick
-// "1 2 3" searches once (and, with 🌐 on, asks YouTube once) rather than per key.
-function setSearchField(value) {
-  $("r-search").value = value;
-  clearTimeout(searchDeb);
-  searchDeb = setTimeout(() => runSearch(value), SEARCH_DEBOUNCE_MS);
-}
-
-function onPadKey(key) {
-  if (!padOpen) return;   // a tap that raced the host hiding the pad (keypad.enabled off)
-  const raw = $("r-search").value;
-  if (!liveDigits()) { padLocal(raw, key); return; }
-  const field = digitsOnly(raw) ? raw.trim() : raw;   // " 12 " typed by hand is the number 12
-  // Typed text is this phone's own search (the screen only ever receives digits): a digit starts a
-  // new number, ⌫ edits the text here, and ⏎ reserves this list's top hit like the local pad.
-  if (field !== "" && !digitsOnly(field)) {
-    if (/^[0-9]$/.test(key)) padLive("", key);
-    else padLocal(field, key);
-    return;
-  }
-  padLive(field, key);
-}
-
-// Live digits: the key types here AND on the karaoke screen. The screen is re-typed from scratch
-// (clear + every digit) when this phone may no longer agree with it: the field changed without the
-// pad (the keyboard, the ✕), or the last pad key was long enough ago for the host to have cleared.
-function padLive(cur, key) {
-  const { value, enter } = applyPadKey(cur, key);
-  const inSync = liveField === cur && performance.now() - liveAt < PAD_RESYNC_MS;
-  if (enter) {
-    if (!digitsOnly(cur)) { showToast("Type a song number first", 1800); return; }
-    if (!inSync) retypeLive(cur);
-    cmdInOrder({ type: "digit_commit" });   // the host takes ITS top hit, in this guest's name
-    // The host clears its field after a commit, unless it refused it (a guest over the cap): the
-    // next number re-types from a clear either way rather than trust which one happened.
-    liveField = ""; liveAt = -Infinity;
-    const top = phoneTiers(cur).rows[0];
-    showToast(`Sent #${cur}${top ? `: ${top.name || "(untitled)"}` : ""}`, 1800);
-    setSearchField("");
-    return;
-  }
-  if (value === cur) return;                // ⌫ on an empty field: nothing to change, nothing to send
-  if (!inSync) retypeLive(value);
-  else if (key === "del") cmdInOrder({ type: "digit_delete" });
-  else cmdInOrder({ type: "digit", d: Number(key) });
-  liveField = value; liveAt = performance.now();
-  setSearchField(value);
-}
-
-function retypeLive(value) {
-  cmdInOrder({ type: "digit_clear" });
-  for (const ch of value) if (ch >= "0" && ch <= "9") cmdInOrder({ type: "digit", d: Number(ch) });
-}
-
-// Live digits off (or typed text): the pad edits this phone's search only; ⏎ reserves its top hit.
-function padLocal(field, key) {
-  const { value, enter } = applyPadKey(field, key);
-  if (enter) reserveTopHit(value);
-  else setSearchField(value);
-}
-
-// ⏎ with live digits off: an ordinary reservation of the first row this phone lists — the same
-// `enqueue` (ref + optimistic queue row) as the sheet's Reserve.
-function reserveTopHit(raw) {
-  const q = String(raw || "").trim();
-  if (!q) { showToast("Type a song number first", 1800); return; }
-  if (songbook !== "ready") { showToast("The songbook isn't loaded yet", 1800); return; }
-  if (results.q !== q) runSearch(q);        // the rows for exactly this query (close rows arrive later)
-  const top = results.rows[0] || results.close[0];
-  if (!top) { showToast(digitsOnly(q) ? `No song numbered ${q}` : "No matches", 1800); return; }
-  requestSong("enqueue", top);
-  setSearchField("");
-}
 
 // Tiers 1 and 2, as library-view.js searchTiers computes them on the host (mirrored here so the
 // phone does not import the host's list UI): a digits-only query lists every song numbered
@@ -1109,10 +967,8 @@ function renderResults() {
   else setSearchHint(looking ? "Looking for close spellings…" : "No matches.");
 }
 
-const hasCode = (s) => s.code !== "" && s.code != null;
-
-// A row: kind icon · number (the songbook chip under it) · title / artist · [≈]. One button:
-// a tap opens the song sheet.
+// A row: kind icon · title / artist · [≈]. No number column: the phone shows no song numbers
+// (a typed number still finds its songs). One button: a tap opens the song sheet.
 function songRow(s, close) {
   const li = document.createElement("li");
   li.className = "song" + (close ? " close-match" : "");
@@ -1121,16 +977,9 @@ function songRow(s, close) {
   b.className = "song-btn";
   b.setAttribute("aria-haspopup", "dialog");
   const icon = el("span", "kind", KIND_ICON[s.kind] || "🎵");
-  const num = el("span", "num");
-  num.appendChild(el("span", "code", hasCode(s) ? String(s.code) : ""));
-  if (s.source) {
-    const chip = el("span", "src-chip", s.source);
-    chip.title = `Songbook: ${s.source}`;
-    num.appendChild(chip);
-  }
   const meta = el("span", "meta");
   meta.append(el("span", "t", s.name || "(untitled)"), el("span", "a", s.artistName || ""));
-  b.append(icon, num, meta);
+  b.append(icon, meta);
   if (close) {
     // A glyph, not a colour: role="img" is what lets the aria-label name it.
     const mark = el("span", "close-mark", "≈");
@@ -1162,8 +1011,8 @@ function openSheet(song, opener) {
   sheetOpener = opener || null;
   $("sheet-kind").textContent = KIND_ICON[song.kind] || "🎵";
   $("sheet-title").textContent = song.name || "(untitled)";
-  const sub = [song.artistName || "", hasCode(song) ? `#${song.code}` : "", song.source || ""].filter(Boolean).join(" · ");
-  $("sheet-artist").textContent = sub;
+  // No song number and no songbook (Rae, 2026-11-24) — as on the TV's own sheet.
+  $("sheet-artist").textContent = song.artistName || "";
   renderSheet();
   $("sheet").hidden = false;
   document.body.classList.add("sheet-open");

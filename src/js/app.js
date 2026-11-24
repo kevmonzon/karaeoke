@@ -5,7 +5,7 @@
  * requestAnimationFrame loop (lyric sync, pitch guide, scoring, auto-tune), the
  * transport controls, and the "settings → app" glue (what each setting change
  * actually does). The page is ONE full-screen stage; everything above it (Songs, Queue,
- * Mixer, Settings, the recap, the control bar, the adjust toast) is an overlay of one stack:
+ * Mixer, Settings, the dialogs, the control bar, the adjust toast) is an overlay of one stack:
  *   - ui/overlay-stack.js : the stack's state (built here, shared by the two below)
  *   - ui/overlays-dom.js  : hidden / inert / scrim / focus / history for every overlay
  *   - ui/shell.js         : the control bar's ONE owner, idle / kind / playing, the status line
@@ -19,9 +19,9 @@
  * its own module; this file wires them together.
  */
 
-import { Catalog } from "./catalog.js";
+import { Catalog, digitsOnly } from "./catalog.js";
 import { AudioEngine } from "./audio.js";
-import { EQ_BANDS, eqGainsFor } from "./music-fx.js";
+import { EQ_BANDS, eqGainsFor, melodyLevel, melodyLevelSettings, nextMelodyLevel, melodyLevelLabel } from "./music-fx.js";
 import { createLoudnessMeter, createLoudnessStore, gainForDb, followGainDb } from "./loudness.js";
 import { VideoEngine } from "./video.js";
 import { YouTubeEngine } from "./youtube.js";
@@ -40,12 +40,10 @@ import { createSettingsUI } from "./settings-ui.js";
 import { createMidiMixer } from "./midi-mixer.js";
 import { createReactions } from "./reactions.js";
 import { createDurationHints } from "./duration-hints.js";
-import { createRecap } from "./recap.js";
 import { createScorePresentation, SCORE_CARD_MS } from "./score-presentation.js";
 import { createQueue } from "./queue.js";
 import { createSession } from "./session.js";
 import { createLibraryView, enterDecision } from "./library-view.js";
-import { presentFacets } from "./library-browse.js";
 import { createRankings } from "./rankings.js";
 import { createSearchClient } from "./search-client.js";
 import { createRemoteGlue } from "./remote-glue.js";
@@ -64,7 +62,6 @@ import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
-import { applyPadKey, digitsOnly, padBase, createNumpad } from "./ui/numpad.js";
 import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
 
 const $ = (id) => document.getElementById(id);
@@ -95,7 +92,7 @@ const libraryView = createLibraryView({
   searchClient,
   getFuzzy: () => settings.get("search.fuzzy"),
   fuzzyBelow: () => settings.get("search.fuzzyBelow"),
-  // M8: a number typed by a digit key, the pad or a guest is a song search — the All tab. The
+  // M8: a number typed by a digit key is a song search — the All tab. The
   // switch (onBrowseTab) draws that tab from the field's text, so typeDigits does not draw again.
   showAllTab: () => {
     if (browseTab() === "all") return false;
@@ -106,7 +103,6 @@ const libraryView = createLibraryView({
 const audio = new AudioEngine();
 const reactions = createReactions({ settings, audio });
 const durations = createDurationHints();
-const recap = createRecap();
 const score = createScorePresentation({ settings });
 const rankings = createRankings();   // the leaderboard (karaeoke.rankings.v1), one row per scored song
 // M10 (plan §5.20): each song's learned music loudness (karaeoke.loudness.v1) and the meter that
@@ -219,16 +215,13 @@ async function boot() {
   // M6: the Songs panel's tabs, songbook / kind chips, sort and the rankings table. It draws the
   // controls only; the list is still library-ui's, and what it shows is library-view's.
   browseUI = createBrowseUI({
-    tabsEl: $("browse-tabs"), chipsEl: $("filter-chips"), paneEl: $("browse-pane"),
-    getFacets: browseFacets,
+    tabsEl: $("browse-tabs"), paneEl: $("browse-pane"),
     getRankings: ({ player = "", difficulty = "" } = {}) => ({
       rows: rankings.top({ player, difficulty, limit: 50 }),
       players: rankings.players(),
       difficulties: rankings.difficulties(),
     }),
     onTab: onBrowseTab,
-    onFilters: (f) => { libraryView.setBrowse({ filters: f }); libraryView.rerender($("search").value); },
-    onSort: (mode) => { libraryView.setBrowse({ sort: mode }); libraryView.rerender($("search").value); },
     onClearRankings: () => { clearRankingsAsk(); },
   });
   // The one "what do you want to do with this song?" sheet. It only renders and reports the
@@ -236,7 +229,7 @@ async function boot() {
   songSheet = createSongSheet({ el: $("ov-song"), onAction: onSheetAction });
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onCalibrate: openCalibration, onEraseAll: eraseAllData,
-    onExportData: exportAppData, onImportData: importAppData, onShowRecap: () => overlays.open("recap"),
+    onExportData: exportAppData, onImportData: importAppData,
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({
@@ -264,7 +257,7 @@ async function boot() {
   applyTheme();          // color theme: dark / light / auto (follows the OS)
   applyOverscan();       // TV overscan inset → --overscan
   applyKeyHints();
-  applyKeypad();         // the "123" button + the home hint follow keypad.enabled
+  applyKeypad();         // the home hint follows keypad.enabled
   settingsUI.syncSettingsUI();
   applyBluetoothMode();
   // M10: hand the engine the music-bus settings now. It keeps them until its context and synth
@@ -276,7 +269,8 @@ async function boot() {
     const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
     setStatus(`${n.toLocaleString()} songs loaded — pick one to begin`);
     durations.load(); // learned song lengths → queue ETA on the phones
-    recap.load();        // tonight's performance log (reset after a long enough gap)
+    // "Tonight's recap" was removed (Rae, 2026-11-24): forget its stored log once.
+    try { localStorage.removeItem("karaeoke.recap.v1"); } catch { /* storage blocked */ }
     libraryView.loadYoutubeCache(); // re-register persisted YouTube songs so favorites/recent/queue resolve them
     libraryView.loadBlocked();      // hide videos that previously failed to embed
     libraryView.seedServerBlocklist();
@@ -358,7 +352,6 @@ function buildShell() {
   // action (openSheet renders the buttons before it opens the overlay).
   reg("song", { el: $("ov-song"), initialFocus: () => songSheet.firstButton() });
   reg("adjust", { el: $("ov-adjust") });
-  reg("recap", { el: $("recap"), initialFocus: () => $("recap-close"), onOpen: () => recap.render() });
   // The calibration dialog (M9) is built on first use (openCalibration), hence the closures:
   // focus its step's first button; any close (Back, the scrim, Cancel) stops a measurement.
   reg("calibrate", {
@@ -375,7 +368,7 @@ function buildShell() {
 
   home = createHome({
     el: $("home"),
-    enabled: ["songs", "artists", "rankings", "favorites", "queue", "tonight", "settings"],
+    enabled: ["songs", "artists", "rankings", "favorites", "queue", "settings"],
     onTile: openFromHome,
   });
   home.render();
@@ -410,7 +403,7 @@ function closeOverlay(id) {
 
 // A home tile opens the overlay it names. "Songs", "Artists" and "Rankings" are the Songs panel
 // on that tab (the tab is switched BEFORE the panel opens, so its initial focus sees it);
-// "Favorites" is the Songs panel in its Favorites view, on the All tab; "Tonight" is the recap.
+// "Favorites" is the Songs panel in its Favorites view, on the All tab.
 function openFromHome(id) {
   switch (id) {
     case "songs": showBrowseTab("all"); overlays.open("search"); break;
@@ -425,32 +418,23 @@ function openFromHome(id) {
       overlays.open("search");
       break;
     case "queue": overlays.open("queue"); break;
-    case "tonight": overlays.open("recap"); break;
     case "settings": overlays.open("settings"); break;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Browse (M6, plan §5.6 / §5.7 / §5.9): the Songs panel's tabs (All · Artists · Rankings), the
-// songbook / kind chips and the sort. browse-ui.js draws those controls and the rankings table;
-// the list is still the one virtual list (library-ui), and what it shows is library-view's. The
-// view state is never persisted: a reload starts on All, no chips, Relevance.
+// Browse (M6, plan §5.6 / §5.9): the Songs panel's tabs (All · Artists · Rankings). browse-ui.js
+// draws them and the rankings table; the list is still the one virtual list (library-ui), and what
+// it shows is library-view's — every song, best match first (the songbook / type chips and the
+// sort were removed on 2026-11-24). A reload starts on All.
 // ---------------------------------------------------------------------------
-let facets = null, facetsFor = null;   // presentFacets of the catalogue — once per catalog.songs array
-function browseFacets() {
-  if (facetsFor !== catalog.songs) { facets = presentFacets(catalog.songs); facetsFor = catalog.songs; }
-  return facets;
-}
 const browseTab = () => (browseUI ? browseUI.tab : "all");
 /** Switch the Songs panel to tab `id`; a no-op when it is already there (onBrowseTab does the work). */
 function showBrowseTab(id) { if (browseUI && browseUI.tab !== id) browseUI.setTab(id); }
 
-/** (Re)build the tabs and chips — after the catalogue loads and after a rebuild — and hand the
- *  browse state library-view must use over again (render() drops a chip the new catalogue lacks). */
+/** (Re)build the tabs — after the catalogue loads and after a rebuild. */
 function renderBrowse() {
-  if (!browseUI) return;
-  browseUI.render();
-  libraryView.setBrowse({ filters: browseUI.filters, sort: browseUI.sort });
+  if (browseUI) browseUI.render();
 }
 
 /** browse-ui's onTab: what the list shows on each tab. */
@@ -529,7 +513,7 @@ async function clearRankingsAsk() {
 
 // One leaderboard row per scored song (plan §5.9): the same condition as the score card (a
 // result exists), plus score.rankings. It reads `current` / `currentBy`, so it runs BEFORE
-// clearStage() like recap.log. It must never throw: endOfSong has to reach the queue hand-off.
+// clearStage(). It must never throw: endOfSong has to reach the queue hand-off.
 function logRanking(res) {
   if (!res || !current || !settings.get("score.rankings")) return;
   try {
@@ -555,7 +539,7 @@ function logRanking(res) {
 // that wants the router to take over (a list edge) does not. No key is handled twice.
 // Installed from buildShell, so the keys work while the catalogue is still loading.
 // ---------------------------------------------------------------------------
-const DIALOGS = new Set(["recap", "calibrate", "confirm"]);
+const DIALOGS = new Set(["calibrate", "confirm"]);
 // The song sheet is modal too: a panel shortcut must not open (or swap) a panel beneath it.
 const sheetOrDialogOnTop = () => { const t = stack.top(); return DIALOGS.has(t) || t === "song"; };
 // A single-line text field: it releases ArrowUp / ArrowDown (a text field owns only Left/Right).
@@ -603,12 +587,7 @@ function buildKeys() {
     tempoDown: () => adjustTempo(-0.05),
     offsetUp: () => { nudgeOffset(50); return true; },
     offsetDown: () => { nudgeOffset(-50); return true; },
-    melodyToggle: () => {
-      const mute = !settings.get("guide.vocal.mute");
-      settings.set("guide.vocal.mute", mute);   // → onSettingChanged → the 🎵 button's state
-      showAdjust(mute ? "Melody off" : "Melody on");
-      return true;
-    },
+    melodyToggle: () => { stepMelody(); return true; },   // the 🎵 key: the next of the five levels
     openSearch: () => {
       if (sheetOrDialogOnTop()) return false;       // a dialog / the song sheet is on top: not under it
       if (overlays.isOpen("search")) { $("search").focus(); return true; }
@@ -762,8 +741,8 @@ function adjustTempo(delta) {
   return true;
 }
 
-// The browse tabs / chips row is on screen (browse-ui unhides them once the catalogue loads).
-const browseControlsShown = () => [$("filter-chips"), $("browse-tabs")].some((el) => el && !el.hidden);
+// The browse tabs are on screen (browse-ui unhides them once the catalogue loads).
+const browseControlsShown = () => { const el = $("browse-tabs"); return !!el && !el.hidden; };
 
 // Type-to-search (§4.3): on a song row, a printable key moves focus to the search field BEFORE
 // the browser inserts the character, so the character lands there. Bubble phase on the panel:
@@ -797,38 +776,25 @@ function wireTypeToSearch() {
 }
 
 // ---------------------------------------------------------------------------
-// Song numbers (M8, plan §4.3 "Digits", §5.3, §5.12). The search field IS the number entry —
-// no buffer, no resolver, no sheet of its own: a digit on the stage opens Songs with it in the
-// field, the "123" pad types into the field, a guest's live digits type into it from a phone, and
-// M2's number tier lists every songbook's match. Enter / the pad's ⏎ take the top hit (takeTopHit).
+// Song numbers (M8, plan §4.3 "Digits", §5.3). The search field IS the number entry — no buffer,
+// no resolver, no sheet of its own: a number key on the stage (a TV remote) opens Songs with the
+// digit in the field, and M2's number tier lists every songbook's match; Enter takes the top hit
+// (takeTopHit). The on-screen 123 pad and guests' live digits were removed (Rae, 2026-11-24).
 // ---------------------------------------------------------------------------
-// The Songs panel was opened by a digit (local or a guest's): only such a panel idle-closes, and
+// The Songs panel was opened by a digit key: only such a panel idle-closes, and
 // only while it holds nothing but digits. A word typed, or the user moving onto a row, clears it.
 let digitOpened = false;
-let lastSearchInput = 0;    // ms of the last key / pointer inside #ov-search, or a guest's digit
-// Whose text the field holds: null = the host's (or nobody's); a string = the nickname of the
-// guest whose live digits these are ("" for a guest without one). A local key or pointer in the
-// panel takes the field over; a different guest's digit starts from an empty field.
-let digitGuest = null;
-let numpad = null;          // ui/numpad.js on #numpad, created on the first press of #btn-numpad
+let lastSearchInput = 0;    // ms of the last key / pointer inside #ov-search
 let focusedLast = null;     // the last element that took focus anywhere (see wireDigits)
 
 const keypadOn = () => !!settings.get("keypad.enabled");
 const digitChar = (d) => (/^[0-9]$/.test(String(d)) ? String(d) : null);
 const isRow = (el) => !!(el && el.closest && el.closest(".song"));
 
-/** Put `text` in the search field and run the search now. `by` = the guest typing ("" = host). */
-function typeIntoSearch(text, by = "") {
+/** Put `text` in the search field and run the search now. */
+function typeIntoSearch(text) {
   cancelSearchDebounce();   // a keystroke's pending render must not draw the older text over this
-  libraryView.typeDigits(text, { by });
-}
-
-/** The host takes the field over: a guest's nickname goes, their next digit starts afresh. */
-function takeOverDigits() {
-  if (digitGuest === null) return;
-  digitGuest = null;
-  const who = $("search-who");
-  if (who) { who.hidden = true; who.textContent = ""; }
+  libraryView.typeDigits(text);
 }
 
 function focusSearchField() {
@@ -851,7 +817,6 @@ function digitKey(d) {
   const ch = digitChar(d);
   if (ch === null || !$("search")) return false;
   lastSearchInput = Date.now();
-  takeOverDigits();
   if (!overlays.isOpen("search")) {
     overlays.open("search");
     if (!overlays.isOpen("search")) return false;
@@ -867,66 +832,8 @@ function digitKey(d) {
   return true;
 }
 
-/**
- * A guest's live digit (remote-glue, after its remote.liveDigits gate). Closed → open Songs with
- * NO user activation: no history entry and no focus move (§4.2 rule 4); the host's Back still
- * closes it. The guest's nickname shows beside the field.
- */
-function remoteDigit(d, by) {
-  if (!keypadOn()) return;
-  const ch = digitChar(d);
-  if (ch === null) return;
-  const who = String(by ?? "");
-  let opened = false;
-  if (!overlays.isOpen("search")) {
-    overlays.open("search", { activated: false });
-    if (!overlays.isOpen("search")) return;
-    opened = true;
-  }
-  const base = digitGuest === who ? libraryView.query : "";   // someone else's text is not theirs to extend
-  digitGuest = who;
-  lastSearchInput = Date.now();
-  typeIntoSearch(base + ch, who);
-  if (opened) digitOpened = true;   // after the render (a panel swap may have put focus on a row)
-}
-
-/** A guest's ⌫ ("del") or clear ("clear"): only the guest whose text the field holds edits it,
- *  in place (an edit never opens the panel). */
-function remoteDigitEdit(by, op) {
-  if (!keypadOn()) return;
-  const who = String(by ?? "");
-  if (digitGuest !== who) return;
-  lastSearchInput = Date.now();
-  typeIntoSearch(op === "clear" ? "" : applyPadKey(libraryView.query, "del").value, who);
-}
-
-/**
- * A guest's ⏎: the top hit of THEIR number, in their name — a reservation, or played at once only
- * when the host allows guest Play now (`playIfIdle`, remote-glue's call) and the stage is idle.
- * remote-glue has applied the per-guest cap. Nothing when the field is not this guest's (the host
- * took it over, another guest is typing, an idle clear emptied it): their top hit is not on screen.
- * True when a song was taken (remote-glue ignores the result today).
- */
-function remoteDigitCommit(by, { playIfIdle = false } = {}) {
-  if (!keypadOn()) return false;
-  const who = String(by ?? "");
-  if (digitGuest !== who || !libraryView.query.trim()) return false;
-  flushSearch();
-  const song = libraryView.topHit();
-  if (!song) return false;
-  if (playIfIdle && !current && !loadingSong) playNow(song, who);
-  else {
-    setStatus(`Reserved for ${who || "a guest"}: ${songTitle(song)}`);   // before: an idle stage starts it, and its line wins
-    enqueue(song, who);
-  }
-  takeOverDigits();                 // the field is nobody's now; the nickname goes
-  clearSearch({ focus: false });    // the host's focus stays where it is
-  if (digitOpened) closeOverlay("search");
-  return true;
-}
-
 /** The 1 s idle check (§4.3 "Digits" 2): a digit-opened panel holding only digits (or emptied
- *  back to nothing) with no key, tap or guest digit in it for keypad.idleSec clears and closes. */
+ *  back to nothing) with no key or tap in it for keypad.idleSec clears and closes. */
 function checkDigitIdle() {
   if (!digitOpened) return;
   if (!overlays.isOpen("search")) { digitOpened = false; return; }
@@ -937,58 +844,16 @@ function checkDigitIdle() {
   const idleMs = (Number.isFinite(sec) ? Math.min(30, Math.max(3, sec)) : 8) * 1000;
   if (Date.now() - lastSearchInput < idleMs) return;
   digitOpened = false;
-  takeOverDigits();
   if (q) clearSearch({ focus: false });
   closeOverlay("search");
 }
 
-/** #btn-numpad: show / hide the pad docked under the list (its open state lives for the page). */
-function toggleNumpad() {
-  const el = $("numpad");
-  if (!el) return;
-  if (!numpad) {
-    numpad = createNumpad({ el, onKey: onPadKey });
-    numpad.render();
-  }
-  if (numpad.visible) numpad.hide(); else numpad.show();
-  syncNumpadButton();
-  requestAnimationFrame(() => lib.refresh());    // the list's viewport just grew or shrank
-}
-function syncNumpadButton() {
-  const btn = $("btn-numpad");
-  if (!btn) return;
-  const on = !!numpad && numpad.visible;
-  btn.setAttribute("aria-pressed", on ? "true" : "false");
-  btn.classList.toggle("active", on);
-  $("ov-search")?.classList.toggle("pad-open", on);   // a short panel trades the browse rows for the pad (sheet.css, M13)
-}
-
-/** A pad key: digits and ⌫ edit the field (focus stays on the pad key pressed); ⏎ = Enter. */
-function onPadKey(key) {
-  const field = $("search");
-  if (!field) return;
-  lastSearchInput = Date.now();
-  takeOverDigits();
-  const { value, enter } = applyPadKey(padBase(field.value, key), key);   // a digit on words starts a new number
-  if (enter) { takeTopHit(); return; }
-  if (value !== field.value) typeIntoSearch(value);
-}
-
-/** keypad.enabled: the "123" button and the home hint; off also ends any digit entry. */
+/** keypad.enabled: the home hint; off also ends any digit entry. */
 function applyKeypad() {
   const on = keypadOn();
-  const btn = $("btn-numpad");
-  if (btn) btn.hidden = !on;
   const hint = $("home-hint-digits");
   if (hint) hint.hidden = !on;
-  if (on) return;
-  if (numpad && numpad.visible) {
-    numpad.hide();
-    syncNumpadButton();
-    if (lib) requestAnimationFrame(() => lib.refresh());
-  }
-  digitOpened = false;
-  takeOverDigits();
+  if (!on) digitOpened = false;
 }
 
 // Installed with the key router (buildKeys), so digits work while the catalogue loads.
@@ -998,13 +863,12 @@ function wireDigits() {
   // Capture phase: a key a widget prevents (the list's arrows, the field's Enter) still counts.
   const local = (e) => {
     lastSearchInput = Date.now();
-    takeOverDigits();                                   // a local key or tap: the field is the host's
     if (digitOpened && isRow(e.target)) digitOpened = false;   // working the rows: browsing
   };
   panel.addEventListener("keydown", local, true);
   panel.addEventListener("pointerdown", local, true);
   // Focus moving onto a row (from anything that is not a row) clears the mark. A row the list
-  // re-focuses after a re-render came from a row, so a guest's digits never clear it.
+  // re-focuses after a re-render came from a row, so a re-render never clears it.
   document.addEventListener("focusin", (e) => {
     const t = e.target;
     if (digitOpened && isRow(t) && panel.contains(t) && !isRow(focusedLast)) digitOpened = false;
@@ -1014,8 +878,6 @@ function wireDigits() {
   field.addEventListener("input", () => {
     if (digitOpened && field.value.trim() && !digitsOnly(field.value)) digitOpened = false;
   });
-  const btn = $("btn-numpad");
-  if (btn) btn.addEventListener("click", toggleNumpad);
   setInterval(checkDigitIdle, 1000);
 }
 
@@ -1401,8 +1263,6 @@ function onSettingChanged(path) {
   if (path === "*" || path.startsWith("bg.")) applyBackgroundSettings(path);   // M11
   if (path === "*" || path.startsWith("keypad.")) {
     applyKeypad();
-    // keypad.enabled is mirrored to the phones (their pad hides; live digits stop): tell them now.
-    if (path === "keypad.enabled" && remoteHost && remoteHost.running) remoteHost.push();
   }
   if (path === "*") settingsUI.syncSettingsUI();
 }
@@ -1807,12 +1667,6 @@ const remoteGlue = createRemoteGlue({
     },
     restart: () => restartSong(),
     bgNext: () => { bgNext(); },                      // M11: the next clip / photo (a no-op otherwise)
-    // M8: a guest's live digits drive this screen's search (remote-glue applied remote.liveDigits
-    // and, for the commit, queue.maxPerGuest; playIfIdle = the host allows guest Play now).
-    digit: (d, by) => remoteDigit(d, by),
-    digitDelete: (by) => remoteDigitEdit(by, "del"),
-    digitClear: (by) => remoteDigitEdit(by, "clear"),
-    digitCommit: (by, opts) => remoteDigitCommit(by, opts),
   },
 });
 
@@ -2100,7 +1954,7 @@ async function playVideo(song, gen = playGen) {
   setStageKind("video");
   songLoaded(song);            // no await above this line: the play cannot be stale yet
   loudnessBegin(song);         // M10: this song's loudness gain (learned, or 0 and follow)
-  setStatus(`Now playing: ${song.code} — ${song.name}`);
+  setStatus(`Now playing: ${song.name}`);
   await video.play();
   if (stalePlay(gen)) return;  // a newer song took over while the picture was loading
   loudnessLive(song);
@@ -2160,7 +2014,7 @@ async function playAudio(song, gen = playGen) {
   songLoaded(song);
   loudnessBegin(song);         // M10: this song's loudness gain (learned, or 0 and follow)
   showTitleCard(song);
-  setStatus(`Now playing: ${song.code || ""} ${song.name}`.trim());
+  setStatus(`Now playing: ${song.name}`);
   await audioFile.play();
   if (stalePlay(gen)) return;
   loudnessLive(song);
@@ -2259,7 +2113,7 @@ async function playMidi(song, gen = playGen) {
   userPaused = false;
   autoAdvancing = false;
   lib.setNowPlaying(song);
-  setStatus(`Loading: ${song.code} — ${song.name}`);
+  setStatus(`Loading: ${song.name}`);
   $("np-title").textContent = song.name || "(untitled)";
   $("np-artist").textContent = song.artistName || "";
   $("np-code").textContent = npIcon(song.kind); // source icon instead of the dial number
@@ -2273,7 +2127,7 @@ async function playMidi(song, gen = playGen) {
   } catch (e) {
     if (stalePlay(gen)) return;
     console.error(e);
-    setStatus(`Could not read file for #${song.code}: ${e.message}`);
+    setStatus(`Could not read the file for "${songTitle(song)}": ${e.message}`);
     onSongFailed();  // don't leave `current` pointing at a song that never loaded
     return;
   }
@@ -2319,7 +2173,7 @@ async function playMidi(song, gen = playGen) {
     audio.loadSong(buf);
   } catch (e) {
     console.error("Sequencer rejected the file:", e);
-    setStatus(`#${song.code} looks corrupt — skipping.`);
+    setStatus(`"${songTitle(song)}" looks corrupt — skipping.`);
     onSongFailed();
     return;
   }
@@ -2329,7 +2183,7 @@ async function playMidi(song, gen = playGen) {
 
   pushRecent(song);    // only once the song has actually loaded — a failed load isn't "played"
   showTitleCard(song); // title/artist/key over the lyrics, fades after titleCard.seconds
-  setStatus(`Now playing: ${song.code} — ${song.name}`);
+  setStatus(`Now playing: ${song.name}`);
 
   // Start the music a fixed 1s before the title card disappears (if the card is on).
   clearTimeout(playDelayTimer);
@@ -2374,7 +2228,6 @@ function endOfSong() {
   // `difficulty` comes from the scorer (its finish()); the tallies are merged in for the card.
   const res = score.finish(scorer, current, currentBy);
   if (res && verdictFeed) res.verdicts = verdictFeed.tally();
-  recap.log(current, currentBy, res ? res.score : null);   // one line in tonight's recap
   logRanking(res);                                          // one leaderboard row (M6) — needs current too
   loudnessEnd(current);                                     // M10: learn its loudness — needs current too
   score.resetLineBonus();
@@ -2619,8 +2472,7 @@ function clearSearch({ focus = true } = {}) {
 }
 
 /**
- * Take the top hit — Enter in the search field AND the number pad's ⏎ (M8): one function, so the
- * two can never drift (M2, §5.33). A key typed inside the 120 ms debounce has not rendered yet,
+ * Take the top hit — Enter in the search field (M2, §5.33). A key typed inside the 120 ms debounce has not rendered yet,
  * so it flushes first: the top hit belongs to the text as typed. Rankings has no list (the text
  * is a song search, on All). The artist list: open the top artist (the field keeps its text, so
  * "← Artists" comes back to the same filtered list; the panel stays). Else the list's first song
@@ -2772,7 +2624,7 @@ function wireUI() {
   });
   // 🎵 melody toggle — flips the guide-vocal mute (melody channel audible on/off). Same setting
   // the ⚙ "Mute melody" checkbox and the phone remote drive, so all three stay in sync.
-  $("btn-melody").onclick = () => settings.set("guide.vocal.mute", !settings.get("guide.vocal.mute"));
+  $("btn-melody").onclick = () => stepMelody();
   $("btn-mic").onclick = toggleMic;
 
   // Bottom controls (persisted via settings)
@@ -3006,13 +2858,26 @@ function updateMicToggle() {
   b.title = btOn ? "Microphone disabled in Bluetooth mode" : "Microphone on/off";
 }
 
-// 🎵 melody toggle state — lit when the melody guide vocal is audible (not muted).
+// The melody guide's level (Rae, 2026-11-24): Off · 25 · 50 · 75 · 100 % (music-fx.js).
+const melodyNow = () => melodyLevel(settings.get("guide.vocal.volume"), settings.get("guide.vocal.mute"));
+/** The 🎵 button and its key: the next level, applied through the settings (→ applyGuideVocal). */
+function stepMelody() {
+  const k = nextMelodyLevel(melodyNow());
+  for (const [key, v] of Object.entries(melodyLevelSettings(k))) settings.set(`guide.vocal.${key}`, v);
+  showAdjust(`Melody ${melodyLevelLabel(k)}`);
+}
+// 🎵 button state — lit while the melody is audible; data-level (0–4) draws its level marks.
 function updateMelodyToggle() {
   const b = $("btn-melody");
   if (!b) return;
-  const on = !settings.get("guide.vocal.mute");
-  b.classList.toggle("on", on);
-  b.title = on ? "Melody guide: on (click to mute)" : "Melody guide: off (click to unmute)";
+  const k = melodyNow();
+  b.classList.toggle("on", k > 0);
+  b.dataset.level = String(k);
+  const next = melodyLevelLabel(nextMelodyLevel(k));
+  b.title = `Melody guide: ${melodyLevelLabel(k)} (press for ${next})`;
+  b.setAttribute("aria-label", `Melody guide volume ${melodyLevelLabel(k)}`);
+  const sel = $("set-gv-level");      // ⚙ follows a press of 🎵 (or the phone's mute) while it is open
+  if (sel) sel.value = String(k);
 }
 
 // Rebuild catalog.json from kar_raw/ (called by the settings-ui button).
@@ -3021,7 +2886,7 @@ async function onRebuild() {
   if (!res.ok) return { ok: false, error: res.error };
   const n = await catalog.load(settings.get("data.catalogUrl"), settings.get("data.videoCatalogUrl"), settings.get("data.audioCatalogUrl"));
   buildSearchIndex();   // BEFORE the re-render: no close query may reach the old list's index
-  renderBrowse();       // the chips follow the new catalogue's songbooks and kinds (facets recompute)
+  renderBrowse();       // the tabs again, for the new catalogue
   // The ACTIVE view again, on the new catalogue (its caches key on the catalog.songs array): the
   // search, Recent / Favorites, the artist list or one artist's songs; nothing on Rankings.
   libraryView.rerender($("search").value);
