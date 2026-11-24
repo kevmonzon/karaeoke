@@ -3,7 +3,7 @@
  *
  * A calm text block, no panel: title, artist, and one small line with who reserved the song
  * and its key, centred a little above the middle of the lyric area. Shaped after how the
- * commercial videoke app's intro behaves (clean room: behaviour and rough layout only).
+ * a commercial videoke app's intro behaves (clean room: behaviour and rough layout only).
  *
  * THE RULE THAT MATTERS: while the card is up, body.title-card-on hides #lyrics — both lyric
  * styles live inside it (the scroll view .lyric-view and the stage canvas .lyric-stage) — so the

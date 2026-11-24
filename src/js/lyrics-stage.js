@@ -1,6 +1,6 @@
 /*
  * lyrics-stage.js — the STAGE lyric view: fixed rows drawn on a <canvas>, the way a
- * videoke machine shows them (behaviour modelled on the commercial videoke app; clean-room —
+ * videoke machine shows them (behaviour modelled on a commercial videoke app; clean-room —
  * the rules live in lyric-pager.js, the look is reproduced here from its numbers).
  *
  *   - two rows take turns (four in portrait): the line being sung, plus the line just sung

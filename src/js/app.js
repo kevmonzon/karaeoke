@@ -226,7 +226,7 @@ async function boot() {
   // The one "what do you want to do with this song?" sheet. It only renders and reports the
   // choice; onSheetAction carries it out (the queue, the player and the overlays are ours).
   songSheet = createSongSheet({ el: $("ov-song"), onAction: onSheetAction });
-  titleCard = createTitleCard({ el: $("title-card") });   // videoke-style intro card (Rae, 2026-11-24)
+  titleCard = createTitleCard({ el: $("title-card") });   // the videoke-style intro card (Rae, 2026-11-24)
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onCalibrate: openCalibration, onEraseAll: eraseAllData,
     onExportData: exportAppData, onImportData: importAppData,

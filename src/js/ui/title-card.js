@@ -2,7 +2,7 @@
  * title-card.js — the song intro shown when a song loads: title, artist, and a small line with who
  * reserved it and its key, centred over the lyric area (2026-11-24).
  *
- * A clean-room rebuild of how the commercial videoke app's intro BEHAVES (behaviour and rough layout
+ * A clean-room rebuild of how a commercial videoke app's intro BEHAVES (behaviour and rough layout
  * only; no code, strings or assets): no panel, a calm text block over the stage, and the lyrics
  * HIDDEN while it shows. Hiding works by a body class (`title-card-on`, TITLE_CARD_BODY_CLASS);
  * title-card.css hides `#lyrics` (both the scroll view `.lyric-view` and the stage canvas

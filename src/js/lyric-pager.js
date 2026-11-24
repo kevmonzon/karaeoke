@@ -3,7 +3,7 @@
  * (lyrics-stage.js), the fixed-row "videoke" style: two rows that take turns, a hard-edged
  * wipe, a 4-3-2-1-GO count-in before a line that follows a long break.
  *
- * The rules are a clean-room reimplementation of how the commercial videoke app's lyric
+ * The rules are a clean-room reimplementation of how a commercial videoke app's lyric
  * stage BEHAVES (studied 2026-11-23; numbers below are its). No code, fonts or assets
  * from it live here. Everything is in SECONDS and pure — no DOM, no clock, no canvas —
  * so the parts that decide what is on screen when are unit-tested (test/unit.test.js).
