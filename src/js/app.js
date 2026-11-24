@@ -65,6 +65,7 @@ import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
 import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
+import { setupKioskQuit } from "./kiosk.js";
 
 const $ = (id) => document.getElementById(id);
 // Source-kind icon shown in the now-playing header (in place of the dial number).
@@ -387,6 +388,19 @@ function buildShell() {
   shell = createShell({ overlays, stack, settings, actions: { fullscreen: toggleFullscreen, queue: (el) => toggleQueueTab(el) } });
   shell.wire();
   wireFooter();   // the status line's − + steps and the seek bar (Rae, 2026-11-24)
+  // Kiosk host (serve-lan.sh on a Steam Deck, Rae 2026-11-25): the footer's Exit button, shown only
+  // when the server runs with --kiosk and this is its own screen. The launcher closes the browser.
+  setupKioskQuit({
+    button: $("btn-quit"),
+    confirm: (opts, openOpts) => overlays.confirm(opts, openOpts),
+    onStopped: () => {
+      stopSong();
+      const s = $("quit-screen");
+      if (s) s.hidden = false;
+    },
+    onError: (msg) => setStatus(msg, { error: true }),
+    closeWindow: () => { try { window.close(); } catch { /* not script-closable: the launcher closes it */ } },
+  }).catch(() => {});
 
   buildKeys();   // input mode, D-pad navigation, the named actions, the one key router, media keys
 

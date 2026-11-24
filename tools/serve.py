@@ -16,10 +16,11 @@ What it does
 
 Usage
 -----
-    python tools/serve.py                 # setup (if needed) + serve on :8080
+    python tools/serve.py                 # setup (if needed) + serve on :52723
     python tools/serve.py --port 9000
     python tools/serve.py --no-setup      # skip the download/setup step
     python tools/serve.py --no-open       # don't auto-open the browser
+    python tools/serve.py --kiosk         # kiosk host: this machine's page may POST /api/quit
 
 Stdlib only. Python 3.8+.
 
@@ -34,11 +35,13 @@ import functools
 import gzip
 import hashlib
 import http.server
+import ipaddress
 import itertools
 import json
 import os
 import re
 import select
+import signal
 import subprocess
 import socket
 import socketserver
@@ -86,6 +89,56 @@ MAX_POST_BYTES = 1_000_000
 ALLOWED_ORIGINS = {
     o.strip().rstrip("/") for o in (os.environ.get("KARAEOKE_ALLOWED_ORIGINS") or "").split(",") if o.strip()
 }
+
+# The default port (Rae, 2026-11-25). docker-compose publishes the same number, so every way of
+# running the app answers at :52723. Changing it changes the page's ORIGIN, and the browser keeps
+# localStorage (settings, queue, rankings) per origin — a new port starts those from defaults.
+DEFAULT_PORT = 52723
+
+# Kiosk quit (Rae, 2026-11-25: "the browser that will open should be closable without alt-f4 or
+# ctrl-c (i only have a controller in steam deck)"). serve-lan.sh's kiosk mode starts serve.py
+# with --kiosk; the page then shows an Exit button whose POST /api/quit stops this server, and the
+# launcher closes the fullscreen browser once the server has exited. Only the kiosk machine's own
+# page may do that: a guest on the hotspot (or through a tunnel) must not be able to end the party.
+LOOPBACK_HOSTNAMES = ("localhost", "127.0.0.1", "::1")
+# Headers a reverse proxy / tunnel (cloudflared, nginx) adds. Their presence means the TCP peer
+# is the proxy, so a loopback peer address says nothing about who is really asking.
+FORWARDING_HEADERS = ("X-Forwarded-For", "Forwarded", "X-Real-IP", "Cf-Connecting-IP")
+
+
+def _is_loopback_addr(host) -> bool:
+    """True for 127.0.0.0/8, ::1 and ::ffff:127.x — the peer is this machine."""
+    try:
+        ip = ipaddress.ip_address(str(host or "").split("%", 1)[0])
+    except ValueError:
+        return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return (mapped or ip).is_loopback
+
+
+def _host_header_name(host_header) -> str:
+    """The hostname part of a Host header, lower-cased: "localhost:52723" → "localhost",
+    "[::1]:52723" → "::1". Empty when there is none."""
+    h = str(host_header or "").strip().lower()
+    if h.startswith("["):
+        end = h.find("]")
+        return h[1:end] if end > 0 else ""
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+
+
+def _is_local_request(peer, headers) -> bool:
+    """Did this request come from a page on THIS machine, addressed to it as localhost?
+
+    All three must hold: the TCP peer is loopback; the Host header names loopback (a tunnel
+    forwards the public hostname, and a DNS-rebinding page carries its own name); and no proxy
+    forwarding header is present (cloudflared connects from 127.0.0.1 on behalf of anyone).
+    """
+    if not _is_loopback_addr(peer):
+        return False
+    name = _host_header_name(headers.get("Host"))
+    if not (name in LOOPBACK_HOSTNAMES or _is_loopback_addr(name)):
+        return False
+    return not any(headers.get(h) for h in FORWARDING_HEADERS)
 
 # URL paths the server maps to DATA_DIR instead of the app tree (see Handler.translate_path).
 # /bgv/ and /bgphoto/ are the stage backgrounds (M11): looping clips and a photo slideshow.
@@ -1255,6 +1308,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self._handle_backgrounds_get()
             if path == "/api/playcounts":
                 return self._send_json(_playcounts_doc())
+            if path == "/api/kiosk":
+                # {canQuit}: show the Exit button? Only on a --kiosk server, only to its own screen.
+                return self._send_json({"ok": True, "kiosk": self._kiosk(),
+                                        "canQuit": self._kiosk() and _is_local_request(self.client_address[0], self.headers)})
             # Honour HTTP Range so <video> seeking works (SimpleHTTPRequestHandler only
             # serves full 200s). Falls back to a normal 200 for non-range / unsatisfiable.
             if self.headers.get("Range") and self._serve_range():
@@ -1669,7 +1726,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._send_json({"ok": True, "count": count})
             return
+        if path == "/api/quit" and self._kiosk():
+            # The kiosk's Exit button. Reply first, then stop serve_forever from another thread
+            # (shutdown() blocks until the loop exits, so it must not run on a handler that the
+            # loop is waiting on). main()'s finally then flushes the play counts as Ctrl+C does.
+            if not _is_local_request(self.client_address[0], self.headers):
+                self._send_json({"ok": False, "error": "only the kiosk screen can quit"}, 403)
+                return
+            self._send_json({"ok": True})
+            sys.stderr.write("  Exit pressed on the kiosk screen — stopping.\n")
+            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            return
         self.send_error(404)
+
+    def _kiosk(self) -> bool:
+        """Was this server started with --kiosk? (main() sets httpd.kiosk; tests set it too.)"""
+        return bool(getattr(self.server, "kiosk", False))
 
     def log_message(self, fmt, *args):
         # quieter: only log non-200s and the initial page
@@ -1689,10 +1761,13 @@ class ThreadingServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Serve the offline Ka-Rae-oke player.")
-    ap.add_argument("--port", type=int, default=8080)
+    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--no-setup", action="store_true", help="skip first-run downloads")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser")
+    ap.add_argument("--kiosk", action="store_true",
+                    help="kiosk host (serve-lan.sh on a Steam Deck): this machine's page gets an Exit "
+                         "button that stops the server (POST /api/quit, loopback only)")
     args = ap.parse_args()
 
     # Windows consoles default to cp1252 and choke on ✓/→/♪ — force UTF-8.
@@ -1716,16 +1791,30 @@ def main() -> int:
     except OSError as exc:
         print(f"Could not bind {args.host}:{args.port} — {exc}\nTry --port <other>.", file=sys.stderr)
         return 1
+    httpd.kiosk = args.kiosk
 
     print("=" * 58)
     print("  Ka-Rae-oke is running")
     print(f"  →  {url}")
     print(f"  data: {DATA_DIR}")
+    if args.kiosk:
+        print("  kiosk: Exit on this machine's screen stops the server")
     print("  Ctrl+C to stop")
     print("=" * 58)
 
     if not args.no_open:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+
+    # SIGTERM (serve-lan.sh's kiosk cleanup, `docker stop`) is a clean stop, like Ctrl+C: the
+    # same KeyboardInterrupt path, so a play still inside its debounce window is written. It
+    # matters for the kiosk: a background job of a non-interactive shell starts with SIGINT
+    # IGNORED, so Ctrl+C in serve-lan.sh never reaches this process — the script's TERM does.
+    def _on_sigterm(signum, frame):  # noqa: ARG001
+        raise KeyboardInterrupt
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError, AttributeError):  # not the main thread / no SIGTERM here
+        pass
 
     try:
         httpd.serve_forever()

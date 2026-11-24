@@ -375,6 +375,13 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 /* Boot veil (#overlay: soundfont progress) — last child of <body>, above every overlay. */
 .overlay { position: fixed; inset: 0; background: rgba(6,8,14,.82); display: flex; align-items: center; justify-content: center; z-index: 90; }
 .overlay.hidden { display: none; }
+/* Kiosk Exit (kiosk.js): what is left on screen if the browser outlives the server. Above every
+   overlay; `[hidden]` (stage.css) still wins while it is not wanted. */
+.quit-screen { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: calc(8 / 16 * var(--u)); padding: calc(24 / 16 * var(--u)); background: var(--bg);
+  color: var(--text); text-align: center; }
+.quit-screen h2 { margin: 0; font-size: calc(32 / 16 * var(--u)); }
+.quit-screen p { margin: 0; color: var(--text-muted); font-size: calc(18 / 16 * var(--u)); }
 .overlay-card { background: var(--panel); border: 1px solid var(--line); border-radius: calc(16 / 16 * var(--u)); padding: calc(30 / 16 * var(--u)) calc(40 / 16 * var(--u)); text-align: center; width: min(calc(420 / 16 * var(--u)), 90vw); }
 .overlay-track { height: calc(6 / 16 * var(--u)); background: var(--panel-2); border-radius: calc(20 / 16 * var(--u)); margin-top: calc(16 / 16 * var(--u)); overflow: hidden; }
 .overlay-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }

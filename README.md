@@ -110,7 +110,7 @@ when you want backgrounds; see [§5.6](#56-backgrounds--databgv-and-databgphoto)
 **3. Your browser opens automatically** at:
 
 ```
-http://127.0.0.1:8080/
+http://127.0.0.1:52723/
 ```
 
 That's it — you're ready to sing. 🎉
@@ -124,7 +124,7 @@ That's it — you're ready to sing. 🎉
 ## 4. Running the app
 
 ```bash
-python tools/serve.py                 # setup (if needed) + serve on :8080, opens browser
+python tools/serve.py                 # setup (if needed) + serve on :52723, opens browser
 python tools/serve.py --port 9000     # use a different port
 python tools/serve.py --no-open       # don't auto-open the browser
 python tools/serve.py --no-setup      # skip the first-run download/build step
@@ -133,6 +133,11 @@ python tools/serve.py --host 0.0.0.0  # expose to your local network (see §9)
 
 Press **Ctrl+C** to stop. The first time you play a MIDI song, the ~31 MB soundfont loads —
 that takes a few seconds; subsequent songs are instant. (Video songs need no soundfont.)
+
+> **The default port is 52723** (it was 8080 until 2026-11-25). Your browser keeps the app's settings, queue,
+> favorites and rankings **per address**, so the first visit at `:52723` starts from defaults. To bring them
+> along: start once with `--port 8080`, ⚙ → Application → Backup → **Export app data**, then restart on the
+> new port and **Import app data**.
 
 ### With Docker
 
@@ -143,7 +148,7 @@ volume at `/data`.
 docker compose up --build          # then open http://localhost:52723/
 ```
 
-`docker-compose.yml` publishes the container's port 8080 on the host's port **52723** and mounts
+`docker-compose.yml` publishes port **52723** (the server's default, inside and out) and mounts
 the host's `./data` directory into the container, so the same song library, soundfont, and
 catalogs are used. The image stays small and immutable — add songs by dropping them in
 `./data/kar_raw` (or `./data/videos`, `./data/audio_lyrics`) on the host and rebuilding the
@@ -753,7 +758,7 @@ tools/serve-lan.sh          # macOS / Linux / Git-Bash
 python tools/serve.py --host 0.0.0.0
 ```
 
-Open the printed `http://<your-LAN-IP>:8080/` on any device on the same Wi-Fi. On Windows, allow
+Open the printed `http://<your-LAN-IP>:52723/` on any device on the same Wi-Fi. On Windows, allow
 Python through the firewall on **Private** networks.
 
 ### 🔒 Secure pages: what a TV box (or any other screen) can and can't do
@@ -762,8 +767,8 @@ Browsers give the **MIDI synthesizer** (it runs on an AudioWorklet), the **micro
 **camera** only to a *secure* page: `http://localhost` / `http://127.0.0.1` (the machine running the
 server), or HTTPS. So:
 
-- **On the machine running the server** (`http://localhost:8080/`) — everything works.
-- **On a TV box, a second laptop or a tablet that opens `http://<your-LAN-IP>:8080/`** —
+- **On the machine running the server** (`http://localhost:52723/`) — everything works.
+- **On a TV box, a second laptop or a tablet that opens `http://<your-LAN-IP>:52723/`** —
   **MIDI / KAR songs do not play** (the synthesizer cannot start: picking one shows "MIDI songs need
   a secure page — open the app on localhost or https" and the song is skipped), there is **no
   microphone**, so **no singing through the app, no scoring and no calibration**, and **no camera
@@ -776,7 +781,7 @@ server), or HTTPS. So:
 
 **The recommended setup for a TV box: open the cloudflared HTTPS address on the TV.** `serve.py`
 itself speaks plain HTTP (it has no HTTPS option), so put a tunnel in front of it — for example
-`cloudflared tunnel --url http://localhost:8080` (a quick `https://….trycloudflare.com` address) or a
+`cloudflared tunnel --url http://localhost:52723` (a quick `https://….trycloudflare.com` address) or a
 named tunnel on your own domain — and open that **https://** address in the TV box's browser. It is a
 secure page, so MIDI songs play and the microphone, scoring, calibration and the camera can be used
 (if the TV box has a mic or camera). Things to know:
@@ -784,7 +789,7 @@ secure page, so MIDI songs play and the microphone, scoring, calibration and the
   first MIDI song downloads the ~31 MB SoundFont once (it is then cached on the box).
 - Phones follow the QR, which now shows the **https** address too, so they also go through the
   tunnel. To keep phones on your LAN instead, set **⚙ → Phones & party → Remote → URL override** to
-  `http://<your-LAN-IP>:8080`.
+  `http://<your-LAN-IP>:52723`.
 - Anyone with the public address and the room code can reach the remote — see the warning in the
   phone-remote section below.
 
@@ -807,12 +812,15 @@ TV and hosts a Wi-Fi hotspot; guests connect and control it from their phones.
    ./tools/serve-lan.sh
    ```
    On SteamOS this auto-enters **kiosk mode**: it serves **offline** (`--no-setup`) and opens the
-   Deck's browser **fullscreen** at `http://localhost:8080/`. It uses a **browser you already have**
+   Deck's browser **fullscreen** at `http://localhost:52723/`. It uses a **browser you already have**
    (Flatpak Chromium / Chrome / Brave / Firefox — nothing is installed); force one with
-   `KARAEOKE_BROWSER=org.mozilla.firefox ./tools/serve-lan.sh`. `Alt+F4` exits the browser, `Ctrl+C`
-   in the terminal stops the server.
-3. **Guests** join the Deck's hotspot and open the printed `http://<deck-ip>:8080/` (typically
-   `http://10.42.0.1:8080/`), or scan the phone-remote QR — see below.
+   `KARAEOKE_BROWSER=org.mozilla.firefox ./tools/serve-lan.sh`.
+   **To quit with just the controller:** the footer's **Exit** button (⏻, bottom-right, after Full screen —
+   reach it with the D-pad or tap it) asks *"Exit Ka-Rae-oke?"*; **Exit** stops the server and the script
+   closes the browser. `Ctrl+C` in the terminal does the same. The button only appears on the Deck's own
+   screen — never on guests' phones, a TV box or through a tunnel.
+3. **Guests** join the Deck's hotspot and open the printed `http://<deck-ip>:52723/` (typically
+   `http://10.42.0.1:52723/`), or scan the phone-remote QR — see below.
 
 > The Deck's **own** browser opens `localhost`, so the host mic, scoring and the camera background
 > still work there; guests just queue/control from their phones. Force kiosk mode on any Linux box
@@ -822,7 +830,7 @@ TV and hosts a Wi-Fi hotspot; guests connect and control it from their phones.
 
 Once you're serving on the LAN, the remote is already on (**⚙ → Phones & party → Remote**). A **QR code + a
 room code** appear under ⚙ → Phones & party → Remote and on the home screen (the Queue tab shows the room code) — guests scan the QR to open
-**`http://<your-LAN-IP>:8080/remote`** (it auto-connects), or type that URL and enter the **room
+**`http://<your-LAN-IP>:52723/remote`** (it auto-connects), or type that URL and enter the **room
 code** shown on screen. Then they can search / reserve / control from their phones (any modern
 mobile browser; see the walkthrough in [§6](#6-using-the-app--full-walkthrough)). The URL is
 **auto-detected** (the host's LAN IP, or the public origin behind a tunnel like cloudflared); set a
@@ -929,7 +937,7 @@ karaoke-clone/
 | **Calibrate says "Could not measure"** | Nothing was saved. Turn the volume up, hold the mic about 20 cm from the speaker, keep the room quiet, and Retry. |
 | **Feedback/howling on speakers** | Use **headphones**. Otherwise keep Echo-cancellation + Noise-gate on and lower mic volume. |
 | **No background shows** | Create `data/bgv/` or `data/bgphoto/` with supported files and **reload the page**; check ⚙ → Display → Background isn't **Off**. Backgrounds never show behind a video or YouTube song. A `.mov` / HEVC clip may not play in Chrome — re-encode it to `.mp4` (H.264) or `.webm`. |
-| **Port 8080 in use** | `python tools/serve.py --port 9000`. |
+| **Port 52723 in use** | `python tools/serve.py --port 9000`. |
 | **Phone remote won't connect** | Check ⚙ → Phones & party → Remote is on, serve on the LAN (`--host 0.0.0.0`), and put the phone on the same Wi-Fi. If the QR URL shows `127.0.0.1`, set the ⚙ URL override to your LAN IP. Keep the host tab in the **foreground** (a backgrounded tab throttles the sync and the phone shows "waiting for host"). |
 | **Phones show "polling" instead of "instant"** | Something between them and the server (a proxy or tunnel) is holding back the live stream. The remote still works, just with up to a second's delay; it tries the stream again after a minute. |
 | **A guest's Play now / Play next is missing or "not allowed by the host"** | ⚙ → Phones & party → Remote: **Guests can play a song now** is off by default; **Guests can jump the queue** is refused while **Fair play** is on. |

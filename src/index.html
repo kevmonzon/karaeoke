@@ -60,6 +60,7 @@
       <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
       <symbol id="i-mixer" viewBox="0 0 24 24"><path d="M6 4v16M12 4v16M18 4v16"/><path d="M4 15h4M10 8h4M16 13h4"/></symbol>
       <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></symbol>
       <symbol id="i-bg" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17.5 10 12l4 4 2.5-2.5 3 3"/></symbol>
     </defs>
   </svg>
@@ -169,6 +170,9 @@
         <button id="btn-bg" class="gear" title="Next background (Yellow key)" aria-label="Next background" hidden><svg class="icon" aria-hidden="true"><use href="#i-bg"></use></svg></button>
         <button id="btn-settings" class="gear" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
         <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"></use></svg></button>
+        <!-- Kiosk only (serve.py --kiosk, this machine's own screen — kiosk.js): stops the server, and
+             serve-lan.sh then closes the fullscreen browser. A Steam Deck has only a controller. -->
+        <button id="btn-quit" class="gear" title="Exit Ka-Rae-oke" aria-label="Exit Ka-Rae-oke" hidden><svg class="icon" aria-hidden="true"><use href="#i-power"></use></svg></button>
       </nav>
       <div id="status" class="status" aria-label="Status">
         <div class="st-line st-song">
@@ -849,6 +853,12 @@
   </div>
 
   <!-- engine/soundfont loading overlay -->
+  <!-- Kiosk Exit: shown once the server has stopped, in case the launcher could not close the browser. -->
+  <div id="quit-screen" class="quit-screen" role="status" aria-live="polite" hidden>
+    <h2>Ka-Rae-oke has stopped</h2>
+    <p>The browser should close in a moment.</p>
+  </div>
+
   <div id="overlay" class="overlay hidden">
     <div class="overlay-card">
       <div class="spinner"></div>
