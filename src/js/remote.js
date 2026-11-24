@@ -1,58 +1,98 @@
 /*
  * remote.js — the phone remote-control page (served at /remote; shell = src/remote.html).
  *
- * A guest's browser on the same network. It has NO synth and NO local player: it reuses
- * the tested Catalog (catalog.js) to search the songbook locally, reads a specific host
- * ROOM's live state from serve.py's multi-room relay (GET /api/remote/state?room=CODE) and
- * sends intents back (POST /api/remote/command, scoped to the room). The HOST stays the
- * authoritative player — see src/js/remote-host.js and §5.x in CLAUDE.md.
+ * A guest's browser on the same network. It has NO synth and NO local player. It reads a host
+ * ROOM's live state from serve.py's multi-room relay and sends intents back (POST
+ * /api/remote/command, scoped to the room). The HOST stays the authoritative player — see
+ * src/js/remote-host.js and §5.17 in CLAUDE.md.
  *
  * A ROOM CODE gates entry: scanning the host's QR fills ?room= and auto-connects; otherwise
  * the guest types the code shown on the karaoke screen. Five tabs: Now / Lyrics / Search /
  * Queue / You.
  *
- * LYRICS: the relay is a ~1 Hz control channel — far too coarse to stream a syllable wipe —
- * so lyric TEXT never crosses it. The phone resolves the now-playing song in its own Catalog,
- * fetches and parses the file itself (MIDI via pako+parseMidi, AUDIO via its sidecar), and
- * renders with the host's own LyricsEngine. Only the CLOCK is synced, disciplined by the
- * server-measured snapshot `age` — see src/js/sync-clock.js.
+ * LIVE STATE (relay v2, M7): an event stream (GET /api/remote/events, remote-push.js) delivers
+ * the room view as `state` when the queue / song / settings change and a small `tick` per host
+ * push otherwise. The old 1 s poll of /api/remote/state is the FALLBACK: it runs whenever the
+ * stream is not healthy ("connecting" or "fallback") and stops the moment push is back. Whether
+ * the host is alive is judged with this device's clock only (hostIsLive) — never the server's
+ * wall clock, so a phone whose clock is a minute off still works.
+ *
+ * SONGBOOK: /api/catalog/compact (compact-catalog.js, ~2 MB gzip) adopted into a Catalog, searched
+ * with the host's three tiers: the number tier, Catalog.search, and close matches (typos) from the
+ * search worker. A song is named to the host as ref { i, code } — row i of the compact list is the
+ * host's catalog.songs[i]; the host checks the code and falls back to a code lookup.
+ *
+ * LYRICS: the host publishes a lyric DOCUMENT for the song it is playing (lyrics-doc.js); the
+ * phone fetches it when `songRev` changes and renders it with the host's own engines (stage or
+ * scroll). Only the CLOCK rides the live channel, disciplined by the server-measured snapshot
+ * `age` — see src/js/sync-clock.js. The phone never downloads a song file.
  */
-import { Catalog } from "./catalog.js";
-import { LyricsEngine, parseMidi, buildLines, makeTickToSeconds } from "./lyrics.js";
-import { linesFromLyricFile, distributeLineTimes } from "./lyrics-formats.js";
+import { Catalog, SOURCES, normalizeCode } from "./catalog.js";
+import { orderNumberMatches, mergeTiers, tokenize, MAX_CLOSE } from "./search-core.js";
+import { createSearchClient } from "./search-client.js";
+import { loadCompact } from "./compact-catalog.js";
+import { createPushClient, hostIsLive, makeCid, wantPush } from "./remote-push.js";
+import { LyricsEngine } from "./lyrics.js";
+import { StageLyricsEngine, LyricsSwitch } from "./lyrics-stage.js";
+import { parseLyricsDoc } from "./lyrics-doc.js";
 import { syncClock, clockTime } from "./sync-clock.js";
 import { queueEta, formatEta } from "./queue-order.js";
 import { REACTIONS } from "./reactions.js";
 
 const $ = (id) => document.getElementById(id);
-const KIND_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐" };
+const KIND_ICON = { midi: "🎤", audio: "🎵", video: "🎞️", youtube: "🌐" };
 const PREFS_KEY = "karaeoke.remote.v1";
+const SEARCH_LIMIT = 150;   // exact-tier rows rendered (the phone's list is not virtualised)
+const FUZZY_BELOW = 20;     // close matches only while the exact tier is shorter (host: search.fuzzyBelow)
 
 // --- device-local state (persisted on the phone) ---------------------------
 let prefs = {
   nickname: "", theme: "dark", text: "m", room: "", lyricNudgeMs: 0,
-  lyricLines: 4,     // visible lyric lines on THIS phone (the host keeps its own)
-  lyricScale: 1,     // lyric text multiplier on THIS phone (0.7–1.8)
+  lyricLines: 4,       // visible lyric lines on THIS phone, scroll style (the host keeps its own)
+  lyricScale: 1,       // lyric text multiplier on THIS phone (0.7–1.8)
+  lyricStyle: "stage", // "stage" (the videoke rows, as on the TV) | "scroll" (the column)
 };
+// --- songbook ----------------------------------------------------------------
+const catalog = new Catalog();
+let songbook = "loading";  // "loading" | "ready" | "off" (no compact catalogue: control-only)
+let searchClient = null;   // close-match index over catalog.songs (search-client.js)
 // --- live host state -------------------------------------------------------
-let catalog = new Catalog();
 let room = "";           // the room code we're connected to ("" until the gate is passed)
-let state = null;        // last host snapshot {rev, ts, now, queue, settings}
+let state = null;        // last host view {rev, ts, now, age, queue, settings, songRev, notice}
 let lastRev = -1;
-let stamp = 0;           // performance.now() when `state` arrived (for progress interpolation)
-let lastOk = 0;          // last successful poll time (connection health)
+let stamp = 0;           // performance.now() when `state` (or a tick) arrived — progress interpolation
+let lastOk = 0;          // last time the relay answered (a poll, or any push event)
+let lastEventAt = -Infinity; // performance.now()/1000 of the last FRESH host view (hostIsLive)
+let lastPushAt = 0;      // performance.now() of the last push event: a poll sent before it is stale
+let lastNotice = "";     // the host notice already toasted
 let ytOn = false;        // include YouTube results in search
 let seeking = false;     // true while the user drags the seek slider (don't fight them)
-let pollTimer = null;
-let uiTimer = null;      // smooth-progress ticker (paired with pollTimer; both cleared on leave)
+let pollTimer = null;    // the fallback poll — runs only while push is not healthy
+let uiTimer = null;      // smooth-progress ticker (cleared on leave)
 let activeTab = "now";
+const cid = makeCid();   // this tab's stream id: a reconnect replaces its own slot on the server
+let push = null;         // the push client (remote-push.js)
+let pushStatus = "off";  // "off" | "connecting" | "push" | "fallback"
+let hostPushOff = false; // the host turned push off (its mirrored remote.push === false): poll only
 // --- Lyrics tab ------------------------------------------------------------
-let lyricsEngine = null; // built on first visit to the tab (not at boot — most guests never open it)
-let lyricSongId = null;  // id whose lines are loaded into the engine ("" = nothing playing)
-let lyricToken = 0;      // guards against a slow load landing after the song moved on
+let lyrics = null;       // LyricsSwitch(scroll, stage), built on first visit to the tab
+// A document is keyed on the PAIR "songRev|now.id": the host's songRev restarts at 0 when its page
+// reloads, so a rev alone could name a different song than the one loaded here.
+let lyricKey = "";       // the key whose document is loaded (or settled); "" = none
+let lyricWant = "";      // the key being fetched (a fetch or a retry is pending); "" = none
+let lyricDocId = "";     // the host song id that document belongs to
+let lyricMissAt = 0;     // settled WITHOUT a document (never published): when, for a slow re-ask
+let lyricKind = "";      // "lines" | "baked" | "none" ("" = nothing loaded)
+let lyricNote = "";      // what the head says about the loaded document
+let lyricDocKey = "";    // the loaded document as JSON (a re-publish check)
+let lyricDurKnown = false; // fetched after the song's duration was known (else re-check once)
+let lyricToken = 0;      // guards against a slow fetch landing after the song moved on
+let lyricRetry = null;
+let lyricTries = 0;
 let lyricRaf = 0;        // rAF handle — runs ONLY while the tab is visible (phone battery)
+let lyricStale = false;
 let clock = null;        // sync-clock state (see sync-clock.js)
-const lyricCache = new Map(); // song id -> { lines } | { baked:true }
+const LYRIC_RETRY_MS = [300, 700, 1500, 3000, 5000];   // the host publishes right after a song loads
 
 // ---------------------------------------------------------------------------
 // Boot
@@ -64,16 +104,23 @@ async function boot() {
   wireNow();
   wireLyrics();
   wireSearch();
+  wireSheet();
   wireSettings();
   wireReactions();
   wireGate();
 
   $("s-origin").textContent = location.origin;
-  try { await catalog.load(); } catch (_) { /* songbook optional for control-only use */ }
+  loadSongbook();   // not awaited: the transport works while the songbook downloads
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && room) { poll(); acquireWakeLock(); }  // the lock is dropped while hidden
+    // A backgrounded phone holds no stream and polls nothing (battery, and the server's slots).
+    if (room) {
+      if (document.hidden) stopPush();
+      else { startPush(); acquireWakeLock(); }   // the lock is dropped while hidden
+      syncPolling();
+    }
     syncLyricLoop();   // a backgrounded phone must not burn a rAF loop on lyrics
+    if (!document.hidden) refreshLyrics();
   });
 
   // Kiosk: a tablet on a stand as the singer's own lyric monitor. Same page, no chrome —
@@ -89,6 +136,34 @@ async function boot() {
     enterRoom(candidate);
     if (document.body.classList.contains("kiosk")) showTab("lyrics");
   } else { $("gate-code").value = candidate; showGate(candidate ? "That code isn't active right now." : ""); }
+}
+
+// The compact songbook, then the close-match index over it. On any failure the phone stays
+// control-only (transport, queue, lyrics) and the Search tab says so.
+async function loadSongbook() {
+  // performance marks: how long the songbook takes to be searchable (read them in DevTools or a
+  // test rig; the plan's budget is ≤ 1.5 s at 4× CPU for loadCompact + adopt).
+  try { performance.mark("songbook:start"); } catch (_) {}
+  const r = await loadCompact();
+  if (!r) { songbook = "off"; refreshSearch(); return; }
+  try { performance.mark("songbook:decoded"); } catch (_) {}
+  // The code maps (number search) are built just after the first paint, not inside adopt — they
+  // are most of its time, and a phone on a slow CPU should be searchable sooner (plan R31).
+  catalog.adopt(r.songs, { deferCodeIndex: true });
+  try { performance.mark("songbook:adopted"); } catch (_) {}
+  setTimeout(() => { try { catalog.ensureCodeIndex(); } catch (_) {} }, 0);
+  songbook = "ready";
+  try {
+    searchClient = createSearchClient();
+    const songs = catalog.songs;
+    // A query typed before the index was ready gets its close tier once it is.
+    searchClient.build(songs.map((s) => s.name), songs.map((s) => s.artistName))
+      .then(() => { if (catalog.songs === songs) refreshSearch(); });
+  } catch (e) {
+    console.warn("Close-match search unavailable:", e);
+    searchClient = null;
+  }
+  refreshSearch();
 }
 
 // ---------------------------------------------------------------------------
@@ -118,13 +193,15 @@ function wireGate() {
 
 function showGate(msg) {
   room = "";
-  // Tear down the poll/tick loop and drop the stale snapshot, so a left room's progress
-  // bar stops extrapolating behind the gate and re-entry starts clean.
-  clearInterval(pollTimer); clearInterval(uiTimer);
-  pollTimer = uiTimer = null;
-  state = null; lastRev = -1;
-  clock = null; lyricSongId = null; lyricToken++;   // stop the lyric clock free-running behind the gate
-  if (lyricsEngine) lyricsEngine.clear();
+  // Tear down the stream, the poll and the tick loop and drop the stale view, so a left room's
+  // progress bar stops extrapolating behind the gate and re-entry starts clean.
+  stopPush();
+  syncPolling();
+  clearInterval(uiTimer); uiTimer = null;
+  state = null; lastRev = -1; lastEventAt = -Infinity;
+  clock = null;            // stop the lyric clock free-running behind the gate
+  resetLyrics();
+  closeSheet();
   document.body.classList.remove("connected");
   $("gate-err").textContent = msg || "";
   $("gate-code").focus();
@@ -135,17 +212,16 @@ function enterRoom(code) {
   prefs.room = code; savePrefs();
   $("s-room").textContent = code;
   document.body.classList.add("connected");
-  lastRev = -1; state = null;
-  poll();
+  lastRev = -1; state = null; lastEventAt = -Infinity;
+  hostPushOff = false;   // until the room's first view says otherwise
+  startPush();     // its "connecting" status starts the poll at once, until the stream answers
+  syncPolling();
   acquireWakeLock();
-  if (!pollTimer) {
-    pollTimer = setInterval(poll, 1000);   // pull host state
-    uiTimer = setInterval(uiTick, 250);    // smooth now-playing progress between polls
-  }
+  if (!uiTimer) uiTimer = setInterval(uiTick, 250);   // smooth now-playing progress between events
 }
 
 // ---------------------------------------------------------------------------
-// Screen wake lock. A phone that auto-locks mid-song stops polling and freezes its lyric
+// Screen wake lock. A phone that auto-locks mid-song stops updating and freezes its lyric
 // clock, and the guest has no idea why — they just see a stale screen. The Wake Lock API is
 // released by the browser whenever the page is hidden, so it must be re-acquired on every
 // return to visibility, not just once. Feature-detected: iOS Safari has no Wake Lock, and
@@ -172,6 +248,7 @@ function loadPrefs() {
     const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null");
     if (p && typeof p === "object") prefs = { ...prefs, ...p };
   } catch (_) {}
+  prefs.lyricStyle = prefs.lyricStyle === "scroll" ? "scroll" : "stage";
 }
 function savePrefs() {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
@@ -184,6 +261,7 @@ function applyPrefs() {
   $("s-text").value = prefs.text;
   $("s-lines").value = prefs.lyricLines;
   $("s-lyricsize").value = Math.round(prefs.lyricScale * 100);
+  $("s-lyricstyle").value = prefs.lyricStyle;
   applyLyricDisplay();
 }
 
@@ -195,34 +273,136 @@ function applyLyricDisplay() {
   prefs.lyricScale = clamp(prefs.lyricScale, 0.7, 1.8);
   $("s-lines-val").textContent = prefs.lyricLines;
   $("s-lyricsize-val").textContent = `${Math.round(prefs.lyricScale * 100)}%`;
-  // The size is CSS (it composes with the Text-size choice); the line count is the engine's.
+  // The size is CSS (it composes with the Text-size choice); the line count is the scroll engine's.
   document.documentElement.style.setProperty("--lyric-scale", prefs.lyricScale);
-  if (lyricsEngine) lyricsEngine.setOptions({ lineCount: prefs.lyricLines });
+  if (lyrics) {
+    lyrics.setOptions({ lineCount: prefs.lyricLines });
+    lyrics.redraw();   // the stage measures its font from the container: re-measure after a size change
+  }
 }
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, +v || lo)); }
 
 // ---------------------------------------------------------------------------
-// Relay I/O (all scoped to the room)
+// Live channel: the event stream, the fallback poll, and commands (all scoped to the room)
 // ---------------------------------------------------------------------------
+function startPush() {
+  stopPush();
+  if (!room || hostPushOff) return;
+  const client = createPushClient({
+    url: `/api/remote/events?room=${encodeURIComponent(room)}&role=guest&cid=${cid}`,
+    // A healthy stream opens with `state` at once. 3.5 s (not the default 4) puts a stream a
+    // proxy holds silent at "polling" in 3 × 3.5 + 2 × 2 = 14.5 s — inside the 15 s budget (R11).
+    // The poll runs throughout anyway: "connecting" polls too.
+    firstEventMs: 3500,
+    onEvent: (type, data) => { if (push === client) onPushEvent(type, data); },
+    onStatus: (s) => {
+      if (push !== client) return;   // a stopped client's last word
+      pushStatus = s;
+      syncPolling();
+      renderConn();
+    },
+  });
+  push = client;
+  client.start();
+}
+
+function stopPush() {
+  const p = push;
+  push = null;
+  if (p) p.stop();
+  pushStatus = "off";
+}
+
+// Poll only while push is not carrying the room ("connecting" or "fallback"), and never on a
+// backgrounded phone (battery/network). Starts with an immediate poll.
+function syncPolling() {
+  const want = !!room && !document.hidden && pushStatus !== "push";
+  if (want && !pollTimer) { pollTimer = setInterval(poll, 1000); poll(); }
+  else if (!want && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  renderConn();
+}
+
+function onPushEvent(type, data) {
+  if (!room) return;
+  lastPushAt = performance.now();
+  lastOk = lastPushAt;
+  if (type === "state") { if (data.ok !== false) applyView(data); }
+  else if (type === "tick") applyTick(data);
+  else if (type === "gone") noRoom();
+}
+
 async function poll() {
-  if (!room || document.hidden) return; // don't poll a backgrounded phone (battery/network)
+  if (!room || document.hidden) return;
+  const sentAt = performance.now();
   try {
     const res = await fetch(`/api/remote/state?room=${room}&since=${Math.max(0, lastRev)}`);
     const d = await res.json();
+    if (!room) return;
     lastOk = performance.now();
-    if (d && d.error === "no-room") {
-      // The host stopped pushing (tab closed / server restart) — stay on the code and keep
-      // polling; the room resumes when the host comes back. renderConn shows "waiting".
-      state = null; clock = null;
-      renderNow(); renderQueue(); renderSettingsMirror(); refreshLyrics();
-    } else if (d && d.ok && !d.unchanged) {
-      state = d; lastRev = d.rev; stamp = performance.now();
-      reconcile(); // drop optimistic overrides the host has now caught up to
-      refreshClock();
-      renderNow(); renderQueue(); renderSettingsMirror(); refreshLyrics();
-    }
+    // The stream answered while this poll was in flight: its view is newer, keep it.
+    if (lastPushAt > sentAt) { renderConn(); return; }
+    if (d && d.error === "no-room") noRoom();
+    else if (d && d.ok && !d.unchanged) applyView(d);
+    // `unchanged` proves the SERVER answers, not that the host pushed: lastEventAt stays.
   } catch (_) { /* server unreachable — the status dot reflects it */ }
+  renderConn();
+}
+
+// A full room view, from the stream (`state`) or a poll.
+function applyView(d) {
+  state = d;
+  if (typeof d.rev === "number") lastRev = d.rev;
+  stamp = performance.now();
+  lastEventAt = stamp / 1000;
+  reconcile();     // drop optimistic overrides the host has now caught up to
+  refreshClock();
+  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); refreshLyrics();
+  showNotice(d.notice);
+  followHostPush(d.settings);   // after the view is applied: it may have come over the stream it stops
+  renderConn();
+}
+
+// The host's "Instant updates (push)" toggle, mirrored read-only: off → drop the stream and poll;
+// back on (or absent: an older host) → stream again.
+function followHostPush(settings) {
+  const off = !wantPush(settings);
+  if (off === hostPushOff) return;
+  hostPushOff = off;
+  if (!room) return;
+  if (off) stopPush();
+  else if (!document.hidden) startPush();
+  syncPolling();
+}
+
+// `tick`: only the clock moved — patch it into the last view.
+function applyTick(t) {
+  if (!state) return;   // a stream always opens with `state`; nothing to patch yet
+  const at = performance.now();
+  if (typeof t.rev === "number") { state.rev = t.rev; lastRev = t.rev; }
+  if (typeof t.age === "number") state.age = t.age;
+  const now = state.now;
+  if (now && typeof now === "object") {
+    if (typeof t.position === "number") now.position = t.position;
+    if (typeof t.duration === "number") now.duration = t.duration;
+    if (typeof t.paused === "boolean") now.paused = t.paused;
+    if (t.score === null || typeof t.score === "number") now.score = t.score;
+  }
+  stamp = at;
+  lastEventAt = at / 1000;
+  reconcile();
+  refreshClock();
+  renderNow();
+  if (activeTab === "queue") renderQueue();   // the "in ~N min" estimates move with the clock
+  refreshLyrics();   // cheap unless the song's duration just became known (an unsynced re-publish)
+  renderConn();
+}
+
+// The host stopped pushing (tab closed / server restart) — stay on the code; the room resumes
+// when the host comes back. renderConn shows "waiting".
+function noRoom() {
+  state = null; clock = null;
+  renderNow(); renderQueue(); renderSettingsMirror(); renderSheet(); refreshLyrics();
   renderConn();
 }
 
@@ -234,23 +414,31 @@ function cmd(obj) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...obj, by: prefs.nickname || "", room }),
-    }).then(() => poll()).catch(() => {});
+    }).then(() => { if (pushStatus !== "push") poll(); }).catch(() => {});   // push delivers the result itself
   } catch (_) {}
 }
+
+// The host's read-only gates, mirrored in its settings (absent on an older host: allowed).
+const hostSetting = (k) => (state && state.settings ? state.settings[k] : undefined);
+const canPriority = () => !(hostSetting("remote.guestPriority") === false || hostSetting("queue.fairPlay") === true);
+const canPlayNow = () => hostSetting("remote.guestPlayNow") === true;
 
 // ---------------------------------------------------------------------------
 // Optimistic overlay — "opportunistic update" for responsiveness
 // ---------------------------------------------------------------------------
-// A guest's action reaches the host through a ~1–2 s relay (host drains commands on its ~1 s tick,
-// then pushes state back). To keep the UI responsive we apply the user's intent LOCALLY at once and
-// HOLD it against the mirror for HOLD_MS: the render functions read the EFFECTIVE value (optimistic if
-// held, else the host mirror), so a poll returning the not-yet-applied host state can't clobber the
-// user mid-action. `reconcile()` clears an override the instant the mirror actually reflects it (seamless
-// handoff, no masking of the real value); anything not yet applied simply ages out after HOLD_MS (and a
-// dropped command quietly reverts then). Generalizes the seek slider's `seeking` flag.
+// A guest's action reaches the host through the relay, and its result comes back on the next
+// state. To keep the UI responsive we apply the user's intent LOCALLY at once and HOLD it
+// against the mirror: the render functions read the EFFECTIVE value (optimistic if held, else
+// the host mirror), so a view returning the not-yet-applied host state can't clobber the user
+// mid-action. `reconcile()` clears an override the instant the mirror actually reflects it
+// (seamless handoff, no masking of the real value); anything not yet applied simply ages out
+// (and a dropped command quietly reverts then). The hold is short while push is live (the
+// answer is ~instant) and the old 2.5 s on the polling path.
 const HOLD_MS = 2500;
+const HOLD_PUSH_MS = 800;
+const holdMs = () => (pushStatus === "push" ? HOLD_PUSH_MS : HOLD_MS);
 const opt = {};                                        // key -> { v, t }
-const optActive = (k) => !!opt[k] && performance.now() - opt[k].t < HOLD_MS;
+const optActive = (k) => !!opt[k] && performance.now() - opt[k].t < holdMs();
 const optGet = (k, fallback) => (optActive(k) ? opt[k].v : fallback);
 function optSet(k, v) { opt[k] = { v, t: performance.now() }; }
 
@@ -264,8 +452,7 @@ function effNow() {                                    // now-playing, with opti
 }
 // Interpolated position (from the optimistic seek base when one is held). Two corrections
 // the naive "position + time since we got it" misses, both of which the lyric clock rides on:
-//   - hostAge(): the snapshot was already up to a second old when we polled it (our poll phase
-//     is unrelated to the host's push phase); serve.py measures that staleness for us;
+//   - hostAge(): the view was already a little old when it reached us (its age on the server);
 //   - rate: at tempo ≠ 1 the song advances `rate` seconds per wall second.
 function effPos(now) {
   const rate = playRate();
@@ -274,18 +461,36 @@ function effPos(now) {
   const from = seek ? opt["position"].t : stamp;
   return now.paused ? base : base + ((performance.now() - from) / 1000) * rate;
 }
-// Seconds the last polled snapshot had already been sitting on the server. Clamped: a wild
-// value (clock skew / a stale field from an older server) must not fling the position.
+// Seconds the last view had already been sitting on the server. Clamped: a wild value (a stale
+// field from an older server) must not fling the position.
 function hostAge() {
   const a = state && typeof state.age === "number" ? state.age : 0;
   return a > 0 && a < 5 ? a : 0;
 }
 const playRate = () => +setVal("audio.tempo", 1) || 1;
-// The host bumps `ts` every ~1 s while it's syncing; a stale/absent ts ⇒ its tab is closed,
-// remote is off, or its push loop is throttled. Drives the header chip AND freezes the lyric
-// clock (a clock with no host behind it is a clock that lies).
-const hostLive = () => !!(state && state.ts && (Date.now() / 1000 - state.ts) < 6);
-// After a fresh poll, drop any optimistic override the host has now caught up to (instant handoff).
+// Is the host alive? A fresh view within 6 s on THIS device's clock, and the server says the
+// host's last push is under 6 s old. Drives the header chip AND freezes the lyric clock (a clock
+// with no host behind it is a clock that lies). Never compares the server's `ts` with Date.now():
+// that froze every phone whose clock was off.
+const hostLive = () => !!state && hostIsLive({ lastEventAt, age: state.age, now: performance.now() / 1000 });
+
+// Two queue rows are the same song: by catalogue row when both carry one (a phone's optimistic
+// row has no host id), else by id (YouTube rows, an older host).
+const sameRow = (a, b) => !!a && !!b && ((a.ref && b.ref) ? a.ref.i === b.ref.i : a.id === b.id);
+function sameQueue(a, b) {
+  if (a.length !== b.length) return false;
+  for (let k = 0; k < a.length; k++) if (!sameRow(a[k], b[k])) return false;
+  return true;
+}
+// The host's now-playing is the song an optimistic play-now/next named.
+function sameNow(host, mine) {
+  if (!host || !mine) return false;
+  if (host.id === mine.id) return true;
+  return !!mine.ref && String(host.code ?? "") === String(mine.ref.code ?? "")
+    && host.name === mine.name && host.kind === mine.kind;
+}
+
+// After a fresh view, drop any optimistic override the host has now caught up to (instant handoff).
 function reconcile() {
   const s = (state && state.settings) || {}, now = state && state.now, q = (state && state.queue) || [];
   for (const k of Object.keys(opt)) {
@@ -293,11 +498,8 @@ function reconcile() {
     if (k === "position") continue;                    // rides the hold; interpolation stays continuous
     if (k.startsWith("set:")) { if (s[k.slice(4)] === opt[k].v) delete opt[k]; }
     else if (k === "paused") { if (now && now.paused === opt[k].v) delete opt[k]; }
-    else if (k === "now") { if (now && opt[k].v && now.id === opt[k].v.id) delete opt[k]; }
-    else if (k === "queue") {
-      const ids = (a) => a.map((x) => x.id).join("");
-      if (ids(q) === ids(opt[k].v)) delete opt[k];
-    }
+    else if (k === "now") { if (sameNow(now, opt[k].v)) delete opt[k]; }
+    else if (k === "queue") { if (sameQueue(q, opt[k].v)) delete opt[k]; }
   }
 }
 
@@ -318,7 +520,7 @@ function wireReactions() {
     b.setAttribute("aria-label", `Send ${emoji}`);
     b.onclick = () => {
       cmd({ type: "react", emoji });
-      b.classList.add("sent");                                  // local confirmation; the relay is ~1 s
+      b.classList.add("sent");                                  // local confirmation
       setTimeout(() => b.classList.remove("sent"), 420);
     };
     row.appendChild(b);
@@ -335,7 +537,8 @@ function showTab(name) {
   for (const p of document.querySelectorAll(".panel")) p.classList.toggle("active", p.id === `tab-${name}`);
   for (const b of document.querySelectorAll(".tabbar .tab")) b.classList.toggle("active", b.dataset.tab === name);
   if (name === "search") $("r-search").focus();
-  // Lyrics are loaded + animated ONLY while their tab is on screen (no wasted fetch/rAF).
+  if (name === "queue") renderQueue();
+  // Lyrics are fetched + animated ONLY while their tab is on screen (no wasted fetch/rAF).
   syncLyricLoop();
   if (name === "lyrics") refreshLyrics();
 }
@@ -347,18 +550,23 @@ function wireNow() {
   $("now-playpause").onclick = () => {
     const now = effNow();
     if (now) { optSet("paused", !now.paused); cmd({ type: now.paused ? "play" : "pause" }); renderNow(); refreshClock(); }
-    else cmd({ type: "play" });   // nothing loaded → host starts the queue; poll will show it
+    else cmd({ type: "play" });   // nothing loaded → host starts the queue; the next view shows it
   };
   $("now-next").onclick = () => {
     const q = effQueue();
     if (q.length) {                                   // optimistically advance to the next queued song
       const nx = q[0];
-      optSet("now", { id: nx.id, name: nx.name, artist: nx.artist, kind: nx.kind, by: nx.by || "", position: 0, duration: 0, paused: false });
+      optSet("now", { id: nx.id, name: nx.name, artist: nx.artist, kind: nx.kind, code: nx.code, ref: nx.ref, by: nx.by || "", position: 0, duration: 0, paused: false });
       optSet("position", 0);
       optSet("queue", q.slice(1));
       renderNow(); renderQueue(); refreshClock(); refreshLyrics();
     }
     cmd({ type: "next" });
+  };
+  $("now-restart").onclick = () => {
+    if (!effNow()) return;
+    optSet("position", 0); uiTick(); refreshClock();
+    cmd({ type: "restart" });
   };
   const seek = $("now-seek");
   seek.oninput = () => { seeking = true; };
@@ -412,6 +620,7 @@ function renderNow() {
   const sc = $("now-score");
   if (sc) sc.textContent = now && now.score != null ? `★ ${now.score}` : "";
   $("now-playpause").textContent = now && !now.paused ? "❚❚" : "▶";
+  $("now-restart").disabled = !now;
   // reflect the effective key/tempo/volume (optimistic if the guest just changed it, else the host mirror)
   const vol = Math.round(setVal("audio.volume", 0.9) * 100);
   if (document.activeElement !== $("now-vol")) $("now-vol").value = vol;
@@ -426,8 +635,9 @@ function renderNow() {
   uiTick();
 }
 
-// Smooth the seek bar/time between 1-Hz polls by extrapolating the position locally.
+// Smooth the seek bar/time between views by extrapolating the position locally.
 function uiTick() {
+  renderConn();
   const now = effNow();
   const seek = $("now-seek");
   if (!now || !(now.duration > 0)) {
@@ -442,14 +652,13 @@ function uiTick() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2 — Lyrics (rendered on the phone; only the clock comes off the relay)
+// Tab 2 — Lyrics (the host's published document; only the clock comes off the live channel)
 // ---------------------------------------------------------------------------
-// Why local: the relay is a ~1 Hz half-duplex poll, so streaming a per-syllable wipe
-// through it is hopeless. Instead the phone fetches + parses the song itself — the same
-// parser and the same LyricsEngine the host uses — and drives it from a locally
-// free-running clock that each poll disciplines (sync-clock.js). Result: lyric motion is
-// frame-accurate on the phone, and the only error left is one-way network latency, which
-// the per-device nudge below absorbs.
+// The host publishes one lyric document per song (`songRev` counts them). The phone fetches it
+// when songRev changes, feeds the SAME engines the host uses (stage rows or the scroll column,
+// both loaded so switching style is instant), and drives them from a locally free-running clock
+// that each view disciplines (sync-clock.js). Result: lyric motion is frame-accurate on the
+// phone, and the only error left is one-way network latency, which the per-device nudge absorbs.
 
 function wireLyrics() {
   const n = $("l-nudge");
@@ -460,8 +669,8 @@ function wireLyrics() {
   n.onchange = () => savePrefs();
 }
 
-// Fold the newest host snapshot into the local clock (called on every fresh poll AND right
-// after an optimistic transport action, so the lyrics react on the same tick as the button).
+// Fold the newest host view into the local clock (called on every fresh view AND right after an
+// optimistic transport action, so the lyrics react on the same tick as the button).
 function refreshClock() {
   const now = effNow();
   if (!now) { clock = null; return; }
@@ -482,6 +691,11 @@ function lyricOffsetSec() {
 }
 
 const lyricsTabLive = () => activeTab === "lyrics" && !document.hidden;
+const currentSongRev = () => (state && state.now ? (Number(state.songRev) || 0) : 0);
+const currentHostId = () => (state && state.now ? String(state.now.id ?? "") : "");
+// "" while nothing is published (songRev 0) or nothing plays.
+const currentLyricKey = () => { const rev = currentSongRev(); return rev ? `${rev}|${currentHostId()}` : ""; };
+const LYRIC_MISS_REASK_MS = 5000;
 
 // Start/stop the render loop to match the tab's visibility.
 function syncLyricLoop() {
@@ -493,40 +707,165 @@ function syncLyricLoop() {
   }
 }
 
+// The loaded document belongs to what is on screen now. False while an optimistic next / play
+// now is pending, or the host started a song whose document has not arrived yet.
+function lyricShowing(now) {
+  return lyricKind === "lines" && !!now && lyricKey === currentLyricKey() && now.id === lyricDocId;
+}
+
+function setLyricStale(v) {
+  if (v === lyricStale) return;
+  lyricStale = v;
+  $("l-lyrics").classList.toggle("stale", v);
+}
+
 function lyricFrame() {
   lyricRaf = lyricsTabLive() ? requestAnimationFrame(lyricFrame) : 0;
-  if (!lyricsEngine || !clock) return;
+  if (!lyrics) return;
+  const now = effNow();
+  const showing = lyricShowing(now);
+  setLyricStale(lyricKind === "lines" && !showing);
+  if (!showing || !clock) return;
   // FREEZE rather than free-run once the host has gone quiet (tab closed, server restarted,
   // or a backgrounded host whose push loop got throttled). Extrapolating against a host that
   // may not even be playing is worse than holding — and the header already says "waiting for
-  // host". `syncClock` snaps back the moment real snapshots resume.
+  // host". `syncClock` snaps back the moment real views resume.
   if (!hostLive()) return;
-  lyricsEngine.update(clockTime(clock, performance.now()) + lyricOffsetSec());
+  lyrics.update(clockTime(clock, performance.now()) + lyricOffsetSec());
 }
 
-// Load (or reload) the lyrics for whatever is playing now. No-ops unless the tab is on
-// screen, so a guest who never opens it never downloads a song file.
-async function refreshLyrics() {
+function ensureLyrics() {
+  if (lyrics) return lyrics;
+  const el = $("l-lyrics");
+  // The scroll engine first: it empties the container, the stage engine then adds its canvas.
+  const scroll = new LyricsEngine(el, { lineCount: prefs.lyricLines, smooth: true, mergeLines: 1 });
+  const stage = new StageLyricsEngine(el, {});
+  lyrics = new LyricsSwitch(scroll, stage, prefs.lyricStyle);
+  return lyrics;
+}
+
+function resetLyrics() {
+  lyricKey = ""; lyricWant = ""; lyricDocId = ""; lyricKind = ""; lyricNote = ""; lyricDocKey = "";
+  lyricMissAt = 0;
+  lyricDurKnown = false;
+  lyricToken++;
+  clearTimeout(lyricRetry); lyricRetry = null;
+  if (lyrics) lyrics.clear();
+  setLyricStale(false);
+}
+
+// Bring the Lyrics tab up to date with the room. No-ops unless the tab is on screen, so a guest
+// who never opens it never fetches a document.
+function refreshLyrics() {
   if (!lyricsTabLive()) return;
-  if (!lyricsEngine) lyricsEngine = new LyricsEngine($("l-lyrics"), { lineCount: prefs.lyricLines, smooth: true, mergeLines: 1 });
+  ensureLyrics();
   const now = effNow();
-  const id = now ? now.id : "";
-  if (id === lyricSongId) return;          // same song → nothing to do (the rAF loop has it)
-  lyricSongId = id;
-  const token = ++lyricToken;
-  lyricsEngine.clear();
-  setLyricHead(now, id ? "loading lyrics…" : "");
-  if (!id) return;
-  try {
-    const r = await lyricsFor(now);
-    if (token !== lyricToken) return;      // the song moved on while we were fetching
-    if (r.baked) { setLyricHead(now, `lyrics are part of the ${now.kind === "youtube" ? "video" : "picture"}`); return; }
-    setLyricHead(now, lyricsEngine.loadLines(r.lines) ? "" : "instrumental — no lyrics in this file");
-  } catch (e) {
-    if (token !== lyricToken) return;
-    lyricSongId = null;                    // let the next poll retry
-    setLyricHead(now, `couldn't load lyrics — ${e.message}`);
+  const key = currentLyricKey();
+  if (!now) {
+    if (lyricKey || lyricWant || lyricKind) resetLyrics();
+    setLyricHead(null, "");
+    return;
   }
+  if (!key) {                                       // nothing published yet: a quiet head
+    if (lyricKind) resetLyrics();
+    setLyricHead(now, "");
+    return;
+  }
+  if (key !== lyricKey) {
+    if (key !== lyricWant) { lyricWant = key; lyricTries = 0; fetchDoc(key); }
+    setLyricStale(lyricKind === "lines");
+    setLyricHead(now, "loading lyrics…");
+    return;
+  }
+  const showing = lyricKind !== "lines" || lyricShowing(now);
+  setLyricHead(now, showing ? lyricNote : "loading lyrics…");
+  // Never published (or published after the retries gave up — a relay restart re-publishes
+  // late): ask again now and then while the tab is open.
+  if (lyricMissAt && !lyricWant && performance.now() - lyricMissAt > LYRIC_MISS_REASK_MS) {
+    lyricMissAt = performance.now();
+    lyricWant = key; lyricTries = LYRIC_RETRY_MS.length;   // one try, no retry ladder
+    fetchDoc(key);
+    return;
+  }
+  // An unsynced .txt is timed only once the host knows the song's length; the host then
+  // re-publishes the SAME songRev. Fetch once more after the duration first shows up.
+  if (lyricKind === "lines" && !lyricDurKnown && state.now.duration > 0) {
+    lyricDurKnown = true;
+    recheckDoc(key);
+  }
+}
+
+async function getSongDoc() {
+  try { return await (await fetch(`/api/remote/song?room=${encodeURIComponent(room)}`)).json(); }
+  catch (_) { return null; }
+}
+
+// The published document answers `key` only when BOTH halves match: its songRev, and its id
+// against the host's current now.id (during a song load now.id moves before songRev does).
+function docMatches(d, key) {
+  return !!d && d.ok === true && `${d.songRev}|${String(d.id ?? "")}` === key;
+}
+
+async function fetchDoc(key) {
+  const token = ++lyricToken;
+  clearTimeout(lyricRetry); lyricRetry = null;
+  const d = await getSongDoc();
+  if (token !== lyricToken || lyricWant !== key || !room) return;   // the song moved on meanwhile
+  if (key !== currentLyricKey()) { lyricWant = ""; refreshLyrics(); return; }   // …while the tab was hidden
+  if (docMatches(d, key)) { applyDoc(key, d, ""); refreshLyrics(); return; }
+  // Not published yet, or still the previous song's (the host publishes right after a song
+  // loads, and again after a relay restart): try again a few times, then say where they are.
+  if (lyricTries < LYRIC_RETRY_MS.length) {
+    lyricRetry = setTimeout(() => {
+      lyricRetry = null;
+      if (token !== lyricToken || lyricWant !== key) return;
+      if (!lyricsTabLive()) { lyricWant = ""; return; }     // resumes when the tab is back
+      fetchDoc(key);
+    }, LYRIC_RETRY_MS[lyricTries++]);
+    return;
+  }
+  applyDoc(key, { id: currentHostId(), doc: null }, "lyrics are on the big screen");
+  lyricMissAt = performance.now();
+  refreshLyrics();
+}
+
+function recheckDoc(key) {
+  setTimeout(async () => {
+    if (lyricKey !== key || lyricWant || !room || !lyricsTabLive()) return;
+    const d = await getSongDoc();
+    if (lyricKey !== key || lyricWant || key !== currentLyricKey() || !docMatches(d, key)) return;
+    if (JSON.stringify(d.doc ?? null) === lyricDocKey) return;   // the same document: nothing to do
+    applyDoc(key, d, "");
+    refreshLyrics();
+  }, 1000);
+}
+
+// Load one published document into both engines (or settle on the note that replaces them).
+function applyDoc(key, d, note) {
+  lyricWant = "";
+  lyricKey = key;
+  lyricMissAt = 0;
+  lyricDocId = String(d.id ?? "");
+  lyricDocKey = JSON.stringify(d.doc ?? null);
+  lyricDurKnown = !!(state && state.now && state.now.duration > 0);
+  let parsed = null;
+  try { parsed = d.doc ? parseLyricsDoc(d.doc) : null; } catch (_) { parsed = null; }
+  const now = effNow();
+  if (!parsed || parsed.kind !== "lines") {
+    lyrics.clear();
+    if (parsed && parsed.kind === "baked") {
+      lyricKind = "baked";
+      lyricNote = `lyrics are part of the ${now && now.kind === "youtube" ? "video" : "picture"}`;
+    } else {
+      lyricKind = "none";
+      lyricNote = note || (d.doc && !parsed ? "lyrics are on the big screen" : "no lyrics for this song");
+    }
+    return;
+  }
+  lyricKind = "lines";
+  // LyricsSwitch.loadDoc: the stage engine takes the document (cues, tempo), the scroll engine the
+  // same raw lines.
+  lyricNote = lyrics.loadDoc(parsed) ? "" : "instrumental — no lyrics in this file";
 }
 
 function setLyricHead(now, note) {
@@ -534,131 +873,206 @@ function setLyricHead(now, note) {
   $("l-state").textContent = note || (now && now.artist) || "";
 }
 
-// Resolve one song's lyric lines, cached per id (tab-switching mustn't refetch).
-async function lyricsFor(now) {
-  const hit = lyricCache.get(now.id);
-  if (hit) return hit;
-  // VIDEO / YouTube bake their lyrics into the picture — there is nothing to parse.
-  if (now.kind === "video" || now.kind === "youtube") return cacheLyrics(now.id, { baked: true });
-
-  const song = catalog.getById(now.id);
-  if (!song) throw new Error("not in this phone's songbook");
-
-  if (song.kind === "audio") {             // recorded audio + a sidecar lyric file
-    const url = Catalog.lyricsUrl(song);
-    if (!url) return cacheLyrics(now.id, { lines: [] });
-    const ext = (song.lyrics.split(".").pop() || "").toLowerCase();
-    if (ext === "kar" || ext === "mid" || ext === "midi") {
-      return cacheLyrics(now.id, { lines: await linesFromMidiUrl(url) });
-    }
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`sidecar ${res.status}`);
-    const { lines, synced } = linesFromLyricFile(ext, await res.text());
-    if (!synced) distributeLineTimes(lines, now.duration);  // plain .txt → pace it across the song
-    return cacheLyrics(now.id, { lines, unsynced: !synced });
-  }
-  return cacheLyrics(now.id, { lines: await linesFromMidiUrl(Catalog.fileUrl(song)) });
-}
-
-function cacheLyrics(id, entry) {
-  if (lyricCache.size > 40) lyricCache.clear();   // a party's worth; keeps the phone's memory flat
-  // An unsynced .txt was paced against THIS song's duration — safe to cache, same song.
-  lyricCache.set(id, entry);
-  return entry;
-}
-
-// Fetch a MIDI/KAR file and pull its timed lines out (same path the host takes).
-async function linesFromMidiUrl(url) {
-  if (!url) throw new Error("no file");
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`song ${res.status}`);
-  const parsed = parseMidi(await toMidiBytes(await res.arrayBuffer()));
-  return buildLines(parsed.lyricEvents, makeTickToSeconds(parsed));
-}
-
-// Song files are raw-DEFLATE compressed (§5.2). pako is ~46 KB, so it is injected LAZILY —
-// a guest who only ever uses the transport never pays for it.
-let pakoLoad = null;
-function ensurePako() {
-  if (window.pako) return Promise.resolve(window.pako);
-  if (!pakoLoad) {
-    pakoLoad = new Promise((resolve, reject) => {
-      const s = document.createElement("script");
-      s.src = "./vendor/pako.min.js";
-      s.onload = () => (window.pako ? resolve(window.pako) : reject(new Error("pako missing")));
-      s.onerror = () => { pakoLoad = null; reject(new Error("pako failed to load")); };
-      document.head.appendChild(s);
-    });
-  }
-  return pakoLoad;
-}
-
-async function toMidiBytes(buf) {
-  const u8 = new Uint8Array(buf);
-  if (u8[0] === 0x4d && u8[1] === 0x54 && u8[2] === 0x68 && u8[3] === 0x64) return buf; // "MThd"
-  const pako = await ensurePako();
-  const out = pako.inflateRaw(u8);
-  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
-}
-
 // ---------------------------------------------------------------------------
-// Tab 3 — Search  (local Catalog + optional YouTube)
+// Tab 3 — Search  (the compact songbook in the host's three tiers + optional YouTube)
 // ---------------------------------------------------------------------------
+let searchGen = 0;
+let results = { q: "", rows: [], close: [], yt: [], looking: false };
+
 function wireSearch() {
   const input = $("r-search");
   let deb;
   input.oninput = () => { clearTimeout(deb); deb = setTimeout(() => runSearch(input.value), 150); };
+  // Enter: search now and drop the keyboard so the results are visible.
+  input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(deb); runSearch(input.value); input.blur(); } };
   $("r-yt").onclick = () => { ytOn = !ytOn; $("r-yt").classList.toggle("on", ytOn); runSearch(input.value); };
 }
 
-async function runSearch(q) {
-  q = (q || "").trim();
-  const hint = $("r-search-hint");
-  if (!q) { $("r-results").innerHTML = ""; hint.style.display = ""; hint.textContent = "Type to search the songbook."; return; }
-  hint.style.display = "none";
-  const local = catalog.search(q, 150);
-  renderResults(local);
-  if (ytOn) {
-    try {
-      const res = await fetch("/api/youtube-search", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q: `${q} karaoke` }),
-      });
-      const d = await res.json();
-      if ($("r-search").value.trim() !== q) return;   // query moved on
-      const yt = ((d && d.items) || []).map((it) => Catalog.makeYoutubeRecord(it)).filter(Boolean);
-      renderResults(local.concat(yt));
-    } catch (_) {}
+function refreshSearch() { runSearch($("r-search").value); }
+
+// Tiers 1 and 2, as library-view.js searchTiers computes them on the host (mirrored here so the
+// phone does not import the host's list UI): a digits-only query lists every song numbered
+// exactly that (leading zeros ignored, every songbook, in songbook order), then the code-prefix
+// matches; anything else is exactly Catalog.search, in its order.
+function phoneTiers(q) {
+  if (/^\d+$/.test(q.trim())) {
+    const exact = orderNumberMatches(catalog.lookupCode(normalizeCode(q), "all"), SOURCES);
+    return { rows: mergeTiers(exact, catalog.search(q, SEARCH_LIMIT)), numeric: true };
   }
+  return { rows: catalog.search(q, SEARCH_LIMIT), numeric: false };
 }
 
-function renderResults(songs) {
+function runSearch(raw) {
+  const q = String(raw || "").trim();
+  const gen = ++searchGen;
+  if (!q) { results = { q, rows: [], close: [], yt: [], looking: false }; renderResults(); return; }
+  const tiers = phoneTiers(q);
+  const rows = tiers.rows.slice(0, SEARCH_LIMIT);
+  // Tier 3 — close matches (typos), only for a short exact tier and a word of 4+ letters.
+  const wantClose = !tiers.numeric && tiers.rows.length < FUZZY_BELOW && !!searchClient && searchClient.ready
+    && tokenize(q).some((t) => t.length >= 4);
+  results = { q, rows, close: [], yt: [], looking: wantClose && !rows.length };
+  renderResults();
+  if (wantClose) {
+    const songs = catalog.songs;
+    searchClient.query(q, { exclude: tiers.rows.map((s) => s.i) }).then((hits) => {
+      if (gen !== searchGen || catalog.songs !== songs) return;   // the query (or the songbook) moved on
+      results.close = (hits || []).map((h) => songs[h.i]).filter(Boolean).slice(0, MAX_CLOSE);
+      results.looking = false;
+      renderResults();
+    }).catch(() => { if (gen === searchGen) { results.looking = false; renderResults(); } });
+  }
+  if (ytOn) youtubeSearch(q, gen);
+}
+
+async function youtubeSearch(q, gen) {
+  try {
+    const res = await fetch("/api/youtube-search", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: `${q} karaoke` }),
+    });
+    const d = await res.json();
+    if (gen !== searchGen) return;   // query moved on
+    results.yt = ((d && d.items) || []).map((it) => Catalog.makeYoutubeRecord(it)).filter(Boolean);
+    renderResults();
+  } catch (_) {}
+}
+
+function setSearchHint(text) {
+  const hint = $("r-search-hint");
+  hint.style.display = text ? "" : "none";
+  hint.textContent = text || "";
+}
+
+// Exact rows, then the close rows ("≈"), then YouTube — appended rows never move the ones above.
+function renderResults() {
   const ul = $("r-results");
   ul.innerHTML = "";
-  for (const s of songs) ul.appendChild(songRow(s));
-  if (!songs.length) { $("r-search-hint").style.display = ""; $("r-search-hint").textContent = "No matches."; }
+  const { q, rows, close, yt, looking } = results;
+  const frag = document.createDocumentFragment();
+  for (const s of rows) frag.appendChild(songRow(s, false));
+  for (const s of close) frag.appendChild(songRow(s, true));
+  for (const s of yt) frag.appendChild(songRow(s, false));
+  ul.appendChild(frag);
+  const n = rows.length + close.length + yt.length;
+  if (n) setSearchHint("");
+  else if (songbook === "off") setSearchHint(ytOn && q ? "No matches." : "The songbook isn't available — the controls still work.");
+  else if (songbook === "loading") setSearchHint(q ? "Loading the songbook…" : "Type to search the songbook.");
+  else if (!q) setSearchHint("Type to search the songbook.");
+  else setSearchHint(looking ? "Looking for close spellings…" : "No matches.");
 }
 
-function songRow(s) {
+const hasCode = (s) => s.code !== "" && s.code != null;
+
+// A row: kind icon · number (the songbook chip under it) · title / artist · [≈]. One button:
+// a tap opens the song sheet.
+function songRow(s, close) {
   const li = document.createElement("li");
-  li.className = "song";
-  const icon = document.createElement("span"); icon.className = "kind"; icon.textContent = KIND_ICON[s.kind] || "🎵";
-  const meta = document.createElement("div"); meta.className = "meta";
-  const t = document.createElement("div"); t.className = "t"; t.textContent = s.name || "(untitled)";
-  const a = document.createElement("div"); a.className = "a"; a.textContent = s.artistName || "";
-  meta.append(t, a);
-  const add = document.createElement("button"); add.className = "add"; add.textContent = "＋"; add.title = "Add to queue";
-  add.onclick = () => {
-    // optimistically append to the queue (mirror shape: id/name/artist/kind/code/by) so the Queue tab updates now
-    optSet("queue", [...effQueue(), { id: s.id, name: s.name, artist: s.artistName || "", kind: s.kind, code: s.code || "", by: prefs.nickname || "" }]);
-    renderQueue();
-    cmd({ type: "enqueue", id: s.id, name: s.name, artist: s.artistName || "",
-          kind: s.kind, code: s.code || "", videoId: s.videoId || "" });
-    add.textContent = "✓"; add.classList.add("done");
-    setTimeout(() => { add.textContent = "＋"; add.classList.remove("done"); }, 900);
-  };
-  li.append(icon, meta, add);
+  li.className = "song" + (close ? " close-match" : "");
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "song-btn";
+  b.setAttribute("aria-haspopup", "dialog");
+  const icon = el("span", "kind", KIND_ICON[s.kind] || "🎵");
+  const num = el("span", "num");
+  num.appendChild(el("span", "code", hasCode(s) ? String(s.code) : ""));
+  if (s.source) {
+    const chip = el("span", "src-chip", s.source);
+    chip.title = `Songbook: ${s.source}`;
+    num.appendChild(chip);
+  }
+  const meta = el("span", "meta");
+  meta.append(el("span", "t", s.name || "(untitled)"), el("span", "a", s.artistName || ""));
+  b.append(icon, num, meta);
+  if (close) {
+    // A glyph, not a colour: role="img" is what lets the aria-label name it.
+    const mark = el("span", "close-mark", "≈");
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", "close match");
+    mark.title = "Close match";
+    b.appendChild(mark);
+  }
+  b.onclick = () => openSheet(s, b);
+  li.appendChild(b);
   return li;
+}
+
+// --- the song sheet: Reserve / Play next / Play now ---------------------------------------
+let sheetSong = null;
+let sheetOpener = null;
+
+function wireSheet() {
+  $("sheet-reserve").onclick = () => sheetAct("enqueue");
+  $("sheet-next").onclick = () => sheetAct("priority");
+  $("sheet-now").onclick = () => sheetAct("playnow");
+  $("sheet-cancel").onclick = () => closeSheet();
+  $("sheet-scrim").onclick = () => closeSheet();
+  $("sheet").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); closeSheet(); } });
+}
+
+function openSheet(song, opener) {
+  sheetSong = song;
+  sheetOpener = opener || null;
+  $("sheet-kind").textContent = KIND_ICON[song.kind] || "🎵";
+  $("sheet-title").textContent = song.name || "(untitled)";
+  const sub = [song.artistName || "", hasCode(song) ? `#${song.code}` : "", song.source || ""].filter(Boolean).join(" · ");
+  $("sheet-artist").textContent = sub;
+  renderSheet();
+  $("sheet").hidden = false;
+  document.body.classList.add("sheet-open");
+  $("sheet-reserve").focus();
+}
+
+function closeSheet() {
+  if (!sheetSong && $("sheet").hidden) return;
+  sheetSong = null;
+  $("sheet").hidden = true;
+  document.body.classList.remove("sheet-open");
+  const back = sheetOpener;
+  sheetOpener = null;
+  if (back && back.isConnected) back.focus();
+}
+
+// Play next / Play now follow the host's gates, live: the host may flip them while the sheet is open.
+function renderSheet() {
+  if (!sheetSong) return;
+  $("sheet-next").hidden = !canPriority();
+  $("sheet-now").hidden = !canPlayNow();
+}
+
+function sheetAct(type) {
+  const s = sheetSong;
+  closeSheet();
+  if (s) requestSong(type, s);
+}
+
+// The command naming a song to the host: a library song by its compact row (the host checks the
+// code, then falls back to the code + songbook), a YouTube result by its video id.
+function songCommand(type, s) {
+  if (s.kind === "youtube") return { type, kind: "youtube", videoId: s.videoId || "", name: s.name || "", artist: s.artistName || "" };
+  return { type, ref: { i: s.i, code: s.code }, source: s.source || "", name: s.name || "", artist: s.artistName || "", kind: s.kind };
+}
+
+// The mirror shape of a queued song, for the optimistic overlay (reconciled by ref.i, else id).
+function mirrorRow(s) {
+  const row = { id: s.id, name: s.name || "", artist: s.artistName || "", kind: s.kind, code: s.code || "", by: prefs.nickname || "" };
+  if (s.kind !== "youtube" && Number.isInteger(s.i)) row.ref = { i: s.i, code: s.code };
+  return row;
+}
+
+const REQUEST_SAID = { enqueue: "Reserved", priority: "Playing next", playnow: "Starting" };
+
+function requestSong(type, s) {
+  const row = mirrorRow(s);
+  if (type === "enqueue") optSet("queue", [...effQueue(), row]);
+  else if (type === "priority") optSet("queue", [row, ...effQueue()]);
+  else if (type === "playnow") {
+    optSet("now", { ...row, position: 0, duration: 0, paused: false });
+    optSet("position", 0);
+  }
+  renderNow(); renderQueue(); refreshClock(); refreshLyrics();
+  cmd(songCommand(type, s));
+  showToast(`${REQUEST_SAID[type] || "Sent"}: ${s.name || "(untitled)"}`, 1800);
 }
 
 // ---------------------------------------------------------------------------
@@ -683,10 +1097,11 @@ function renderQueue() {
   // to an average for the rest, so the answer is approximate on purpose and immediate.
   const remaining = now && now.duration > 0 ? Math.max(0, now.duration - effPos(now)) : 0;
   const durations = q.map((s) => s.dur);
-  q.forEach((s, i) => ul.appendChild(queueRow(s, i, q.length, formatEta(queueEta(remaining, durations, i)))));
+  const jump = canPriority();
+  q.forEach((s, i) => ul.appendChild(queueRow(s, i, q.length, formatEta(queueEta(remaining, durations, i)), jump)));
 }
 
-function queueRow(s, i, n, eta) {
+function queueRow(s, i, n, eta, jump) {
   const li = document.createElement("li");
   li.className = "qrow";
   const meta = document.createElement("div"); meta.className = "meta";
@@ -699,9 +1114,16 @@ function queueRow(s, i, n, eta) {
   meta.append(t, a);
   const ctr = document.createElement("div"); ctr.className = "qctl";
   // Every queue mutation carries the song's stable id alongside the index: this phone's view
-  // can be up to ~2 s behind the host, so by the time the command lands the index may point at
-  // a different song (auto-advance, or another guest acting first). The host verifies the id
-  // and ignores the command rather than mutating the wrong row.
+  // can be behind the host, so by the time the command lands the index may point at a different
+  // song (auto-advance, or another guest acting first). The host verifies the id and ignores
+  // the command rather than mutating the wrong row.
+  // "Play next" moves the queued song to the front (a reorder, so it is not queued twice); it is
+  // offered under the same host gates as the sheet's Play next.
+  if (jump && i > 0) {
+    const nx = mkBtn("⤒", "Play next", () => { reorderOpt(i, 0); cmd({ type: "reorder", from: i, to: 0, id: s.id }); });
+    nx.classList.add("jump");
+    ctr.appendChild(nx);
+  }
   const up = mkBtn("↑", "Move up", () => { reorderOpt(i, i - 1); cmd({ type: "reorder", from: i, to: i - 1, id: s.id }); }, i === 0);
   const dn = mkBtn("↓", "Move down", () => { reorderOpt(i, i + 1); cmd({ type: "reorder", from: i, to: i + 1, id: s.id }); }, i === n - 1);
   const rm = mkBtn("✕", "Remove", () => {
@@ -723,6 +1145,7 @@ function reorderOpt(from, to) {
 function mkBtn(label, title, onClick, disabled) {
   const b = document.createElement("button");
   b.textContent = label; b.title = title; b.onclick = onClick;
+  b.setAttribute("aria-label", title);
   if (disabled) b.disabled = true;
   return b;
 }
@@ -733,8 +1156,16 @@ function mkBtn(label, title, onClick, disabled) {
 function wireSettings() {
   $("s-nick").oninput = (e) => { prefs.nickname = e.target.value.slice(0, 24); savePrefs(); };
   $("s-theme").onchange = (e) => { prefs.theme = e.target.value; document.documentElement.dataset.theme = prefs.theme; savePrefs(); };
-  $("s-text").onchange = (e) => { prefs.text = e.target.value; document.documentElement.dataset.text = prefs.text; savePrefs(); };
+  $("s-text").onchange = (e) => {
+    prefs.text = e.target.value; document.documentElement.dataset.text = prefs.text; savePrefs();
+    if (lyrics) lyrics.redraw();
+  };
   // Lyric display (this phone only) — apply live while dragging, persist on release.
+  $("s-lyricstyle").onchange = (e) => {
+    prefs.lyricStyle = e.target.value === "scroll" ? "scroll" : "stage";
+    savePrefs();
+    if (lyrics) lyrics.setStyle(prefs.lyricStyle);
+  };
   $("s-lines").oninput = (e) => { prefs.lyricLines = +e.target.value; applyLyricDisplay(); };
   $("s-lines").onchange = () => savePrefs();
   $("s-lyricsize").oninput = (e) => { prefs.lyricScale = +e.target.value / 100; applyLyricDisplay(); };
@@ -744,7 +1175,7 @@ function wireSettings() {
     optSet("set:lyrics.offsetMs", v); renderSettingsMirror();
     cmd({ type: "setting", path: "lyrics.offsetMs", value: v });
   };
-  $("s-reconnect").onclick = () => { lastRev = -1; poll(); };
+  $("s-reconnect").onclick = () => { lastRev = -1; if (room) { startPush(); syncPolling(); poll(); } };
   $("s-leave").onclick = () => {
     releaseWakeLock();   // no room, no reason to hold the screen awake
     prefs.room = ""; savePrefs(); $("gate-code").value = ""; showGate("");
@@ -759,17 +1190,40 @@ function renderSettingsMirror() {
 }
 
 // ---------------------------------------------------------------------------
-// Connection status
+// Connection status + the toast
 // ---------------------------------------------------------------------------
+const MODE_LABEL = { push: "instant", fallback: "polling", connecting: "connecting…", off: "—" };
+let connShown = "";
 function renderConn() {
-  const reachable = performance.now() - lastOk < 4000;
+  const reachable = pushStatus === "push" || performance.now() - lastOk < 4000;
   let label, cls;
   if (!reachable) { label = "offline"; cls = "bad"; }
   else if (!hostLive()) { label = "waiting for host"; cls = "warn"; }
   else { label = "connected"; cls = "ok"; }
+  const mode = !room ? "—" : hostPushOff ? "polling" : (MODE_LABEL[pushStatus] || "—");
+  const key = `${cls}|${label}|${mode}`;
+  if (key === connShown) return;
+  connShown = key;
   $("conn").className = `conn ${cls}`;
   $("conn-label").textContent = label;
   const st = $("s-status"); if (st) st.textContent = label;
+  const md = $("s-mode"); if (md) md.textContent = mode;
+}
+
+// The host's one-line notice (e.g. "Kai: not allowed by the host"), shown once when it appears.
+function showNotice(n) {
+  const text = typeof n === "string" ? n : "";
+  if (text && text !== lastNotice) showToast(text, 4000);
+  lastNotice = text;
+}
+
+let toastTimer = null;
+function showToast(text, ms = 3000) {
+  const t = $("toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
 // ---------------------------------------------------------------------------
@@ -781,5 +1235,11 @@ function fmt(sec) {
 }
 function fmtKey(k) { k = +k || 0; return k > 0 ? `+${k}` : `${k}`; }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
 
 boot();

@@ -47,6 +47,7 @@
           <div class="seek-times"><span id="now-cur">0:00</span><span id="now-dur">0:00</span></div>
         </div>
         <div class="now-controls">
+          <button id="now-restart" class="ctl" aria-label="Restart the song" title="Restart">⏮</button>
           <button id="now-playpause" class="ctl primary" aria-label="Play/pause">▶</button>
           <button id="now-next" class="ctl" aria-label="Next">⏭</button>
         </div>
@@ -67,9 +68,10 @@
       </div>
     </section>
 
-    <!-- Tab 2: Lyrics — rendered LOCALLY on the phone (the relay only carries the clock).
-         The page fetches + parses the song itself, so the ~1 Hz relay never has to stream
-         lyric text; see src/js/sync-clock.js and §5.21 in CLAUDE.md. -->
+    <!-- Tab 2: Lyrics — rendered LOCALLY on the phone from the lyric document the host
+         publishes for its song (fetched once per song, never on the live channel); the live
+         channel only carries the clock. #l-lyrics holds both engines: the scroll column and the
+         stage canvas (which sizes itself from this box). See src/js/sync-clock.js and §5.21. -->
     <section id="tab-lyrics" class="panel">
       <div class="l-head">
         <div id="l-title" class="l-title">Nothing playing</div>
@@ -125,13 +127,16 @@
           <select id="s-theme"><option value="dark">Dark</option><option value="light">Light</option></select></label>
         <label class="frow"><span>Text size</span>
           <select id="s-text"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
+        <label class="frow"><span>Lyric style</span>
+          <select id="s-lyricstyle"><option value="stage">Stage</option><option value="scroll">Scroll</option></select></label>
         <label class="frow"><span>Lyric lines <em id="s-lines-val">4</em></span>
           <input id="s-lines" type="range" min="2" max="8" step="1" value="4"
-                 aria-label="Lyric lines shown on this phone" /></label>
+                 aria-label="Lyric lines shown on this phone (Scroll style)" /></label>
         <label class="frow"><span>Lyrics size <em id="s-lyricsize-val">100%</em></span>
           <input id="s-lyricsize" type="range" min="70" max="180" step="5" value="100"
                  aria-label="Lyrics size on this phone" /></label>
-        <div class="hint">Only this phone — the karaoke screen keeps its own lyric layout.</div>
+        <div class="hint">Only this phone — the karaoke screen keeps its own lyric layout.
+          Stage shows the big-screen rows; Lyric lines applies to Scroll.</div>
       </div>
 
       <div class="set-group">
@@ -139,6 +144,7 @@
         <div class="hint">Room code: <strong id="s-room">—</strong></div>
         <div class="hint">Host: <span id="s-origin">—</span></div>
         <div class="hint">Status: <span id="s-status">—</span></div>
+        <div class="hint">Updates: <span id="s-mode">—</span></div>
         <button id="s-reconnect" class="btn">Reconnect</button>
         <button id="s-leave" class="btn">Leave room</button>
       </div>
@@ -152,6 +158,24 @@
     <button data-tab="queue" class="tab"><span class="ti">≣</span><span>Queue</span></button>
     <button data-tab="settings" class="tab"><span class="ti">⚙</span><span>You</span></button>
   </nav>
+
+  <!-- Song sheet: a tap on a search result. Play next / Play now follow the host's gates. -->
+  <div id="sheet" class="sheet" hidden>
+    <div id="sheet-scrim" class="sheet-scrim"></div>
+    <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <div class="sheet-head">
+        <span id="sheet-kind" class="kind" aria-hidden="true"></span>
+        <div class="meta"><div id="sheet-title" class="t"></div><div id="sheet-artist" class="a"></div></div>
+      </div>
+      <button id="sheet-reserve" class="sheet-btn primary" type="button">Reserve</button>
+      <button id="sheet-next" class="sheet-btn" type="button">Play next</button>
+      <button id="sheet-now" class="sheet-btn" type="button">Play now</button>
+      <button id="sheet-cancel" class="sheet-btn ghost" type="button">Cancel</button>
+    </div>
+  </div>
+
+  <!-- One-line confirmations and the host's notices ("Kai: not allowed by the host"). -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script type="module" src="./js/remote.js"></script>
 </body>
