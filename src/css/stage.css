@@ -404,7 +404,45 @@ body[data-panel="right"] .ytplayer { width: calc(100% - var(--panel-pad)); }
   .home-room { margin-inline-start: 0; }
 }
 
+/* ---- Easter egg (easter-egg.js; Rae, 2026-11-25) --------------------------------
+   ↑↑↓↓←→←→ A B Enter: the picture rises from the bottom edge, dances, sinks back — 5 s in all
+   (EGG_MS). Three nested layers so the moves never fight over one transform: .egg rises and
+   sinks, .egg-dancer sways across the screen with a tilt, .egg-img bounces. The picture is cut off
+   at its bottom, so it sits a little below the screen edge — a bounce never shows the cut. */
+.egg {
+  position: fixed; left: 50%; bottom: calc(-0.08 * min(42vh, calc(24 * var(--u))));
+  z-index: 110; pointer-events: none;
+  translate: -50% 110%;
+  animation: egg-life 5s cubic-bezier(.34, 1.3, .5, 1) forwards;
+}
+.egg-dancer { animation: egg-sway 1.6s ease-in-out .5s infinite alternate; }
+.egg-img {
+  display: block; height: min(42vh, calc(24 * var(--u))); width: auto; max-width: 90vw;
+  transform-origin: 50% 100%;
+  filter: drop-shadow(0 calc(0.4 * var(--u)) calc(0.8 * var(--u)) rgba(0, 0, 0, .45));
+  animation: egg-bounce .4s ease-in-out .5s infinite alternate;
+}
+@keyframes egg-life {
+  0%   { translate: -50% 110%; }
+  12%  { translate: -50% 0; }
+  88%  { translate: -50% 0; animation-timing-function: cubic-bezier(.5, 0, .75, 0); }
+  100% { translate: -50% 110%; }
+}
+@keyframes egg-sway {
+  0%   { transform: translateX(-24vw) rotate(-9deg); }
+  50%  { transform: translateX(0) rotate(7deg); }
+  100% { transform: translateX(24vw) rotate(-9deg); }
+}
+@keyframes egg-bounce {
+  from { transform: translateY(0) scale(1, 1); }
+  to   { transform: translateY(-6%) scale(.97, 1.03); }
+}
+
 /* ---- Reduced motion ------------------------------------------------------------ */
 @media (prefers-reduced-motion: reduce) {
   .boot-bar::after { animation: none; width: 100%; opacity: .5; }
+  /* The easter egg: no rise, sway or bounce — it fades in at the bottom, stays, fades out. */
+  .egg { translate: -50% 0; animation: egg-fade 5s linear forwards; }
+  .egg-dancer, .egg-img { animation: none; }
 }
+@keyframes egg-fade { 0% { opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }

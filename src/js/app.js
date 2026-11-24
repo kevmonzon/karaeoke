@@ -66,6 +66,7 @@ import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
 import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
 import { setupKioskQuit } from "./kiosk.js";
+import { installEasterEgg } from "./easter-egg.js";
 
 const $ = (id) => document.getElementById(id);
 // Source-kind icon shown in the now-playing header (in place of the dial number).
@@ -403,6 +404,7 @@ function buildShell() {
   }).catch(() => {});
 
   buildKeys();   // input mode, D-pad navigation, the named actions, the one key router, media keys
+  installEasterEgg();   // ↑↑↓↓←→←→ A B Enter (Rae, 2026-11-25): watches keys in the capture phase, routes none
 
   // An open or closing panel reflows the stage beside it (never over the lyrics), and the
   // overscan inset moves it in from the edges. The stage lyric canvas re-measures itself; the
