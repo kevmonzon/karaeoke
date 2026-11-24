@@ -6,7 +6,8 @@
  * owns the page base, #stage and its layers (bottom to top):
  *   0 background (#bg-layer) · 1 media (#kv, #ytplayer) · 2 flow (#stage-flow:
  *   queue bar, pitch guide, chords, lyrics, cards) · 3 home (idle) ·
- *   4 HUD (#stage-qr, boot sweep) · 5 reactions (style.css)
+ *   4 HUD (boot sweep) · 5 reactions (style.css). The stage QR (#stage-qr) lives in the
+ *   flow, in .guide-row beside the pitch guide (style.css).
  * plus the status line, the stage's reflow beside an open panel, and the
  * orientation rules. Sizes are multiples of --u (tokens.css); colours are tokens.
  * ========================================================================== */
@@ -72,9 +73,11 @@ body:not(.controls-hidden) .stage-flow { padding-bottom: max(var(--edge-b), min(
 .queue-bar { flex: none; }
 .now-playing { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding-bottom: var(--s-3); border-bottom: 1px solid var(--border-soft); }
 .now-playing .np-meta { flex: 1 1 min(calc(220 / 16 * var(--u)), 100%); }
-/* Over a video or the YouTube picture the bar gets its own translucent ground. */
+/* Over a video or the YouTube picture the bar gets its own translucent ground: 66% of the page
+   colour (was the shared 86% --overlay-bg-soft — Rae: 20% more transparent). */
+.queue-bar { --queue-bar-bg: color-mix(in srgb, var(--bg) 66%, transparent); }
 body.video-mode .queue-bar, body.youtube-mode .queue-bar {
-  background: var(--overlay-bg-soft); border-bottom-color: transparent;
+  background: var(--queue-bar-bg); border-bottom-color: transparent;
   border-radius: var(--radius); padding: var(--gap) var(--pad);
 }
 
@@ -215,15 +218,20 @@ body.remote-on:not([data-qr="never"]) .home-qr:not(:empty),
 body.remote-on:not([data-qr="never"]) .home-room:not(:empty) { display: block; }
 .home .key-hints { grid-area: hints; }
 
-/* 4 — HUD. The small QR chip on the playing stage (remote.qrOnStage = "always"), top-right
-   just under the queue bar, over the right end of the pitch guide (the old focus-mode spot). */
+/* The small QR chip on the playing stage (remote.qrOnStage = "always"). It sits in the flow's
+   .guide-row (style.css): while the pitch guide is on screen it is the guide's neighbour —
+   exactly the guide's height and top, square — and otherwise (guide off, a video / YouTube /
+   audio song) it keeps its own size at the right, just under the queue bar. Either way it
+   follows the flow's width, so an open panel moves it with the lyrics. */
 .stage-qr {
   display: none; position: absolute; z-index: 4; pointer-events: none;
-  top: calc(var(--edge-t) + 4.75 * var(--u)); right: var(--edge-r);
+  top: var(--s-2); right: 0;
   width: calc(104 / 16 * var(--u)); height: calc(104 / 16 * var(--u));
   padding: calc(6 / 16 * var(--u)); border-radius: calc(8 / 16 * var(--u));
   background: var(--qr-bg); box-shadow: var(--elev-2);
-  transition: right var(--dur-base) var(--ease);
+}
+body.guide-on:not(.video-mode):not(.youtube-mode):not(.audio-mode) .stage-qr {
+  position: static; flex: none; align-self: stretch; width: auto; height: auto; aspect-ratio: 1 / 1;
 }
 .stage-qr svg { display: block; width: 100%; height: 100%; }
 body.remote-on[data-qr="always"][data-idle="false"] .stage-qr:not(:empty) { display: block; }
@@ -272,7 +280,6 @@ body.controls-hidden .status { opacity: 0; transition-duration: var(--dur-slow);
    the stage. The control bar does the same in overlays.css. */
 body[data-panel="right"] .stage-flow,
 body[data-panel="right"] .home { padding-inline-end: calc(var(--panel-pad) + var(--edge-r)); }
-body[data-panel="right"] .stage-qr { right: calc(var(--panel-pad) + var(--edge-r)); }
 /* The baked-in lyrics of a video are in the picture: it gives up the same width (no
    animation — resizing a video or an iframe every frame is not worth it). */
 body[data-panel="right"] .kv,

@@ -14,7 +14,7 @@ import { snapNote, detectKey, keyName, extractMelody } from "../src/js/melody.js
 import { parseMidi, makeTickToSeconds, buildLines, buildLyrics } from "../src/js/lyrics.js";
 import {
   STAGE, makeBeatAt, prepareStageLines, buildCountdowns, countdownAt, makeStagePlan, pageAt,
-  wipeWidth, wrapRows, alignX, animFrame, easeInOut,
+  wipeWidth, wrapRows, alignX, animFrame, easeInOut, stageBaseline, STAGE_POSITIONS,
 } from "../src/js/lyric-pager.js";
 import { detectChords, chordLabel, simplifySuffix, diatonicThird, simplifiedSuffix } from "../src/js/chords.js";
 import { Catalog } from "../src/js/catalog.js";
@@ -1983,3 +1983,40 @@ test("animFrame: the six line-change animations", () => {
   assert.ok(peak > 1.2, `bounce overshoots (${peak})`);
   assert.ok(Math.abs(animFrame("bounce", 1).new.scaleY - 1) < 1e-9);
 });
+
+// ---- stage lyrics: vertical position (Rae, 2026-11-24) ---------------------------------------
+{
+  // a 2-row page: rows step 60 + 10; a row is 40 above + 12 below its baseline
+  const G = { ch: 600, rows: 2, lineH: 60, gap: 10, ascent: 40, descent: 12, bottom: 30, top: 50 };
+  const block = (base, rows = 2) => ({ top: base - (rows - 1) * 70 - 40, bottom: base + 12 });
+
+  test("stage position: bottom is the videoke layout whatever the screen", () => {
+    assert.deepEqual([...STAGE_POSITIONS], ["bottom", "center"]);
+    assert.equal(stageBaseline({ ...G }), 570);
+    assert.equal(stageBaseline({ ...G, position: "bottom", mid: 100 }), 570);
+    assert.equal(stageBaseline({ ...G, position: "sideways" }), 570, "an unknown value is the bottom layout");
+  });
+
+  test("stage position: center puts the block's middle on the screen's middle", () => {
+    const base = stageBaseline({ ...G, position: "center", mid: 280 });
+    const b = block(base);
+    assert.equal((b.top + b.bottom) / 2, 280);
+    // no screen middle given: the canvas middle
+    const c = block(stageBaseline({ ...G, position: "center" }));
+    assert.equal((c.top + c.bottom) / 2, 300);
+    // four rows centre as a block too
+    const f = block(stageBaseline({ ...G, rows: 4, position: "center", mid: 300 }), 4);
+    assert.equal((f.top + f.bottom) / 2, 300);
+  });
+
+  test("stage position: center stays inside the canvas, with the count-in's room on top", () => {
+    // the screen's middle is above the canvas (a tall guide): the block keeps `top` free
+    const hi = block(stageBaseline({ ...G, position: "center", mid: -200 }));
+    assert.equal(hi.top, 50);
+    // the screen's middle is below the canvas foot: never lower than the bottom layout
+    assert.equal(stageBaseline({ ...G, position: "center", mid: 2000 }), 570);
+    // a canvas too short for both: the bottom layout
+    assert.equal(stageBaseline({ ...G, ch: 120, position: "center", mid: 60 }), 90);
+  });
+}
+

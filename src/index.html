@@ -120,7 +120,12 @@
         <!-- Queued-song count: "⏭ N", hidden when the queue is empty (:empty). Opens the queue. -->
         <button id="queue-count" class="badge queue-count" title="Open the queue" aria-label="Open the queue"></button>
       </header>
-      <canvas id="pitch-guide" class="pitch-guide"></canvas>
+      <!-- The pitch guide and, beside it at exactly its height, the stage QR chip
+           (remote.qrOnStage = "always"; with no guide on screen it keeps its own size). -->
+      <div class="guide-row">
+        <canvas id="pitch-guide" class="pitch-guide"></canvas>
+        <div id="stage-qr" class="stage-qr" role="img" aria-label="Scan to control from your phone"></div>
+      </div>
 
       <!-- chord follow-along lane (MIDI only): auto-detected chords, scrolls in sync
            with the lyrics; hidden in video/youtube mode (baked-in, no note data) -->
@@ -166,8 +171,7 @@
       <div id="home-hints" class="key-hints" aria-hidden="true">◄►▲▼ move · OK choose<span id="home-hint-digits"> · 0–9 song number</span></div>
     </div>
 
-    <!-- HUD: the small remote QR chip (remote.qrOnStage = "always") and the offset toast. -->
-    <div id="stage-qr" class="stage-qr" role="img" aria-label="Scan to control from your phone"></div>
+    <!-- HUD: the offset toast. (The stage QR chip is in the flow, beside the pitch guide.) -->
     <div id="offset-toast" class="offset-toast"></div>
   </main>
 
@@ -410,6 +414,13 @@
             <option value="center">Center</option>
             <option value="split">Left-Right Split</option>
             <option value="close">Close Split</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Position</span>
+          <select id="set-stage-position">
+            <option value="bottom">Bottom</option>
+            <option value="center">Centered on screen</option>
           </select>
         </label>
         <label class="row">

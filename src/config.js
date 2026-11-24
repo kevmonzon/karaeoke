@@ -53,6 +53,7 @@ export const DEFAULT_CONFIG = {
     stage: {
       rows: "auto",       // "auto" (2 rows; 4 when the screen is portrait) | "2" | "4"
       align: "center",    // "center" | "split" (top row left, bottom right) | "close" (split, pulled in)
+      position: "bottom", // "bottom" (the videoke layout) | "center" (rows centred vertically on the screen)
       animation: "none",  // line change: "none" | "fade" | "wipe" | "crossfade" | "flip" | "bounce"
       color: "#0000ff",   // sung-text colour (it gets a white outline; unsung text is white, outlined black)
       randomColor: false, // pick a highlight colour per song from a 20-colour palette instead

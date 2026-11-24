@@ -113,7 +113,7 @@ body[data-bg="on"] .home-prompt {
 }
 /* The queue bar gets the same translucent ground it has over a video song (stage.css). */
 body[data-bg="on"] .queue-bar {
-  background: var(--overlay-bg-soft); border-bottom-color: transparent;
+  background: var(--queue-bar-bg); border-bottom-color: transparent;
   border-radius: var(--radius); padding: var(--gap) var(--pad);
 }
 

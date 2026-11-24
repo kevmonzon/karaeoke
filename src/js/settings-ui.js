@@ -55,6 +55,7 @@ const SETTINGS_SCHEMA = [
   { id: "set-lyric-style", path: "lyrics.style", type: "select" },
   { id: "set-stage-rows", path: "lyrics.stage.rows", type: "select" },
   { id: "set-stage-align", path: "lyrics.stage.align", type: "select" },
+  { id: "set-stage-position", path: "lyrics.stage.position", type: "select" },
   { id: "set-stage-anim", path: "lyrics.stage.animation", type: "select" },
   { id: "set-stage-color", path: "lyrics.stage.color", type: "text" },   // <input type=color>: a string, on change
   { id: "set-stage-random", path: "lyrics.stage.randomColor", type: "check" },
@@ -185,6 +186,7 @@ const SEARCH_KEYWORDS = {
   "set-lyric-style": "videoke karaoke stage scroll two rows machine look",
   "set-stage-rows": "lines portrait four two",
   "set-stage-align": "left right split center position",
+  "set-stage-position": "vertical middle centre center bottom height up down place",
   "set-stage-anim": "animation transition fade flip bounce wipe crossfade",
   "set-stage-color": "highlight sung wipe colour color blue",
   "set-stage-random": "random colour color highlight",

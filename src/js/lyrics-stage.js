@@ -26,7 +26,7 @@
 
 import { buildLyrics, makeTickToSeconds } from "./lyrics.js";
 import {
-  STAGE, STAGE_ANIMATIONS, STAGE_ALIGNS, STAGE_PALETTE, SINGER_COLORS, SINGER_MARKS, BACKING_COLOR,
+  STAGE, STAGE_ANIMATIONS, STAGE_ALIGNS, STAGE_POSITIONS, stageBaseline, STAGE_PALETTE, SINGER_COLORS, SINGER_MARKS, BACKING_COLOR,
   COUNTDOWN_COLORS, GO_COLOR, makeBeatAt, prepareStageLines, buildCountdowns, makeStagePlan, pageAt,
   lineIndexAt, wipeWidth, wrapRows, alignX, animFrame,
 } from "./lyric-pager.js";
@@ -34,6 +34,7 @@ import {
 const DEFAULTS = Object.freeze({
   rows: "auto",        // "auto" (2 rows, 4 when the screen is portrait) | "2" | "4"
   align: "center",     // STAGE_ALIGNS
+  position: "bottom",  // STAGE_POSITIONS: "bottom" (videoke) | "center" (vertically centred on the screen)
   animation: "none",   // STAGE_ANIMATIONS
   color: "#0000FF",    // highlight (sung) colour
   randomColor: false,  // pick a highlight from STAGE_PALETTE once per song instead
@@ -108,6 +109,7 @@ export class StageLyricsEngine {
     for (const k of Object.keys(DEFAULTS)) if (o[k] !== undefined) this.opts[k] = o[k];
     if (!STAGE_ANIMATIONS.includes(this.opts.animation)) this.opts.animation = DEFAULTS.animation;
     if (!STAGE_ALIGNS.includes(this.opts.align)) this.opts.align = DEFAULTS.align;
+    if (!STAGE_POSITIONS.includes(this.opts.position)) this.opts.position = DEFAULTS.position;
     this.opts.outline = clamp(+this.opts.outline || 0, 0, 16);
     this.opts.rows = String(this.opts.rows);
     this._pickColor();
@@ -238,6 +240,14 @@ export class StageLyricsEngine {
       maxW: Math.max(40, cw - 2 * side),
       stroke: this.opts.outline * u, shadowBlur: 4 * u, shadowOff: 2 * u,
     };
+    // The last row's baseline. "center" aims at the SCREEN's middle (the canvas sits below the queue
+    // bar and the guide), so showing or hiding the control bar — which only shortens the canvas —
+    // does not move the rows; stageBaseline keeps them inside the canvas, a font of room above.
+    const mid = this.opts.position === "center" ? window.innerHeight / 2 - this.canvas.getBoundingClientRect().top : undefined;
+    g.base = stageBaseline({
+      ch, rows, lineH: g.lineH, gap: g.gap, ascent, descent, bottom: g.bottom,
+      position: this.opts.position, mid, top: font,
+    });
     const key = [dpr, font.toFixed(1), g.maxW.toFixed(0), rows, this.opts.outline, this.opts.shadow, this.color, family].join("|");
     if (key !== this._cacheKey) { this._cache.clear(); this._cacheKey = key; }
     this._geo = g;
@@ -347,10 +357,10 @@ export class StageLyricsEngine {
     const y = new Array(g.rows);
     if (g.rows === 2) {
       const bottomRows = page.slots[1] ? this._lineArt(page.slots[1].index).rows.length : 1;
-      y[1] = g.ch - g.bottom;
+      y[1] = g.base;
       y[0] = y[1] - bottomRows * g.lineH - g.gap;
     } else {
-      y[3] = g.ch - g.bottom;
+      y[3] = g.base;
       for (let i = 2; i >= 0; i--) y[i] = y[i + 1] - g.lineH - g.gap;
     }
 
@@ -375,7 +385,7 @@ export class StageLyricsEngine {
         this._drawCountdown(page.countdown, x, firstBaseline - g.ascent - g.font * 0.12);
       }
     }
-    if (page.interlude && this.opts.interlude) this._drawNote("♪  Instrumental  ♪", g.ch - g.bottom - g.lineH * 0.55, 0.5);
+    if (page.interlude && this.opts.interlude) this._drawNote("♪  Instrumental  ♪", g.base - g.lineH * 0.55, 0.5);
   }
 
   /** Start a row's line-change animation when its content changes (old + new both present). */

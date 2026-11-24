@@ -369,8 +369,11 @@ Two looks, under ⚙ → Display → Lyrics → **Style**:
   and the one just sung until you reach the new line's second syllable, then a preview of the next),
   outlined text with a hard-edged wipe, and a **4 · 3 · 2 · 1 · GO!** count-in before the first line
   and after any break longer than 8 s ("♪ Instrumental" shows during the break). In portrait it uses
-  four rows. Rows, alignment, line animation, highlight colour, outline, shadow and the count-in are
-  under ⚙ → Display → **Stage lyrics**; **(backing vocals)** show in orange.
+  four rows. Rows, alignment, **position** (at the bottom, or **centered on the screen**), line
+  animation, highlight colour, outline, shadow and the count-in are under ⚙ → Display → **Stage
+  lyrics**; **(backing vocals)** show in orange. Centered rows stay put when the playback bar shows or
+  hides; on a short screen (a landscape phone with the pitch guide on) they move down as far as needed
+  to fit.
 - **Scroll** — a smooth-scrolling column that glides upward as lines finish; tune visible lines,
   line merging and width under ⚙ → Display → Lyrics.
 
@@ -509,8 +512,9 @@ up in Recent. Nothing is downloaded — it stores only a `youtube:<videoId>` poi
 ### 📱 Remote control (phones)
 A **QR code + room code** sit on the Queue panel and on the home screen (the remote is **on by
 default**; turn it off under **⚙ → Sources → Remote** for an untrusted network, and choose with **QR
-on the stage** whether the stage shows it *When idle* (default), *Always* — a small corner code during
-songs too — or *Never*). Guests scan the QR with their phones (same network) to open **`/remote`**.
+on the stage** whether the stage shows it *When idle* (default), *Always* — during songs too, as a
+small code beside the pitch guide at exactly the guide's height (top-right, under the song title, when
+the guide is off or hidden) — or *Never*). Guests scan the QR with their phones (same network) to open **`/remote`**.
 Scanning auto-connects; anyone typing the URL by hand enters the **room code** shown on screen.
 
 The phone downloads only a **compact copy of the songbook** (a couple of megabytes even for a very
@@ -623,7 +627,7 @@ Defaults are in *italics*.
 | 🎬 **Display → Screen** | Theme (*Auto* / Dark / Light) · Font size (Extra small / Small / *Medium* / Large) · Overscan (*0* – 5%) · Show key hints (*on*) |
 | 🎬 **Display → Playback controls** | Always show playback controls (*off*) · Auto-hide after (1 – 15 s, *3 s*) |
 | 🎬 **Display → Lyrics** | Offset (±2000 ms, *0*) + Reset offset · Bluetooth mode (*off*) · Style (*Stage* / Scroll) · Smooth wipe (*on*) · Visible lines (2 – 8, *5*) · Merge lines (1 – 4, *2*) · Line width (50 – 100%, *90%*) — those three shape the Scroll style · Lyrics size (0.6 – 1.8×, *1.00×*) · Title card (0 – 10 s, *5 s*) |
-| 🎬 **Display → Stage lyrics** | Rows (*Auto — 4 in portrait* / 2 / 4) · Alignment (*Center* / Left-Right Split / Close Split) · Line animation (*None* / Fade / Wipe / Crossfade / Flip / Pop bounce) · Highlight colour (*blue*) · Random colour per song (*off*) · Outline (0 – 12, *6*) · Shadow (*on*) · Count-in (*on*) · "Instrumental" during breaks (*on*) |
+| 🎬 **Display → Stage lyrics** | Rows (*Auto — 4 in portrait* / 2 / 4) · Alignment (*Center* / Left-Right Split / Close Split) · Position (*Bottom* / Centered on screen) · Line animation (*None* / Fade / Wipe / Crossfade / Flip / Pop bounce) · Highlight colour (*blue*) · Random colour per song (*off*) · Outline (0 – 12, *6*) · Shadow (*on*) · Count-in (*on*) · "Instrumental" during breaks (*on*) |
 | 🎬 **Display → Background** | Background (*Auto* / Off / Videos / Photos / Camera) · Category (*All* + your sub-folders) · Dim (0 – 80%, *35%*) · Next background on each song (*on*) · Each photo (3 – 60 s, *8 s*) · Photo animation (None / *Fade* / Slide / Zoom) · Which camera (*Back* / Front) · Mirror (*Auto — front camera* / On / Off) |
 | 🎵 **Music → Sound** | Reverb and Chorus (Off / Low / *Normal* / High / Max) · Equalizer (*Flat* / Warm / Bright / Vocal / Bass boost / Small speakers / TV speakers / Custom — ten bands, ±12 dB) · Even out song loudness (*on*) · Loudness target (−30 – −12 dB, *−24 dB*) |
 | 🎵 **Music → MIDI** | Channel mixer (*off*) · Transpose drums with the key (*off* — the old behaviour when on) |

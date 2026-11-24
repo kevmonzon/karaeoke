@@ -26,6 +26,27 @@ export const STAGE = Object.freeze({
 export const STAGE_ANIMATIONS = Object.freeze(["none", "fade", "wipe", "crossfade", "flip", "bounce"]);
 /** Row alignment: centred, top-left / bottom-right, or the same split pulled toward the middle. */
 export const STAGE_ALIGNS = Object.freeze(["center", "split", "close"]);
+/** Where the rows sit vertically: the videoke layout at the bottom, or centred on the screen. */
+export const STAGE_POSITIONS = Object.freeze(["bottom", "center"]);
+
+/**
+ * The baseline of a stage page's LAST row, in canvas px. The rows above it step up by lineH + gap,
+ * and a wrapped line's extra rows stack upward from its own baseline (lyrics-stage.js), as before.
+ * - "bottom" (and anything unknown): `bottom` px above the canvas foot — the videoke layout.
+ * - "center": the block of `rows` one-row lines — the first row's ascent to the last row's descent —
+ *   centred on `mid`, the screen's vertical middle in canvas px (the canvas middle when not given);
+ *   then kept inside the canvas: never lower than the bottom layout, and with `top` px free above the
+ *   first row (the count-in's room). A canvas too short for both gets the bottom layout.
+ */
+export function stageBaseline({ ch, rows, lineH, gap, ascent, descent, bottom, position = "bottom", mid, top = 0 }) {
+  const low = ch - bottom;
+  if (position !== "center") return low;
+  const span = (rows - 1) * (lineH + gap);
+  const m = Number.isFinite(mid) ? mid : ch / 2;
+  const want = m + (span + ascent + descent) / 2 - descent;
+  const high = top + span + ascent;
+  return Math.min(low, Math.max(high, want));
+}
 
 export const SINGER_COLORS = Object.freeze({ m: "#42A5F5", w: "#EF5350", c: "#66BB6A" });
 export const SINGER_MARKS = Object.freeze({ m: "🧑🏻", w: "👩🏻", c: "👫" });

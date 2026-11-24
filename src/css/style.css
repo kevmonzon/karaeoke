@@ -242,14 +242,23 @@ button.fav.on { color: var(--gold); }
 }
 .ctl label em { color: var(--accent-2); font-style: normal; }
 
-/* Pitch guide (scrolling piano-roll). Height = ⚙ Band height in 16ths of --u: app.js writes
-   --guide-height; the fallback is the 150 default in the same units. */
+/* Pitch guide (scrolling piano-roll) and, beside it, the stage QR (#stage-qr, remote.qrOnStage
+   "always"). They share .guide-row, so the QR's top and height are always the guide's, at any
+   ⚙ Band height (app.js writes --guide-height in 16ths of --u; the fallback is the 150 default)
+   or screen size; the guide gives up the QR's width instead of being covered. Its ground is 48%
+   opaque (was 68% — Rae: 20% more transparent). */
+.guide-row { position: relative; display: flex; gap: var(--s-2); flex: 0 1 auto; min-height: 0; }
+body.guide-on .guide-row { height: var(--guide-height, calc(150 / 16 * var(--u))); margin-bottom: var(--s-2); }
 .pitch-guide {
-  display: none; width: 100%; height: var(--guide-height, calc(150 / 16 * var(--u)));
-  border-radius: calc(12 / 16 * var(--u)); background: color-mix(in srgb, var(--surface-1) 68%, transparent);
-  border: 1px solid var(--line); margin-bottom: var(--s-2); flex: 0 1 auto; min-height: 0;
+  display: none; flex: 1 1 0; min-width: 0; height: auto;
+  border-radius: calc(12 / 16 * var(--u)); background: color-mix(in srgb, var(--surface-1) 48%, transparent);
+  border: 1px solid var(--line);
 }
 body.guide-on .pitch-guide { display: block; }
+/* A video, YouTube or audio song hides the guide even with its toggle on (above): the row
+   then collapses, and the QR falls back to its own size at the row's right (stage.css). */
+body.video-mode.guide-on .guide-row, body.youtube-mode.guide-on .guide-row,
+body.audio-mode.guide-on .guide-row { height: auto; margin-bottom: 0; }
 
 /* Chord follow-along lane (chords.js) — a slim horizontal ribbon that scrolls to
    anchor the current chord, mirroring the lyric scroll on the X axis. MIDI only. */
