@@ -127,9 +127,10 @@ body.audio-mode.midi-mode .midi-mixer { display: none; }
 /* Library (the Songs panel) */
 /* Search row + pills scale with --u, like the song rows. */
 .search-row { display: flex; gap: calc(8 / 16 * var(--u)); padding: calc(12 / 16 * var(--u)); align-items: center; }
-.search-box { position: relative; flex: 1; display: flex; }
+.search-box { position: relative; flex: 1; display: flex; min-width: 0; }   /* min-width 0: the box (and the input below)
+   may shrink below the input's intrinsic width — with 44-px touch buttons a 390-px phone's row overflowed by 11 px */
 #search {
-  flex: 1; padding: calc(11 / 16 * var(--u)) calc(32 / 16 * var(--u)) calc(11 / 16 * var(--u)) calc(14 / 16 * var(--u));
+  flex: 1; min-width: 0; padding: calc(11 / 16 * var(--u)) calc(32 / 16 * var(--u)) calc(11 / 16 * var(--u)) calc(14 / 16 * var(--u));
   border-radius: var(--r-md); border: 1px solid var(--border);
   background: var(--surface-2); color: var(--text); font-size: calc(14 / 16 * var(--u));
 }
@@ -760,3 +761,20 @@ code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-
 .song .kind.vid, .queue-list .kind.vid { background: color-mix(in srgb, var(--brand) 20%, transparent); }
 .song .kind.aud, .queue-list .kind.aud { background: color-mix(in srgb, var(--gold) 22%, transparent); }
 .song .kind.yt,  .queue-list .kind.yt  { background: color-mix(in srgb, var(--bad) 18%, transparent); }
+
+/* ---- Touch targets (M13 — Rae's decision 1a) ----------------------------------------------------
+   With touch as the input (html[data-input="touch"]), or on a coarse pointer before the first input has
+   set a mode, every control is at least --hit (44 px) tall and every button at least that wide. Same
+   layout, bigger targets: the default size had 25–34 px steppers, search-row pills and settings selects.
+   Checkboxes, radios and ranges keep their own size (their whole row is the target). The phone remote
+   (remote.css) has its own sizes and does not load this sheet. */
+html[data-input="touch"] :is(button, select, summary, input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"])) { min-height: var(--hit); }
+html[data-input="touch"] button { min-width: var(--hit); }
+html[data-input="touch"] .search-clear { right: 0; }
+html[data-input="touch"] #search { padding-right: calc(var(--hit) + 2px); }
+@media (pointer: coarse) {
+  html:not([data-input]) :is(button, select, summary, input:not([type="checkbox"], [type="radio"], [type="range"], [type="hidden"])) { min-height: var(--hit); }
+  html:not([data-input]) button { min-width: var(--hit); }
+  html:not([data-input]) .search-clear { right: 0; }
+  html:not([data-input]) #search { padding-right: calc(var(--hit) + 2px); }
+}

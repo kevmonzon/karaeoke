@@ -182,7 +182,7 @@ const SEARCH_KEYWORDS = {
   "set-offset": "latency delay sync timing",
   "set-bt": "bluetooth latency",
   "set-tc": "title card intro",
-  "set-lyric-style": "videoke karaoke stage scroll two rows look",
+  "set-lyric-style": "videoke karaoke stage scroll two rows machine look",
   "set-stage-rows": "lines portrait four two",
   "set-stage-align": "left right split center position",
   "set-stage-anim": "animation transition fade flip bounce wipe crossfade",

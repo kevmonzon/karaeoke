@@ -276,7 +276,9 @@ with the lyrics, and everything else on top of it.
   Artists, Rankings, Favorites, Queue, Tonight, Settings**) and, while the phone remote is on, a
   big **QR + room code** for guests. It never flashes between queued songs.
 - **Size it for the room** with **⚙ → Display → Font size** (Extra small / Small / Medium /
-  Large). The stage sizes itself from the screen, so the browser's own zoom (Ctrl/⌘ + / −) barely
+  Large). **Extra small** is for a desk monitor with a mouse: its buttons are smaller than a
+  fingertip on purpose. **On a touch screen every button is at least 44 px** at any font size — the
+  app enlarges them as soon as you touch the screen. The stage sizes itself from the screen, so the browser's own zoom (Ctrl/⌘ + / −) barely
   changes it — use Font size instead. **Overscan** moves the stage in from the edges for a TV that
   crops the picture; **Theme** is Auto (follows your OS), Dark or Light.
 - **Full screen** — the **Full screen** button at the end of the bar, or **F**.
@@ -742,10 +744,22 @@ server), or HTTPS. So:
 - **Phones** using the remote (`/remote`) need none of these features, so the plain LAN address is
   fine for them.
 
-To have MIDI songs and the microphone on a big screen, either run the server on the machine plugged into the TV
-and open `localhost` there (that's what the Steam Deck setup below does), or reach the app over
-HTTPS — `serve.py` itself speaks plain HTTP, so that means an HTTPS reverse proxy or tunnel (such as
-cloudflared) in front of it.
+**The recommended setup for a TV box: open the cloudflared HTTPS address on the TV.** `serve.py`
+itself speaks plain HTTP (it has no HTTPS option), so put a tunnel in front of it — for example
+`cloudflared tunnel --url http://localhost:8080` (a quick `https://….trycloudflare.com` address) or a
+named tunnel on your own domain — and open that **https://** address in the TV box's browser. It is a
+secure page, so MIDI songs play and the microphone, scoring, calibration and the camera can be used
+(if the TV box has a mic or camera). Things to know:
+- The TV now loads everything **through the internet and back** — the box needs internet, and the
+  first MIDI song downloads the ~31 MB SoundFont once (it is then cached on the box).
+- Phones follow the QR, which now shows the **https** address too, so they also go through the
+  tunnel. To keep phones on your LAN instead, set **⚙ → Sources → Remote → URL override** to
+  `http://<your-LAN-IP>:8080`.
+- Anyone with the public address and the room code can reach the remote — see the warning in the
+  phone-remote section below.
+
+The other way to get everything on a big screen: run the server on the machine plugged into the TV
+and open `localhost` there (that's what the Steam Deck setup below does).
 
 ### 🎮 Steam Deck (portable, no-install)
 
