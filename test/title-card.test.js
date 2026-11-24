@@ -5,6 +5,9 @@
  * pager's own intro boundary on real plans). The DOM parts run against a small hand-built fake
  * with only the surface the module uses: createElement, className, classList, setAttribute,
  * textContent, replaceChildren, body. innerHTML is a trap.
+ * Fit to width (Rae, 2026-11-25, ×2.5): largestFitting is pure; the fitting itself runs against a
+ * fake LAYOUT (text width = characters × 0.6 × font size, a card of a set width) — the real
+ * browser measurements are recorded in CLAUDE.md §5.43.
  * Run with:  node --test
  */
 
@@ -14,6 +17,7 @@ import assert from "node:assert/strict";
 import {
   createTitleCard, titleCardText, lyricsStartAt, titleCardYields,
   TITLE_CARD_BODY_CLASS, TITLE_CARD_ON_CLASS,
+  largestFitting, MIN_FIT_PX, MIN_FIT_SHARE, FIT_MARGIN, ARTIST_SHARE, META_SHARE,
 } from "../src/js/ui/title-card.js";
 import { prepareStageLines, buildCountdowns, makeStagePlan, pageAt } from "../src/js/lyric-pager.js";
 
@@ -334,4 +338,111 @@ test("it yields exactly where the stage pager's intro ends", () => {
       assert.equal(titleCardYields(plan, t), !pageAt(plan, t).intro, `t ${t.toFixed(2)}`);
     }
   }
+});
+
+
+// --- fit to width (Rae, 2026-11-25) ----------------------------------------------------------
+test("largestFitting: hi when it fits, lo when nothing does, else the boundary within a step", () => {
+  assert.equal(largestFitting(10, 100, () => true), 100);
+  assert.equal(largestFitting(10, 100, () => false), 10);
+  const got = largestFitting(10, 100, (x) => x <= 63.2);
+  assert.ok(got <= 63.2 && got > 63.2 - 0.5, String(got));
+  assert.equal(largestFitting(50, 40, () => true), 50, "an empty range answers lo");
+  let calls = 0;
+  largestFitting(0, 1000, (x) => { calls++; return x < 300; });
+  assert.ok(calls <= 14, `bisection, not a scan (${calls} probes)`);
+});
+
+/**
+ * A card whose lines measure like text: width = characters × 0.6 × font size, inside a card `width`
+ * wide. The title wraps (by width alone) and clamps at 2 lines; a word wider than the card overflows
+ * sideways while overflow-wrap is "normal". CSS sizes: title 120, artist 60, meta 40 (the ×2.5 card).
+ */
+function layoutSetup(width = 1000) {
+  const doc = makeDoc();
+  let ro = null;
+  const CSS = { "tcard-title": 120, "tcard-artist": 60, "tcard-meta": 40, "tcard-singer": 40, "tcard-key": 40 };
+  doc.defaultView = {
+    getComputedStyle: (n) => ({ fontSize: n.style.fontSize || `${CSS[n.className]}px` }),
+    ResizeObserver: class { constructor(cb) { ro = cb; } observe() {} },
+  };
+  const origCreate = doc.createElement;
+  doc.createElement = (tag) => { const e = origCreate(tag); e.style = {}; return e; };
+  const el = doc.createElement("div");
+  const card = createTitleCard({ el, doc, setTimer: () => 0, clearTimer: () => {} });
+  const box = { width };
+  const fs = (n) => parseFloat(n.style.fontSize || `${CSS[n.className]}px`);
+  const textW = (n) => Array.from(n.textContent).length * 0.6 * fs(n);
+  const longestWord = (n) => Math.max(0, ...n.textContent.split(" ").map((w) => w.length)) * 0.6 * fs(n);
+  const title = el.one("tcard-title");
+  const lines = () => Math.max(1, Math.ceil(textW(title) / box.width));
+  Object.defineProperties(title, {
+    clientWidth: { get: () => Math.min(box.width, Math.ceil(textW(title))) },
+    scrollWidth: { get: () => Math.ceil(title.style.overflowWrap === "normal" ? Math.max(Math.min(box.width, textW(title)), longestWord(title)) : Math.min(box.width, textW(title))) },
+    clientHeight: { get: () => Math.round(Math.min(2, lines()) * fs(title) * 1.15) },
+    scrollHeight: { get: () => Math.round(lines() * fs(title) * 1.15) },
+  });
+  for (const cls of ["tcard-artist", "tcard-meta", "tcard-singer", "tcard-key"]) {
+    const n = el.one(cls);
+    const own = () => (cls === "tcard-meta" ? textW(el.one("tcard-singer")) + textW(el.one("tcard-key")) : textW(n));
+    Object.defineProperties(n, {
+      clientWidth: { get: () => Math.ceil(Math.min(box.width, own())) },
+      scrollWidth: { get: () => Math.ceil(own()) },
+    });
+  }
+  return { card, el, box, fs, title, lines, part: (c) => el.one(c), resize: () => ro && ro() };
+}
+
+test("fit: a title that fits keeps the full ×2.5 size (no inline size at all)", () => {
+  const { card, title, part } = layoutSetup(1000);
+  card.show({ title: "Barcelona", artist: "George Ezra", singer: "Kai", keyName: "D" });
+  assert.equal(title.style.fontSize, "");
+  assert.equal(part("tcard-artist").style.fontSize, "");
+  assert.equal(part("tcard-meta").style.fontSize, "");
+});
+
+test("fit: a long title shrinks just enough for two lines, and the artist follows it", () => {
+  const { card, title, fs, lines, part } = layoutSetup(1000);
+  card.show({ title: "Total Eclipse of the Heart (Extended Version)", artist: "Bonnie Tyler", singer: "Kai", keyName: "D" });
+  const px = fs(title);
+  assert.ok(px < 120, "it shrank");
+  assert.ok(lines() <= 2, `${lines()} lines`);
+  // largest fitting: 45 chars × 0.6 × px ≤ 2000 → px ≤ 74.07; the margin leaves it ~3 % under
+  assert.ok(px <= 74.07 * FIT_MARGIN + 0.01 && px >= 74.07 * FIT_MARGIN - 0.6, String(px));
+  assert.ok(fs(part("tcard-artist")) <= px * ARTIST_SHARE + 0.01, "the artist never outgrows half the title");
+  assert.ok(fs(part("tcard-meta")) <= Math.max(px * META_SHARE, MIN_FIT_PX) + 0.01);
+});
+
+test("fit: one long word shrinks to the width instead of being split", () => {
+  const { card, title, fs } = layoutSetup(1000);
+  card.show({ title: "Supercalifragilisticexpialidocious", artist: "Julie Andrews" });
+  const px = fs(title);
+  assert.ok(34 * 0.6 * px <= 1000, `the word fits the width at ${px}px`);
+  assert.equal(title.style.overflowWrap, "", "the CSS's overflow-wrap comes back after measuring");
+});
+
+test("fit: nothing goes under the floor, however long the title", () => {
+  const { card, title, fs, part } = layoutSetup(300);
+  card.show({ title: "word ".repeat(150).trim(), artist: "Someone", singer: "Kai", keyName: "D" });
+  assert.equal(fs(title), Math.max(MIN_FIT_PX, 120 * MIN_FIT_SHARE));
+  assert.ok(fs(part("tcard-meta")) >= MIN_FIT_PX, "the meta line never drops under MIN_FIT_PX");
+});
+
+test("fit: re-fits on a resize while up, not while hidden", () => {
+  const { card, title, fs, box, resize } = layoutSetup(2000);
+  card.show({ title: "Total Eclipse of the Heart (Extended Version)", artist: "Bonnie Tyler" });
+  assert.equal(title.style.fontSize, "", "fits at full size on a wide card");
+  box.width = 1000;
+  resize();
+  assert.ok(fs(title) < 120, "narrower card → smaller title");
+  card.hide();
+  box.width = 4000;
+  resize();
+  assert.ok(fs(title) < 120, "hidden: no re-fit");
+});
+
+test("fit: a document without layout (no defaultView) keeps the CSS sizes", () => {
+  const { card, part } = setup();
+  assert.equal(card.show(INFO), true);
+  assert.equal(part("tcard-title").style, undefined, "never touched");
 });

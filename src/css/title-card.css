@@ -13,6 +13,10 @@
  * Sizes are --u multiples, capped by the card's own height (it is a size container), because
  * the lyric area is the flex remainder under the queue bar, guide and chords: about 100 px on a
  * landscape phone with the guide on, several hundred on a TV. Colours are tokens.
+ * ×2.5 (Rae, 2026-11-25: "the title card seems very small, i want to enlarge it by x2.5" — then
+ * "enlarge it in a way that it fits the width", up to 2 title lines): these are each line's
+ * LARGEST size. title-card.js steps a line down only as far as it must so the title fits two
+ * lines without splitting a word, and the artist and the singer · key line fit one line.
  * Only colour-scheme and reduced-motion @media.
  * ========================================================================== */
 
@@ -73,18 +77,18 @@ body.title-card-on .verdict.show { opacity: 0; }
    above the middle (by half of it). */
 .tcard-block {
   display: flex; flex-direction: column; align-items: center;
-  max-width: min(100%, calc(900 / 16 * var(--u)));
+  max-width: 100%;   /* the whole card width: fitting to it is title-card.js's job */
   min-width: 0;
   margin-bottom: var(--s-5);
   margin-bottom: 8cqh;
 }
 
-/* Title: about the stage-lyric size (not a fill-the-box hero), two lines at most. */
+/* Title: two lines at most. 120 = 2.5 × the original 48. */
 .tcard-title {
   color: var(--tc-title);
   font-weight: 800; line-height: 1.15; letter-spacing: -0.01em;
-  font-size: calc(48 / 16 * var(--u));
-  font-size: min(calc(48 / 16 * var(--u)), 21cqh);
+  font-size: calc(120 / 16 * var(--u));
+  font-size: min(calc(120 / 16 * var(--u)), 21cqh);
   text-wrap: balance; overflow-wrap: anywhere;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow: hidden;
@@ -96,10 +100,10 @@ body.title-card-on .verdict.show { opacity: 0; }
 .tcard-artist {
   color: var(--tc-artist);
   font-weight: 600; line-height: 1.25;
-  font-size: calc(24 / 16 * var(--u));
-  font-size: min(calc(24 / 16 * var(--u)), 10.5cqh);
-  margin-top: calc(6 / 16 * var(--u));
-  margin-top: min(calc(6 / 16 * var(--u)), 1.5cqh);
+  font-size: calc(60 / 16 * var(--u));
+  font-size: min(calc(60 / 16 * var(--u)), 10.5cqh);
+  margin-top: calc(15 / 16 * var(--u));
+  margin-top: min(calc(15 / 16 * var(--u)), 1.5cqh);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   max-width: 100%;
 }
@@ -109,12 +113,12 @@ body.title-card-on .verdict.show { opacity: 0; }
   display: flex; align-items: baseline; justify-content: center; flex-wrap: nowrap;
   max-width: 100%; min-width: 0;
   line-height: 1.3;
-  font-size: calc(16 / 16 * var(--u));
-  font-size: min(calc(16 / 16 * var(--u)), 7.5cqh);
+  font-size: calc(40 / 16 * var(--u));
+  font-size: min(calc(40 / 16 * var(--u)), 7.5cqh);
 }
 .tcard-meta > * {
-  margin-top: calc(10 / 16 * var(--u));
-  margin-top: min(calc(10 / 16 * var(--u)), 2.5cqh);
+  margin-top: calc(25 / 16 * var(--u));
+  margin-top: min(calc(25 / 16 * var(--u)), 2.5cqh);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 .tcard-singer { color: var(--tc-singer); font-weight: 700; }
