@@ -4,7 +4,9 @@
  * change + volume >100%. Shared by AudioFileEngine (audio songs) and VideoEngine
  * (the video's #kva sound element) so the stereo-worklet integration lives in one place.
  *
- *   mediaEl → MediaElementSource → [pitch-shift, bypassed at Key 0] → Gain → destination
+ *   mediaEl → MediaElementSource → [pitch-shift, bypassed at Key 0] → Gain → audioEngine.musicIn
+ *   (M10: the shared music bus — EQ, loudness gain, limiter — then the destination. A bare
+ *   destination only when the engine has no musicIn.)
  *
  * The pitch node is BYPASSED entirely at Key 0 (source→gain), so the default case is
  * pristine full-quality stereo; the worklet only sits in the path when actually re-keyed.
@@ -24,7 +26,7 @@ export class KeyShiftChain {
     this.ctx = null;
     this.src = null;   // MediaElementAudioSourceNode (once per element)
     this.pitch = null; // pitch-shift worklet node
-    this.gain = null;  // dedicated gain → destination
+    this.gain = null;  // dedicated gain (the Volume) → the engine's music bus
   }
 
   get wired() { return this._wired; }
@@ -57,7 +59,7 @@ export class KeyShiftChain {
     this.src = src;
     this.gain = ctx.createGain();
     this.gain.gain.value = this._vol;
-    this.gain.connect(ctx.destination);
+    this.gain.connect(this.engine.musicIn || ctx.destination);   // M10: through the music bus
     if (hasWorklet) {
       try {
         this.pitch = new AudioWorkletNode(ctx, "pitch-shift", {
