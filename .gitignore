@@ -16,6 +16,15 @@
 /data/catalog-audio.json
 # Runtime-accumulated shared blocklist of un-embeddable YouTube videoIds (deployment-specific).
 /data/youtube-blocklist.json
+# Play counts the server keeps (tools/serve.py; ids are file paths of the private library), its
+# temp files (write_json_atomic's .<prefix>…tmp) and the one corrupt copy it sets aside.
+/data/playcounts.json
+/data/playcounts.json.corrupt
+/data/.*.tmp
+# A per-machine id some local tools drop into data/; never part of the app.
+/data/.local_user_id
+# Local tool caches (not the app's).
+/cache
 /_memory
 /.vscode
 # Local-only tools/content that must never be published (e.g. the bulk downloader).

@@ -1,8 +1,9 @@
 /* ============================================================================
  * stage.css — the STAGE of the stage-first shell (M3).
  *
- * One full-screen stage on every screen. Library, queue, mixer, settings,
- * dialogs and the control bar are overlays above it (overlays.css). This file
+ * One full-screen stage on every screen. Songs (the queue is its Queue tab), the mixer, settings,
+ * the song sheet and the dialogs are overlays above it (overlays.css); the footer (panel buttons,
+ * status line, seek bar) is part of the stage. This file
  * owns the page base, #stage and its layers (bottom to top):
  *   0 background (#bg-layer) · 1 media (#kv, #ytplayer) · 2 flow (#stage-flow:
  *   queue bar, pitch guide, chords, lyrics, cards) · 3 home (idle) ·
@@ -270,7 +271,8 @@ body[data-bg="on"] .stage-foot, body.video-mode .stage-foot, body.youtube-mode .
 body.video-mode .st-step:has(#st-melody), body.youtube-mode .st-step:has(#st-melody),
 body.audio-mode .st-step:has(#st-melody) { opacity: .45; }
 
-/* The panel buttons, just above the status line (Rae): Songs · Queue · [Mixer] · [Next background] ·
+/* The panel buttons (Rae) — portrait: just above the status line; landscape: the bottom-right
+   corner (below). Songs · [Mixer] · [Next background] ·
    Settings · Full screen — small icons only; the name is the tooltip and the accessible name. Touch
    still gets --hit (44 px) targets (style.css). */
 .stage-corner { display: flex; align-items: center; gap: var(--s-1); flex: none; }

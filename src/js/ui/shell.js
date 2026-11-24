@@ -13,7 +13,8 @@
  *   - the activity events that arm the history sentinel on the first key or tap;
  *   - stack.tick() from its OWN 250 ms timer, so a 2500 ms toast closes within 2500–2750 ms
  *     whatever else app.js is doing;
- *   - body[data-idle] / body[data-kind], and moving focus off the home layer when it fades.
+ *   - body[data-idle] / body[data-kind] (and focus off the home layer when it fades — it holds
+ *     nothing focusable since the home tiles went, so that guard is a safety net).
  */
 
 export const TICK_MS = 250;

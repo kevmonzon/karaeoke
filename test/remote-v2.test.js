@@ -586,3 +586,47 @@ test("the phone has no number pad and prints no song numbers", () => {
   // The number tier stays: digits typed into the field still find songs by number.
   assert.match(js, /orderNumberMatches\(catalog\.lookupCode\(normalizeCode\(q\), "all"\), SOURCES\)/);
 });
+
+// --- R13 (review, 2026-11-24): a host request that never settles must not stop the loop --------
+test("a hung host POST times out and the next tick posts again (the loop is never wedged)", async () => {
+  const relay = fakeRelay();
+  const calls = [];
+  const signals = [];
+  let hang = true;
+  const fetchImpl = (url, init) => {
+    calls.push(String(url));
+    if (!hang) return relay.fetch(url, init);
+    // Never answers — unless its signal aborts, as a real fetch does.
+    return new Promise((_, reject) => {
+      if (init && init.signal) init.signal.addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError")));
+    });
+  };
+  const h = hostHarness({
+    relay,
+    options: {
+      fetchImpl,
+      requestTimeoutMs: 1234,
+      timeoutSignal: (ms) => { const c = new AbortController(); signals.push({ ms, c }); return c.signal; },
+    },
+  });
+  h.host.start(); await settle();
+  assert.equal(calls.length, 1, "the first POST went out");
+  assert.equal(signals.length, 1, "with a timeout signal");
+  assert.equal(signals[0].ms, 1234);
+  h.timers.fire(); await settle();
+  assert.equal(calls.length, 1, "still in flight: no overlapping POST");
+  signals[0].c.abort();                // the timeout fires
+  await settle();
+  hang = false;
+  h.timers.fire(); await settle();
+  assert.equal(calls.length, 2, "the loop posts again after the timeout");
+});
+
+test("the host's requests carry a timeout signal by default (AbortSignal.timeout)", async () => {
+  const relay = fakeRelay();
+  const seen = [];
+  const h = hostHarness({ relay, options: { fetchImpl: (url, init) => { seen.push(init && init.signal); return relay.fetch(url, init); } } });
+  h.host.start(); await settle();
+  assert.ok(seen[0] instanceof AbortSignal, "the host POST has a signal");
+  assert.equal(seen[0].aborted, false);
+});

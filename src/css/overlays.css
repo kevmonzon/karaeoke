@@ -8,7 +8,7 @@
  * animates transform / opacity only; reduced motion zeroes the token durations,
  * which also makes the close instant. Nothing here delays visibility.
  *
- *   z 20 control bar · 25 adjust toast · 30 status (stage.css) · 35 scrim ·
+ *   z 4 the stage footer, inside #stage (stage.css) · 25 adjust toast · 35 scrim ·
  *   40 panels · 50 sheet · 60 dialogs · 70 confirm · 90 boot veil (style.css)
  * ========================================================================== */
 
@@ -207,6 +207,13 @@ html[data-input="keys"] .key-hints:empty { display: none; }
   opacity: 0; transition: opacity var(--dur-fast) var(--ease);
 }
 .ov-toast.open { opacity: 1; }
+/* An error (setStatus(…, {error: true}) — review R34): 6 s, a red edge, and it wraps instead of
+   cutting a long "Could not play …" message short. */
+.ov-toast.error {
+  border-color: var(--bad); border-width: 2px;
+  white-space: normal; text-align: center; width: max-content; max-width: min(calc(100vw - 2 * var(--pad)), calc(40 * var(--u)));
+  border-radius: var(--r-md);
+}
 body[data-panel="right"] .ov-toast { left: calc((100vw - var(--panel-pad)) / 2); }
 
 /* ---- calibrate (M9) -------------------------------------------------------------------

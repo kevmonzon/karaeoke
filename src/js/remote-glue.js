@@ -84,8 +84,6 @@ export function renderQr(el, text) {
  *   (M7) playNow(song, by), playNext(song, by), restart(), bgNext() (a no-op until M11)
  * @param {object} [deps.storage]
  * @param {() => number} [deps.clock]  ms, for the notice's 5 s life (Date.now; injected in tests)
- * (A `positionFocusQr` dependency is still accepted and ignored: the focus-mode QR it placed
- *  is gone, and the stage QR chip is positioned by CSS.)
  */
 export function createRemoteGlue({
   settings, catalog, queue, reactions, libraryView, durations,
@@ -304,17 +302,21 @@ export function createRemoteGlue({
       const box = $("remote-qr");
       if (!box) return;
       const homeQr = $("home-qr"), homeRoom = $("home-room"), stageQr = $("stage-qr");
-      if (!on) {
+      const clear = () => {
         box.classList.remove("show");
         renderQr(homeQr, ""); renderQr(stageQr, "");
         if (homeRoom) homeRoom.textContent = "";
-        return;
-      }
+      };
+      if (!on) { clear(); return; }
       if (lanUrl == null) {
         try {
           const d = await (await fetch("/api/remote/info")).json();
           lanUrl = (d && d.lanUrl) || "";
         } catch (_) { lanUrl = ""; }
+        // Remote may have been turned off while the address was on its way (a quick on → off):
+        // the off call has already cleared everything, so drawing now would bring the QR back
+        // (review R14, 2026-11-24).
+        if (!settings.get("remote.enabled")) { clear(); return; }
       }
       const room = getHostRoom();
       const base = pickRemoteBaseUrl(settings.get("remote.baseUrl"), location.origin, lanUrl);

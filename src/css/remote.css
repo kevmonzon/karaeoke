@@ -119,19 +119,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
   transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
 }
 .l-lyrics .line.placeholder { color: var(--muted); font-size: .55em; font-weight: 600; }
-.l-lyrics .line.past     { opacity: .30; }
-.l-lyrics .line.upcoming { opacity: .48; }
 .l-lyrics .line.current  { opacity: 1; transform: scale(1.04); }
-/* Syllable wipe: a hard-edged gradient clipped to the glyphs, --fill driven per frame. */
-.l-lyrics .syl {
-  --fill: 0%;
-  background-image: linear-gradient(90deg,
-    var(--sung) 0%, var(--sung) var(--fill),
-    var(--unsung) var(--fill), var(--unsung) 100%);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
-}
-.l-lyrics .line.past .syl { --fill: 100%; }
+/* The words (the stage look and the neighbour lines' fade) are scroll-lyrics.css, shared with the
+   host (Rae, 2026-11-24). */
 /* Stage style: the canvas covers the box and the column is hidden (both engines stay loaded, so
    switching style is instant). The engine sizes its rows and font from this box's clientWidth /
    clientHeight, which is why the box must have a DEFINITE height: it is the flex remainder of

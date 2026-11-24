@@ -89,23 +89,9 @@
 }
 
 /* ---- Legibility over a picture (body[data-bg="on"], set by the module) ---------------
-   The STAGE lyric style paints its own outline + shadow on the canvas. The SCROLL
-   style's syllables are gradient text (background-clip: text, transparent fill), and
-   a text-shadow there would paint OVER the clipped gradient and hide the wipe — so the
-   halo is a drop-shadow filter on each line instead, which shades the rendered glyphs. */
-body[data-bg="on"] .lyric-view .line {
-  filter: drop-shadow(0 0 calc(2 / 16 * var(--u)) var(--bg-halo))
-          drop-shadow(0 calc(1 / 16 * var(--u)) calc(6 / 16 * var(--u)) var(--bg-halo-soft));
-}
-/* Over a picture the scroll lyrics use the videoke look in BOTH themes: light text, a dark halo (the
-   dim is black in both themes too) and less-faded neighbour lines. The light theme's amber / mid-grey
-   lyric colours with a light halo were close to unreadable over a bright clip (integration fix, M11). */
-body[data-bg="on"] .lyric-view {
-  --sung: var(--gold); --unsung: #eef2ff;
-  --bg-halo: rgba(0, 0, 0, .88); --bg-halo-soft: rgba(0, 0, 0, .55);
-}
-body[data-bg="on"] .lyric-view .line.past     { opacity: .6; }
-body[data-bg="on"] .lyric-view .line.upcoming { opacity: .75; }
+   Both lyric styles draw their own black outline and drop shadow (the stage canvas, and the
+   scroll column in the same look since 2026-11-24 — scroll-lyrics.css), so they need nothing
+   here. */
 /* The idle home's plain text (brand, "Select a song"): a real text-shadow is fine here. */
 body[data-bg="on"] .home-brand,
 body[data-bg="on"] .home-prompt {

@@ -1,5 +1,5 @@
 /*
- * library-ui.js — the song list (Songs panel) and the queue list (Queue panel).
+ * library-ui.js — the song list and the queue list (the Songs panel's All / Artists and Queue tabs).
  *
  * The song list is VIRTUALIZED: only the rows in (and just around) the viewport
  * are in the DOM, absolutely positioned inside the scroll container; the full scroll
@@ -140,7 +140,6 @@ const kindSpan = (s) => {
   const k = kindIcon(s.kind);
   return `<span class="kind ${k.cls}" title="${k.title}">${k.glyph}</span>`;
 };
-// A dial number is shown whenever the song has one — 0 included; YouTube rows have "".
 
 /**
  * @param {object} cb

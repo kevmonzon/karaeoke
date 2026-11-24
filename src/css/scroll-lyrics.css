@@ -1,0 +1,60 @@
+/* ==========================================================================
+ * scroll-lyrics.css — the SCROLL lyric style in the STAGE style's look (Rae, 2026-11-24: "base the
+ * colors of the lyrics from the stage mode when set to scroll mode"). Loaded by the host page
+ * (index.html) AND the phone remote (remote.html), so both columns look the same.
+ *
+ * lyrics.js draws each word as <span class="syl" data-text="word">word</span>; the stage look:
+ *   - unsung: white fill, black outline, drop shadow (the canvas engine's first pass);
+ *   - sung:   the highlight colour with a WHITE outline — the ::after copy of the word, clipped at
+ *             the wipe (--fill), so the edge is hard and the outline changes colour with it;
+ *   - (backing) words (.bk) fill orange; a duet line's --hi (the singer colour) replaces the
+ *     highlight; the singer marker (.syl-mark) is drawn in that colour.
+ * The engine sets on .lyric-view: --lyr-hi (the stage engine's colour, its random pick included),
+ * --lyr-stroke (outline / 63 em — the stage's unit) and --lyr-shadow (or none).
+ *
+ * The outline is a centred -webkit-text-stroke painted BEFORE the fill (paint-order), so only its
+ * outer half shows — exactly what the canvas does (strokeText, then fillText on top).
+ * The ::after is positioned over its word: left 0, and height 100% of the word's content area with
+ * its own line box centred in it, which puts its baseline on the word's (half-leading cancels).
+ * ========================================================================== */
+
+.lyric-view {
+  --lyr-hi: #0000ff;
+  --lyr-stroke: 0.0952em;                       /* 6 / 63 */
+  --lyr-shadow: 0.032em 0.032em 0.064em #000;
+}
+
+.lyric-view .syl,
+.lyric-view .syl-mark {
+  color: #fff;
+  -webkit-text-fill-color: currentColor;
+  -webkit-text-stroke: var(--lyr-stroke) #000;
+  paint-order: stroke fill;
+  text-shadow: var(--lyr-shadow);
+}
+.lyric-view .syl-mark { color: var(--hi, var(--lyr-hi)); }
+
+.lyric-view .syl { --fill: 0%; position: relative; }
+.lyric-view .syl.bk { --hi: #ff9800; }          /* lyric-pager BACKING_COLOR */
+.lyric-view .syl::after {
+  content: attr(data-text);
+  position: absolute; left: 0; top: 0; height: 100%;
+  display: flex; align-items: center;
+  white-space: pre; pointer-events: none;
+  color: var(--hi, var(--lyr-hi));
+  -webkit-text-fill-color: currentColor;
+  -webkit-text-stroke: var(--lyr-stroke) #fff;
+  paint-order: stroke fill;
+  text-shadow: var(--lyr-shadow);
+  visibility: hidden;                           /* nothing of a word not yet reached */
+  clip-path: inset(-0.5em calc(100% - var(--fill)) -0.5em -0.5em);
+}
+.lyric-view .syl.on::after { visibility: visible; }
+/* Fully sung: keep the right-hand outline and shadow too. Past lines are fully sung whatever their
+   words carry (a seek, a line that was never painted). */
+.lyric-view .syl.full::after,
+.lyric-view .line.past .syl::after { visibility: visible; clip-path: inset(-0.5em); }
+
+/* The neighbour lines fade less than they used to (.30 / .48): outlined text reads on any ground. */
+.lyric-view .line.past     { opacity: .6; }
+.lyric-view .line.upcoming { opacity: .75; }

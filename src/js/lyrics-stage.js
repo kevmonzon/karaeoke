@@ -526,6 +526,16 @@ export class LyricsSwitch {
     this.scroll = scroll;
     this.stage = stage;
     this.setStyle(style);
+    this._syncLook();
+  }
+
+  // The scroll column wears the stage style's look (Rae, 2026-11-24): the stage engine's colour
+  // (its per-song random pick included), outline and shadow. Re-sent after every load (a random
+  // colour is picked per song) and every option change.
+  _syncLook() {
+    if (!this.scroll || typeof this.scroll.setLook !== "function" || !this.stage) return;
+    const o = this.stage.opts || {};
+    this.scroll.setLook({ color: this.stage.color, outline: o.outline, shadow: o.shadow !== false });
   }
 
   get active() { return this.style === "scroll" ? this.scroll : this.stage; }
@@ -548,18 +558,20 @@ export class LyricsSwitch {
     if (o.smooth !== undefined) this.stage.setOptions({ smooth: o.smooth });
   }
 
-  setStageOptions(o) { this.stage.setOptions(o); }
+  setStageOptions(o) { this.stage.setOptions(o); this._syncLook(); }
   redraw() { if (this.style === "stage") this.stage.redraw(); }
 
   load(parsed) {
     const a = this.scroll.load(parsed);
     const b = this.stage.load(parsed);
+    this._syncLook();
     return this.style === "scroll" ? a : b;
   }
 
   loadLines(rawLines) {
     const a = this.scroll.loadLines(rawLines);
     const b = this.stage.loadLines(rawLines);
+    this._syncLook();
     return this.style === "scroll" ? a : b;
   }
 
@@ -569,6 +581,7 @@ export class LyricsSwitch {
     const lines = Array.isArray(parsedDoc && parsedDoc.lines) ? parsedDoc.lines : [];
     const a = this.scroll.loadLines(lines);
     const b = this.stage.loadDoc(parsedDoc || {});
+    this._syncLook();
     return this.style === "scroll" ? a : b;
   }
 

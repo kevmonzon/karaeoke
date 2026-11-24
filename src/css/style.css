@@ -1,7 +1,7 @@
 /* Ka-Rae-oke — offline karaoke styling: the COMPONENT rules (song rows, queue rows,
    settings body, pitch guide, chords, lyrics, title/score cards, mixer rows,
    reactions). Page geometry lives in stage.css (the stage + its layers) and
-   overlays.css (control bar, panels, sheets, dialogs, scrim, focus ring).
+   overlays.css (panels, sheets, dialogs, the toast, scrim, focus ring).
    Palette + scale come from tokens.css (loaded first, see index.html). The app's legacy
    variable names are ALIASED to the semantic tokens. Every size is a multiple of the scale
    unit --u: a former `Npx` is `calc(N / 16 * var(--u))` (16px = 1u at 1280×720, so the
@@ -213,7 +213,7 @@ button.fav.on { color: var(--gold); }
 
 /* Stage / now playing: the queue bar (#queue-bar.now-playing) and its children live in
    stage.css. The generic pill and the full-screen button's active state stay here. */
-/* Full-screen button active state (the button now sits in the control bar). */
+/* Full-screen button active state (the button sits with the panel buttons in the stage footer). */
 .gear.active { opacity: 1; color: var(--accent-2); border-color: var(--accent-2); }
 .badge { font-size: calc(11 / 16 * var(--u)); text-transform: uppercase; letter-spacing: 1px; color: var(--bg); background: var(--muted); padding: calc(3 / 16 * var(--u)) calc(8 / 16 * var(--u)); border-radius: calc(20 / 16 * var(--u)); }
 .badge:empty { display: none; }
@@ -341,22 +341,9 @@ body.midi-mode .midi-mixer { display: grid; }
   transition: opacity var(--dur-base) var(--ease), transform var(--dur-base) var(--ease);
 }
 .line.placeholder { color: var(--muted); }
-.line.past     { opacity: .30; }
-.line.upcoming { opacity: .48; }
 .line.current  { opacity: 1; transform: scale(1.04); }
-
-/* Each syllable fills left→right via a hard-edged gradient clipped to the glyphs.
-   --fill (0–100%) is updated every frame on the current line only. */
-.syl {
-  --fill: 0%;
-  background-image: linear-gradient(90deg,
-    var(--sung) 0%, var(--sung) var(--fill),
-    var(--unsung) var(--fill), var(--unsung) 100%);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
-}
-.line.past .syl { --fill: 100%; }
-.line.current .syl { filter: drop-shadow(0 0 12px rgba(255, 210, 63, .3)); }
+/* The words themselves (the stage look: outline, shadow, the sung layer, the neighbour lines'
+   fade) are scroll-lyrics.css, shared with the phone (Rae, 2026-11-24). */
 
 /* Stage lyric style (lyrics-stage.js): a canvas over the whole lyric area replaces the
    scrolling column. The column stays in the DOM (both engines stay loaded, so switching style
@@ -383,7 +370,6 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 .qsong .title { font-size: calc(14 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist { color: var(--muted); font-size: calc(12 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qsong .artist .by { color: var(--accent-2); }
-.queue-list .qt { flex: 1; font-size: calc(13 / 16 * var(--u)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hint { color: var(--muted); font-size: calc(12 / 16 * var(--u)); margin-top: calc(14 / 16 * var(--u)); }
 
 /* Boot veil (#overlay: soundfont progress) — last child of <body>, above every overlay. */
@@ -573,15 +559,6 @@ body.bt-mode #mic-enable { opacity: .4; pointer-events: none; }
 .mic-btn:hover { background: var(--accent-2); color: #05060a; }
 .mic-btn.on { background: var(--accent-2); color: #05060a; border-color: var(--accent-2); }
 code { background: var(--panel-2); padding: 1px calc(5 / 16 * var(--u)); border-radius: calc(4 / 16 * var(--u)); font-size: calc(12 / 16 * var(--u)); }
-
-.rc-title { font-weight: 600; }
-.rc-meta { grid-column: 1; font-size: calc(12 / 16 * var(--u)); color: var(--text-muted); }
-.rc-score {
-  grid-row: 1 / span 2; align-self: center;
-  font-size: calc(22 / 16 * var(--u)); font-weight: 800;
-  font-variant-numeric: tabular-nums; color: var(--brand-2);
-}
-.rc-score:empty { display: none; }
 
 /* A hint that is telling you something is wrong (e.g. the offline cache is full). */
 .hint.warn { color: var(--warn); }

@@ -9,7 +9,14 @@
  *   - the active line is painted syllable-by-syllable (smooth "wipe")
  *   - `mergeLines` concatenates N consecutive source lines into one display line
  *   - a timing offset is applied by the caller (see app.js)
+ *   - since 2026-11-24 (Rae: "copy the stage design to scroll mode") the column is drawn in the
+ *     STAGE style's look: white text with a black outline + drop shadow, the sung part in the
+ *     highlight colour with a white outline, duet lines in the singer colours, (backing) vocals
+ *     orange without their brackets. Each word is a span with a ::after copy of its text clipped
+ *     at the wipe (scroll-lyrics.css); setLook() takes the stage engine's colour / outline / shadow.
  */
+
+import { splitParens, SINGER_COLORS, SINGER_MARKS, STAGE } from "./lyric-pager.js";
 
 // ----------------------------------------------------------------------------
 // Minimal SMF parser — tempo map + text/lyric events.
@@ -272,6 +279,28 @@ function computeSyllableEnds(lines) {
   return lines;
 }
 
+/**
+ * One syllable → the pieces it is drawn as: each run of non-space characters a word piece with its
+ * own share of the syllable's time (by character position, so a line-timed .lrc / .txt "syllable"
+ * holding a whole line still wipes left to right), each run of spaces a plain text piece. A word
+ * piece never contains a space, so its ::after copy (the sung layer) never wraps away from it.
+ * @returns {{text:string, word:boolean, t:number, e:number}[]}
+ */
+export function sylPieces(text, start, end) {
+  const str = String(text ?? "");
+  const n = str.length;
+  const st = Number(start) || 0;
+  const en = Math.max(st, Number(end) || st);
+  const out = [];
+  const re = /\s+|\S+/g;
+  let m;
+  while ((m = re.exec(str))) {
+    const a = m.index, b = a + m[0].length;
+    out.push({ text: m[0], word: !/^\s/.test(m[0]), t: st + (en - st) * a / n, e: st + (en - st) * b / n });
+  }
+  return out;
+}
+
 // ----------------------------------------------------------------------------
 // LyricsEngine — a smooth-scrolling column of lines.
 // ----------------------------------------------------------------------------
@@ -294,6 +323,7 @@ export class LyricsEngine {
     this.lineEls = [];
     this.activeLine = -1;
     this.hasLyrics = false;
+    this._painted = new Set();   // line indices whose words carry a wipe state (see _unpaint)
 
     // Build the viewport (masked, clips) + the scrolling column.
     container.innerHTML = "";
@@ -323,6 +353,21 @@ export class LyricsEngine {
     else this._rescroll();
   }
 
+  /**
+   * The stage style's look, shared by this column (Rae, 2026-11-24): `color` = the sung colour,
+   * `outline` = the outline thickness in 63rds of the font (the stage's own unit, 0–16), `shadow`
+   * = the drop shadow on / off. Written as CSS variables on the view (scroll-lyrics.css).
+   */
+  setLook({ color, outline, shadow } = {}) {
+    const v = this.view.style;
+    if (typeof color === "string" && color) v.setProperty("--lyr-hi", color);
+    if (outline != null) {
+      const o = Math.min(16, Math.max(0, Number(outline) || 0));
+      v.setProperty("--lyr-stroke", (o / 63).toFixed(4) + "em");
+    }
+    if (shadow != null) v.setProperty("--lyr-shadow", shadow ? "0.032em 0.032em 0.064em #000" : "none");
+  }
+
   load(parsed) {
     const t2s = buildTickToSeconds(parsed.tempoMap, parsed.ppqn, parsed.isSmpte);
     return this.loadLines(buildLines(parsed.lyricEvents, t2s));
@@ -350,6 +395,9 @@ export class LyricsEngine {
 
   reset() {
     this.activeLine = -1;
+    for (const j of this._painted) this._unpaint(j);
+    this._painted.clear();
+    this._setClasses(-1);
     this._scrollToIndex(-1);
   }
 
@@ -367,6 +415,7 @@ export class LyricsEngine {
   _renderAll() {
     this.scroll.innerHTML = "";
     this.lineEls = [];
+    this._painted.clear();
     if (!this.hasLyrics) {
       const el = document.createElement("div");
       el.className = "line placeholder";
@@ -375,16 +424,35 @@ export class LyricsEngine {
       this.lineEls.push(el);
       return;
     }
+    // The stage's duet rules (lyric-pager prepareStageLines): a line's singer colours its sung
+    // part, and its marker shows when the singer changes or after a STAGE.SINGER_GAP gap.
+    let shown = "";
+    let prevEnd = -Infinity;
     for (const line of this.lines) {
       const el = document.createElement("div");
       el.className = "line upcoming";
-      for (const syl of line.syllables) {
-        const span = document.createElement("span");
-        span.className = "syl";
-        span.dataset.t = syl.time;
-        span.dataset.e = syl.end;
-        span.textContent = syl.text;
-        el.appendChild(span);
+      const singer = line.singer || "";
+      if (SINGER_COLORS[singer]) el.style.setProperty("--hi", SINGER_COLORS[singer]);
+      if (singer && SINGER_MARKS[singer] && (singer !== shown || line.start - prevEnd > STAGE.SINGER_GAP)) {
+        const mark = document.createElement("span");
+        mark.className = "syl-mark";
+        mark.textContent = SINGER_MARKS[singer];
+        el.append(mark, " ");
+      }
+      if (singer) shown = singer;
+      prevEnd = line.end;
+      for (const syl of splitParens(line.syllables)) {
+        for (const piece of sylPieces(syl.text, syl.time, syl.end)) {
+          if (!piece.word) { el.appendChild(document.createTextNode(piece.text)); continue; }
+          const span = document.createElement("span");
+          span.className = syl.paren ? "syl bk" : "syl";
+          span.dataset.t = piece.t;
+          span.dataset.e = piece.e;
+          span.dataset.f = syl.time;          // the whole syllable flips at once (smooth wipe off)
+          span.dataset.text = piece.text;     // the sung layer's text (::after content)
+          span.textContent = piece.text;
+          el.appendChild(span);
+        }
       }
       this.scroll.appendChild(el);
       this.lineEls.push(el);
@@ -428,23 +496,40 @@ export class LyricsEngine {
     const idx = this._lineIndexAt(t);
     if (idx !== this.activeLine) {
       this.activeLine = idx;
+      // A line that is upcoming again (a seek back) loses the wipe it had (past lines are drawn
+      // fully sung by the stylesheet, whatever their words carry).
+      for (const j of this._painted) if (j > idx) { this._unpaint(j); this._painted.delete(j); }
       this._setClasses(idx);
       this._scrollToIndex(idx);
     }
-    if (idx >= 0) this._paint(this.lineEls[idx], t);
+    if (idx >= 0) { this._paint(this.lineEls[idx], t); this._painted.add(idx); }
   }
 
+  // --fill (0–100 %) drives the sung layer's clip; `on` shows it at all (so a word not yet reached
+  // shows no sliver of its outline), `full` lets it keep its right-hand outline and shadow.
   _paint(el, t) {
     if (!el) return;
     const spans = el.children;
     for (let i = 0; i < spans.length; i++) {
       const span = spans[i];
+      if (!span.classList.contains("syl")) continue;   // the singer marker
       const st = +span.dataset.t;
       const en = +span.dataset.e;
       const fill = this.smooth
         ? (t <= st ? 0 : t >= en ? 1 : (t - st) / (en - st))
-        : (t >= st ? 1 : 0);
+        : (t >= +span.dataset.f ? 1 : 0);
       span.style.setProperty("--fill", (fill * 100).toFixed(1) + "%");
+      span.classList.toggle("on", fill > 0);
+      span.classList.toggle("full", fill >= 1);
+    }
+  }
+
+  _unpaint(j) {
+    const el = this.lineEls[j];
+    if (!el) return;
+    for (const span of el.children) {
+      span.style.removeProperty("--fill");
+      span.classList.remove("on", "full");
     }
   }
 }

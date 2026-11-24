@@ -39,10 +39,9 @@ const SETTINGS_SCHEMA = [
   // the stage: TV overscan inset + key hints (keys mode only)
   { id: "set-overscan", path: "ui.overscanPct", type: "range", fmt: (v) => `${+v}%` },
   { id: "set-key-hints", path: "ui.keyHints", type: "check" },
-  // control bar: always-show toggle + idle auto-hide duration
   // lyrics
   { id: "set-offset", path: "lyrics.offsetMs", type: "range", fmt: (v) => `${v} ms` },
-  { id: "set-bt", path: "bt.enabled", type: "check" }, // lives in the Display category in index.html
+  { id: "set-bt", path: "bt.enabled", type: "check" }, // Lyrics → Timing in index.html
 
   { id: "set-smooth", path: "lyrics.smooth", type: "check" },
   { id: "set-lines", path: "lyrics.lineCount", type: "range", fmt: (v) => `${v}` },
@@ -149,13 +148,13 @@ const SETTINGS_SCHEMA = [
   { id: "set-youtube-debounce", path: "youtube.debounceMs", type: "range", fmt: (v) => `${(+v / 1000).toFixed(1)} s` },
   { id: "set-youtube-max", path: "youtube.maxResults", type: "range", fmt: (v) => `${v}` },
   { id: "set-youtube-keyword", path: "youtube.keyword", type: "text" },
-  // library search: close matches (typos), what Enter does, the songbook chip on each row
+  // library search: close matches (typos), what Enter does
   { id: "set-search-fuzzy", path: "search.fuzzy", type: "check" },
   { id: "set-enter-action", path: "search.enterAction", type: "select" },
   // song numbers (M8): number keys open the search; a digit-opened panel's idle clear
   { id: "set-keypad", path: "keypad.enabled", type: "check" },
   { id: "set-keypad-idle", path: "keypad.idleSec", type: "range", fmt: (v) => `${+v} s` },
-  // remote control (phones) — QR on the queue panel (and the stage, per qrOnStage) opens /remote
+  // remote control (phones) — the QR in ⚙ → Phones & party → Remote (and on the stage, per qrOnStage) opens /remote
   { id: "set-remote", path: "remote.enabled", type: "check" },
   { id: "set-qr-stage", path: "remote.qrOnStage", type: "select" },
   { id: "set-remote-url", path: "remote.baseUrl", type: "text" },
@@ -163,13 +162,16 @@ const SETTINGS_SCHEMA = [
   { id: "set-remote-push", path: "remote.push", type: "check" },
   { id: "set-guest-playnow", path: "remote.guestPlayNow", type: "check" },
   { id: "set-guest-priority", path: "remote.guestPriority", type: "check" },
-  // M8: a guest's number pad types live into this screen's search
 ];
 
 // Synonyms so intuitive words find a control whose visible label doesn't contain
 // them. Keyed by the control's (or action button's) element id. Optional sugar —
 // a control without an entry is still searchable by its label + section titles.
 const SEARCH_KEYWORDS = {
+  // R35 (review, 2026-11-24): the three reset / erase buttons are search hits too.
+  "settings-reset": "reset defaults restore factory default settings start over",
+  "erase-all": "erase delete clear wipe reset factory all data everything",
+  "reset-offset": "reset offset lyrics timing zero",
   "set-fontsize": "font text size extra small medium large scale zoom big display readability",
   "set-overscan": "tv edge crop margin inset safe area border cut off",
   "set-key-hints": "keyboard remote arrows shortcuts help tips",
@@ -302,7 +304,7 @@ export function matchesQuery(text, query) {
  *   onOpen: the overlay's open hook · updateCalibrateBtn(note?): re-evaluate "Calibrate…" ·
  *   setBgCategories(names): the Background → Category folders for the kind on show (M11)
  */
-export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData }) {
+export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData, confirmReset = null }) {
   const label = (c, v) => {
     if (c.type !== "range" || !c.fmt) return;
     const el = $(c.valId || `${c.id}-val`);
@@ -337,7 +339,10 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
   }
 
   // --- searchable / collapsible settings ---
-  const LEAF_SEL = ".row, #mic-enable, #mic-calibrate, #rebuild-catalog, #export-data, #import-data"; // matchable controls + action buttons
+  // matchable controls + action buttons (the reset / erase buttons since R35, 2026-11-24)
+  const LEAF_SEL = ".row, #mic-enable, #mic-calibrate, #rebuild-catalog, #export-data, #import-data, #settings-reset, #erase-all, #reset-offset";
+  // A "section" for searching: the <section>s, and the danger zone (Erase all) that sits outside them.
+  const SEC_SEL = "section, .danger-zone";
   let searchIndex = null;
   let catDefaults = {}; // each category's HTML-default open state, captured before restore
 
@@ -347,7 +352,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     const leaves = [];
     for (const cat of cats) {
       const catText = cat.querySelector("summary")?.textContent || "";
-      for (const sec of cat.querySelectorAll("section")) {
+      for (const sec of cat.querySelectorAll(SEC_SEL)) {
         const secText = sec.querySelector("h4")?.textContent || "";
         for (const el of sec.querySelectorAll(LEAF_SEL)) {
           const ctrl = el.matches(".row") ? el.querySelector("input, select") : el;
@@ -395,7 +400,7 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     if (!active) {
       for (const { el } of leaves) el.classList.remove("filtered-out");
       for (const d of dividers) d.classList.remove("filtered-out");
-      root.querySelectorAll("section").forEach((s) => s.classList.remove("filtered-out"));
+      root.querySelectorAll(SEC_SEL).forEach((s) => s.classList.remove("filtered-out"));
       for (const cat of cats) cat.classList.remove("filtered-out");
       restoreCatState();
       $("set-no-results").classList.add("hidden");
@@ -409,12 +414,12 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
       anyVisible = anyVisible || ok;
     }
     for (const d of dividers) d.classList.add("filtered-out");
-    root.querySelectorAll("section").forEach((sec) => {
+    root.querySelectorAll(SEC_SEL).forEach((sec) => {
       const has = [...sec.querySelectorAll(LEAF_SEL)].some((el) => !el.classList.contains("filtered-out"));
       sec.classList.toggle("filtered-out", !has);
     });
     for (const cat of cats) {
-      const has = [...cat.querySelectorAll("section")].some((s) => !s.classList.contains("filtered-out"));
+      const has = [...cat.querySelectorAll(SEC_SEL)].some((s) => !s.classList.contains("filtered-out"));
       cat.classList.toggle("filtered-out", !has);
       if (has) cat.open = true; // force-open categories with hits (don't persist — see toggle guard)
     }
@@ -581,7 +586,14 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     const rOff = $("reset-offset");
     if (rOff) rOff.onclick = () => { settings.set("lyrics.offsetMs", 0); syncSettingsUI(); };
 
-    $("settings-reset").onclick = () => {
+    // R35 (review, 2026-11-24): every setting at once — custom shortcuts, the calibrated mic latency
+    // and the EQ included — so it asks first (app.js passes the confirm dialog; Back = Cancel).
+    $("settings-reset").onclick = async () => {
+      if (typeof confirmReset === "function") {
+        let ok = false;
+        try { ok = await confirmReset(); } catch (e) { console.error(e); }
+        if (!ok) return;
+      }
       settings.reset();                 // clears karaeoke.settings.v1 → re-applies defaults + syncs controls
       const s = $("set-search");
       if (s && s.value) { s.value = ""; applyFilter(""); } // drop any active search filter
@@ -659,14 +671,6 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     updateMicBtn();
     updateCalibrateBtn();
     updateCacheStatus();
-    // bottom transport controls (wired in app.js, but reflected here on reset).
-    // Tempo & key are ± steppers (labels only); volume is still a slider.
-    if ($("tempo-val")) {
-      const g = (p) => settings.get(p);
-      $("tempo-val").textContent = `${(+g("audio.tempo")).toFixed(2)}×`;
-      $("volume").value = g("audio.volume");
-      $("key-val").textContent = (g("audio.key") > 0 ? "+" : "") + g("audio.key");
-    }
   }
 
   return { wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen, setBgCategories };

@@ -4,12 +4,13 @@
  * Owns playback (queue, current song, load → synth + lyrics + guide), the
  * requestAnimationFrame loop (lyric sync, pitch guide, scoring, auto-tune), the
  * transport controls, and the "settings → app" glue (what each setting change
- * actually does). The page is ONE full-screen stage; everything above it (Songs, Queue,
- * Mixer, Settings, the dialogs, the control bar, the adjust toast) is an overlay of one stack:
+ * actually does). The page is ONE full-screen stage (its footer holds the panel buttons, the status
+ * line and the seek bar); everything above it (Songs — with the queue as a tab — Mixer, Settings,
+ * the song sheet, the dialogs, the adjust toast) is an overlay of one stack:
  *   - ui/overlay-stack.js : the stack's state (built here, shared by the two below)
  *   - ui/overlays-dom.js  : hidden / inert / scrim / focus / history for every overlay
  *   - ui/shell.js         : the footer's panel buttons, idle / kind, the toast's tick
- *   - ui/browse-ui.js     : the Songs panel's tabs, chips, sort and rankings table (M6)
+ *   - ui/browse-ui.js     : the Songs panel's tabs (All · Artists · Rankings · Queue) and rankings table (M6)
  * The big UI surfaces are delegated:
  *   - library-ui.js  : song list (songs and artists), search results, queue rendering
  *   - settings-ui.js : the ⚙ panel (control ↔ Settings wiring)
@@ -52,7 +53,7 @@ import { createRemoteHost } from "./remote-host.js";
 import { buildLyricsDoc } from "./lyrics-doc.js";
 import { cachedArrayBuffer, purgeStaleCaches, purgeAllCaches } from "./asset-cache.js";
 import { collectAppData, restoreAppData, clearAppData } from "./store.js";
-import { createOverlayStack } from "./ui/overlay-stack.js";
+import { createOverlayStack, OVERLAY_DEFS } from "./ui/overlay-stack.js";
 import { createOverlays } from "./ui/overlays-dom.js";
 import { createShell } from "./ui/shell.js";
 import { createSongSheet } from "./ui/song-sheet.js";
@@ -66,8 +67,6 @@ import { createActions } from "./ui/actions.js";
 import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
 
 const $ = (id) => document.getElementById(id);
-// What an empty song list should SAY. A bare white panel is indistinguishable from a broken
-// app, and the first-run case has a concrete next action worth naming.
 // Source-kind icon shown in the now-playing header (in place of the dial number).
 const NP_ICON = { midi: "🎤", video: "🎞️", youtube: "🌐", audio: "🎵" };
 const npIcon = (kind) => NP_ICON[kind] || "🎵";
@@ -112,7 +111,7 @@ const loudStore = createLoudnessStore();
 const loudMeter = createLoudnessMeter();
 let lyrics, mic, pitchGuide, video, youtube, chordEngine, audioFile; // created at boot (need the DOM)
 let lib, settingsUI, midiMixer, songSheet, titleCard, shortcutsUI;  // UI modules (created at boot)
-let browseUI;                    // the Songs panel's tabs / chips / sort / rankings (created at boot)
+let browseUI;                    // the Songs panel's tabs and the rankings view (created at boot)
 let stack, overlays, shell; // the stage-first shell (created at boot — see buildShell)
 let inputMode, nav, actions;     // keys and D-pad (created at boot — see buildKeys)
 // id → the element registered for that overlay, kept beside the overlays.register calls: the
@@ -205,7 +204,6 @@ async function boot() {
     onPlay: (s) => { playNow(s); closeOverlay("search"); },
     onQueue: enqueue, onRemoveFromQueue: removeFromQueue,
     onToggleFavorite: (s) => libraryView.toggleFavorite(s), isFavorite: (s) => libraryView.isFavorite(s),
-    showSource: () => settings.get("library.showSource"),
     // P23 (M5): a click, a tap or Enter on a row body opens the song sheet. ★ / ＋ on a song row
     // and ✕ on a queue row keep their direct actions; Space still selects, "+" still queues.
     onActivate: (song, rowEl) => openSheet(song, rowEl, "library", +rowEl.dataset.index),
@@ -213,7 +211,7 @@ async function boot() {
     // M6: an artist row (or "← Artists") opens that artist's songs (or the artist list again).
     onArtist: (key) => openArtist(key),
   });
-  // M6: the Songs panel's tabs, songbook / kind chips, sort and the rankings table. It draws the
+  // M6: the Songs panel's tabs (and the Queue tab's count) and the rankings table. It draws the
   // controls only; the list is still library-ui's, and what it shows is library-view's.
   browseUI = createBrowseUI({
     tabsEl: $("browse-tabs"), paneEl: $("browse-pane"),
@@ -232,6 +230,12 @@ async function boot() {
   settingsUI = createSettingsUI({
     settings, mic, onRebuild, onToggleMic: toggleMic, onCalibrate: openCalibration, onEraseAll: eraseAllData,
     onExportData: exportAppData, onImportData: importAppData,
+    // R35: Reset to defaults asks first (Cancel focused, Back = Cancel).
+    confirmReset: () => overlays.confirm({
+      title: "Reset every setting?",
+      text: "Every setting goes back to its default — custom shortcuts, the microphone latency and the EQ too.",
+      okLabel: "Reset",
+    }),
   });
   midiMixer = createMidiMixer({ container: $("midi-mixer"), audio });
   remoteHost = createRemoteHost({
@@ -245,10 +249,10 @@ async function boot() {
     push: () => !!settings.get("remote.push"),
     // The relay restarted or the room lapsed: it no longer holds this song's lyric document.
     onRelayReset: () => publishCurrentSong(),
-    onPushStatus: () => updatePushStatus(),   // "Phones: instant / polling" under the queue QR
+    onPushStatus: () => updatePushStatus(),   // "Phones: instant / polling" in ⚙ Remote and on the Queue tab
   });
   mic.onStatus = (m) => { $("mic-status").textContent = m; settingsUI.updateMicBtn(); };
-  buildShell();          // the overlay stack, every overlay, the control bar and the home layer
+  buildShell();          // the overlay stack, every overlay, the stage footer and the home layer
 
   applyVisualSettings();
   applyGuideSettings();
@@ -277,15 +281,17 @@ async function boot() {
     libraryView.loadBlocked();      // hide videos that previously failed to embed
     libraryView.seedServerBlocklist();
     libraryView.loadFavorites();    // restore starred songs (resolved by id) before the first render
-    renderBrowse();                 // the tabs + the chips of the songbooks / kinds this catalogue has
+    renderBrowse();                 // the tabs (shown once a catalogue is in)
     libraryView.renderAll();
     loadSession(); // restore queue + recently-played (no auto-play)
     // Its own task, not awaited: the hand-off copies every title + artist, and should not
     // lengthen the task that paints the list. Close matches start once the index is ready.
     setTimeout(buildSearchIndex, 0);
   } catch (e) {
-    setStatus("Failed to load catalog.json — is the server running from the project root?");
+    setStatus("Failed to load catalog.json — is the server running from the project root?", { error: true });
     console.error(e);
+    songCountText = "No catalogue";   // the status line said "Loading…" for good (review R11)
+    updateStatusLine();
     libraryView.renderCatalogError();
   } finally {
     document.body.classList.remove("booting");
@@ -305,11 +311,12 @@ async function boot() {
 }
 
 // ---------------------------------------------------------------------------
-// The stage-first shell: one overlay stack, the DOM side of every overlay, the control bar
+// The stage-first shell: one overlay stack, the DOM side of every overlay, the stage footer
 // and the home layer. Ownership is split on purpose (each owner is the only writer):
-//   - overlays-dom: `hidden`/`.open` on every overlay but the bar, `inert`, #scrim, focus,
-//     history, body[data-ov] / body[data-panel];
-//   - shell: the control bar (body.controls-hidden), body[data-idle] / [data-kind], #status;
+//   - overlays-dom: `hidden`/`.open` on every overlay, `inert`, #scrim, focus, history,
+//     body[data-ov] / body[data-panel];
+//   - shell: the footer's panel buttons and its auto-hide (body.foot-hidden), body[data-idle] /
+//     [data-kind];
 //   - app.js: WHEN the stage is idle, what kind of song is loaded, whether it is playing.
 // ---------------------------------------------------------------------------
 function buildShell() {
@@ -730,6 +737,10 @@ function goBack() {
 // never toggle the wrong way. Nothing loaded: what ▶ does — play a song the user has selected.
 function playPauseKey(arg) {
   const want = arg === "play" || arg === "pause" ? arg : "toggle";
+  // The end-of-song hand-off: `current` is still the song that just ended (endOfSong keeps it for
+  // the card, the ranking and the loudness learner; advanceQueue moves on). Toggling it would
+  // restart a finished song under the card — the key is taken and does nothing (review R12).
+  if (endGuard) return true;
   if (!current) {
     if (loadingSong) return true;               // a song is on its way: nothing to toggle yet
     if (want === "pause") return false;
@@ -814,10 +825,9 @@ function wireTypeToSearch() {
     // The list's top edge. The list released this key (listKeyPlan). Without the browse controls
     // the row above is the search row, where spatial navigation would have to pick between the
     // field and the filter pills on the same line — a tie decided by sub-pixel rounding — so the
-    // panel takes it to the field, deterministically. M6: with the chips (and the sort) between
-    // the list and the field, the key goes on to the router, which moves up to them — otherwise
-    // the tabs and chips could never be reached with a D-pad (ArrowDown in the field still jumps
-    // straight to the list).
+    // panel takes it to the field, deterministically. M6: with the tabs between the list and the
+    // field, the key goes on to the router, which moves up to them — otherwise the tabs could
+    // never be reached with a D-pad (ArrowDown in the field still jumps straight to the list).
     if (e.key === "ArrowUp" && noMods(e) && row.dataset.index === "0" && row.classList.contains("song")) {
       if (browseControlsShown()) return;
       e.preventDefault();
@@ -1286,8 +1296,8 @@ function onSettingChanged(path) {
     applyGuideSettings();
     if ((path === "*" || path === "guide.channel") && lastParsed) loadMelody(lastParsed);
     if (path === "*" || path.startsWith("guide.vocal")) { applyGuideVocal(); updateMelodyToggle(); }
-    if (path === "*" || path === "lyrics.offsetMs") updateStatusLine();
   }
+  if (path === "*" || path === "lyrics.offsetMs" || path.startsWith("guide.vocal")) updateStatusLine();
   if (path === "*" || path.startsWith("key.") || path === "audio.key") {
     if (path === "key.autoDetect" && lastParsed) currentKey = settings.get("key.autoDetect") ? detectKey(lastParsed) : null;
     updateKeyDisplay();
@@ -1307,7 +1317,6 @@ function onSettingChanged(path) {
   }
   // Close matches on/off: redo the current search so the list says what the setting now says.
   if (path === "search.fuzzy" && showingSearch()) libraryView.runSearch($("search").value);
-  if (path === "*" || path === "library.showSource") { if (lib) lib.refresh(); } // songbook chip on/off
   if (path === "*" || path.startsWith("midiMode.")) applyMidiMode();
   if (path === "*" || path.startsWith("remote.")) applyRemoteMode();
   if (path === "*" || path === "ui.fontSize") applyFontSize();
@@ -1340,7 +1349,7 @@ function applyFontSize() {
   requestAnimationFrame(() => {
     if (lib) lib.refresh();          // the row height changed → re-measure the virtualized list
     if (pitchGuide) pitchGuide.resize();
-    if (lyrics) lyrics.redraw();     // --ui-scale changed the lyric font → re-measure the stage
+    if (lyrics) lyrics.redraw();     // the scale unit (--u) changed the lyric font → re-measure the stage
   });
 }
 // Host color theme. "auto" follows the OS (prefers-color-scheme); "dark"/"light" force it.
@@ -1364,8 +1373,8 @@ function applyKeyHints() {
   const on = settings.get("ui.keyHints") !== false;
   for (const el of document.querySelectorAll(".key-hints")) el.hidden = !on;
 }
-// On resize/rotate (debounced): re-fit the title card (its height follows the viewport) and
-// re-measure the virtual list + guide (the scale unit follows the viewport too).
+// On resize/rotate (debounced): re-measure the virtual list + guide (the scale unit follows the
+// viewport).
 let _screenResizeTimer;
 window.addEventListener("resize", () => {
   clearTimeout(_screenResizeTimer);
@@ -1499,11 +1508,6 @@ function updateKeyDisplay() {
   el.title = `Detected key (${currentKey.source}${currentKey.source === "analysis" ? `, ${Math.round(currentKey.confidence * 100)}% conf.` : ""})`;
 }
 
-// octave-agnostic semitone distance between two MIDI notes (0..6)
-function pcDist(a, b) {
-  let d = (((a - b) % 12) + 12) % 12;
-  return d > 6 ? 12 - d : d;
-}
 
 // ---------------------------------------------------------------------------
 // Queue
@@ -1613,8 +1617,8 @@ function onSheetAction(id, song, { mode, index } = {}) {
   closeOverlay("song");
   if (!song) return;
   if (mode === "queue") { queueSheetAction(id, song, index); return; }
-  // Reserve and Play next write their line BEFORE acting: with nothing playing they start the
-  // song at once, and the play path's own "Loading: …" / "Now playing: …" should then win.
+  // Reserve and Play next write their toast BEFORE acting: with nothing playing they start the
+  // song at once, and anything the play path says (an error) should then win.
   switch (id) {
     case "reserve":
       setStatus(`Reserved: ${songTitle(song)}`);
@@ -1714,7 +1718,7 @@ const remoteGlue = createRemoteGlue({
     applySetting: (path, v) => {
       settings.set(path, v);           // → onSettingChanged fans it out
       settingsUI.syncSettingsUI();     // refresh the ⚙ panel controls
-      syncTransportLabels();           // …and the bottom key/tempo/volume labels
+      updateStatusLine();              // …and the status line's values
     },
     // M7. remote-glue gates these first (remote.guestPlayNow / remote.guestPriority, fair play,
     // the per-guest cap); what is left here is the playback state only app.js may write.
@@ -1802,13 +1806,19 @@ function songLoaded(song) {
 }
 
 async function remotePlay() {
-  if (!current) { if (queue.length) advanceQueue(); return; }
+  // The end-of-song hand-off: the ended song is still `current`, but there is nothing to play
+  // or pause until the next one takes the stage (review R12).
+  if (endGuard) return;
+  // Nothing on the stage yet: start the queue — unless a song is already on its way (the first
+  // MIDI song waits for the soundfont with `current` still null), which ▶ must not replace (R3).
+  if (!current) { if (!loadingSong && queue.length) advanceQueue(); return; }
   if (media === audio && !(await ensureEngine())) return;
   if (media.paused) media.play();
   userPaused = false;
   setPlayIcon();
 }
 function remotePause() {
+  if (endGuard) return;   // the end-of-song hand-off (R12)
   if (current && !media.paused) { media.pause(); userPaused = true; setPlayIcon(); }
 }
 function setRemoteVolume(v) {
@@ -1817,7 +1827,6 @@ function setRemoteVolume(v) {
   updateStatusLine();
 }
 // Keep the status line in step when a phone changes key/tempo/volume.
-function syncTransportLabels() { updateStatusLine(); }
 
 // ---------------------------------------------------------------------------
 // App data — factory reset, backup/export, and the thin wrappers over session.js
@@ -1879,7 +1888,7 @@ function onYoutubeError(code) {
   const permanent = code === 101 || code === 150 || code === 100 || code === 2;
   if (permanent) libraryView.blockYoutube(current.videoId);
   const why = (code === 101 || code === 150) ? "embedding disabled by owner" : `unavailable (${code})`;
-  setStatus(`"${current.name}" ${why} — skipping…`);
+  setStatus(`"${current.name}" ${why} — skipping…`, { error: true });
   const next = libraryView.nextYoutubeInList(current);
   if (next) return playNow(next);          // walk to the next result the user was browsing
   if (queue.length) return skipCurrent();  // same single "move on now" path as ⏭ / a failure
@@ -1931,6 +1940,11 @@ let loadingSong = false;
 // songs take the existing SpessaSynth path.
 async function playNow(song, by = "") {
   shell.setIdle(false);   // a song is coming: the home layer gives way (the only setIdle(false))
+  // A song picked during the previous song's end-of-song hand-off (the score card's 4.5 s, else
+  // 0.7 s) REPLACES that hand-off: its timer would otherwise advance the queue over this song —
+  // stop it on an empty queue, or swap in the next one (review R1, 2026-11-24). advanceQueue →
+  // playNow from that timer arrives with endTimer already null.
+  clearTimeout(endTimer); endTimer = null; endGuard = false;
   const gen = ++playGen;
   playCounter.start(song);   // a new play (Restart is not a new play and does not come through here)
   loadingSong = true;   // suppress the idle auto-advance until this song owns the stage
@@ -1950,7 +1964,7 @@ async function playNow(song, by = "") {
     if (!stalePlay(gen)) {
       setStatus(e && e.userMessage
         ? `Could not play "${song.name || song.code || "that song"}": ${e.userMessage}.`
-        : `Could not play "${song.name || song.code || "that song"}" — skipping.`);
+        : `Could not play "${song.name || song.code || "that song"}" — skipping.`, { error: true });
       onSongFailed();
     }
   } finally {
@@ -2179,7 +2193,7 @@ async function playMidi(song, gen = playGen) {
   } catch (e) {
     if (stalePlay(gen)) return;
     console.error(e);
-    setStatus(`Could not read the file for "${songTitle(song)}": ${e.message}`);
+    setStatus(`Could not read the file for "${songTitle(song)}": ${e.message}`, { error: true });
     onSongFailed();  // don't leave `current` pointing at a song that never loaded
     return;
   }
@@ -2225,7 +2239,7 @@ async function playMidi(song, gen = playGen) {
     audio.loadSong(buf);
   } catch (e) {
     console.error("Sequencer rejected the file:", e);
-    setStatus(`"${songTitle(song)}" looks corrupt — skipping.`);
+    setStatus(`"${songTitle(song)}" looks corrupt — skipping.`, { error: true });
     onSongFailed();
     return;
   }
@@ -2268,7 +2282,9 @@ function endOfSong() {
   if (endGuard) return;
   endGuard = true;
   playCounter.ended();   // a natural end counts the play (if it ever sounded)
-  // Close out scoring BEFORE clearStage(), which drops the song + singer the card needs.
+  // Close out scoring BEFORE clearStage(), which drops the singer (currentBy) the card needs.
+  // `current` stays the ended song through the hand-off below (the keys and the phone's ▶ ignore
+  // it while endGuard is set); advanceQueue replaces or clears it.
   // First judge the notes still inside their grace window (M9), silently: the card is about
   // to cover the stage, so a last chip would only flash underneath it.
   if (scorer && verdictFeed) {
@@ -2286,8 +2302,9 @@ function endOfSong() {
   clearStage();
   if (res) {
     score.showCard(res);
-    // The card is role=status, but a modal panel makes the stage inert, which hides it from
-    // assistive tech. #status lives outside the stage, so say the same thing there too.
+    // The card is role=status, but a modal panel makes the stage (the footer's status line
+    // included) inert, which hides it from assistive tech; the toast is outside the stage, so it
+    // says the same thing.
     if (settings.get("score.card")) {
       const title = (res.song && res.song.name) || "(untitled)";
       setStatus(`${title}: ${res.score}, ${res.band.label}`);
@@ -2304,6 +2321,10 @@ function endOfSong() {
 // 700 ms hand-off window used to land a SECOND advanceQueue() and skip an extra song.
 function skipCurrent() {
   playCounter.stop();      // skipped before 30 s: not a play
+  // A song still loading is skipped too (review R37): its play* bails at its next checkpoint and
+  // its `finally` no longer owns the flag — as stopSong does. Without this, Next with an empty
+  // queue showed the home layer and the loading song then took the stage anyway.
+  if (loadingSong) { playGen++; loadingSong = false; }
   clearTimeout(endTimer);
   endTimer = null;
   endGuard = false;
@@ -2327,13 +2348,14 @@ function onSongFailed() {
 function onMediaError(kind, why) {
   if (!current) return;
   console.warn(`${kind} playback failed:`, why);
-  setStatus(`Could not play "${current.name || current.code || "that song"}" — file missing or unreadable. Skipping.`);
+  setStatus(`Could not play "${current.name || current.code || "that song"}" — file missing or unreadable. Skipping.`, { error: true });
   onSongFailed();
 }
 
-// True when the active engine has reached the end of the current song. MIDI is special: the
-// sequencer stalls with `paused` false and the clock plateaued just short of duration, so it
-// reports via `ended`; video/audio reach duration cleanly; YouTube fires its own onEnded.
+// True when the active engine has reached the end of the current song. MIDI reports via
+// `ended` (song-scoped, §5.14) with the clock on its duration — the Sequencer pauses itself at its
+// natural end, so `paused` alone proves nothing; video/audio reach duration cleanly; YouTube fires
+// its own onEnded.
 function songHasEnded() {
   if (!current || !media) return false;
   // A song that is still LOADING is judged by the PREVIOUS song's engine state. `playMidi`
@@ -2597,13 +2619,13 @@ function wireUI() {
   };
   $("btn-youtube").onclick = () => {
     if (!YouTubeEngine.supported) {
-      setStatus("YouTube search needs a Chromium-based browser (credentialless iframes).");
+      setStatus("YouTube search needs a Chromium-based browser (credentialless iframes).", { error: true });
       return;
     }
     settings.set("youtube.enabled", !settings.get("youtube.enabled")); // onSettingChanged repaints + re-runs
   };
 
-  // The panel buttons (Songs, Queue, Mixer, Settings), Restart and Full screen are the shell's
+  // The panel buttons (Songs, Mixer, Next background, Settings, Full screen) are the shell's
   // (shell.wire). The full-screen button's state still follows the document from here.
   const fsBtn = $("btn-fullscreen");
   if (fsBtn) {
@@ -2672,8 +2694,8 @@ function wireUI() {
   libraryView.updateYoutubeToggle(); // reflect the persisted 🌐 toggle + browser support
 }
 
-// Single mic enable/disable path shared by BOTH the transport 🎙 button and the ⚙ panel
-// button (passed in as onToggleMic), so the Bluetooth-mode guard can't diverge between them.
+// Single mic enable/disable path for the ⚙ panel's button (passed in as onToggleMic) and the
+// phone remote, so the Bluetooth-mode guard can't diverge between them.
 async function toggleMic() {
   if (settings.get("bt.enabled")) return; // mic is disabled in Bluetooth mode
   $("mic-status").textContent = mic.enabled ? "Stopping…" : "Requesting microphone…";
@@ -2698,7 +2720,7 @@ function openCalibration() {
     calibrateUI.open();
   } catch (e) {
     console.error("Calibration is unavailable:", e);
-    setStatus("Calibration is unavailable");
+    setStatus("Calibration is unavailable", { error: true });
     return;
   }
   overlays.open("calibrate");
@@ -2737,9 +2759,18 @@ function nudgeOffset(delta) {
 // closes after its 2500 ms period (the shell's 250 ms tick drives that). Opened without user
 // activation so it never takes focus or a history entry; a repeat while it is up just restarts
 // its timer.
-function showAdjust(text) {
+// The toast's two periods (review R34, Rae 2026-11-24): a routine message 2.5 s, an error 6 s with
+// a red edge (it used to sit on the status line until the next message; a 2.5 s pop-up was easy
+// to miss). The next message replaces it either way, with its own period.
+const TOAST_MS = OVERLAY_DEFS.adjust.autoHideMs;
+const ERROR_TOAST_MS = 6000;
+function showAdjust(text, { error = false } = {}) {
   const el = $("ov-adjust");
-  if (el) el.textContent = text == null ? "" : String(text);
+  if (el) {
+    el.textContent = text == null ? "" : String(text);
+    el.classList.toggle("error", !!error);
+  }
+  stack.setAutoHide("adjust", error ? ERROR_TOAST_MS : TOAST_MS);   // restarts an open toast's timer
   if (!overlays.open("adjust", { activated: false, opener: null })) stack.touch("adjust");
 }
 
@@ -2766,8 +2797,8 @@ function updateStageBanner() {
   if (!nowEl) return;
   const nowText = current && currentBy ? `🎤 ${currentBy}` : "";
   if (nowText !== _bannerNow) { nowEl.textContent = nowText; _bannerNow = nowText; }
-  // Queued-song count chip (far right of the bar): "⏭ N", hidden when empty (:empty in CSS).
-  // It is a button that opens the queue (the shell wires it); its name carries the count too,
+  // Queued-song count chip (far right of the queue bar): "⏭ N", hidden when empty (:empty in
+  // CSS). It is a button that opens the Songs panel's Queue tab (the shell wires it); its name carries the count too,
   // so what is read out matches what is shown.
   const qEl = $("queue-count");
   if (qEl) {
@@ -2887,19 +2918,20 @@ function toMidiBytes(arrayBuffer) {
 }
 
 // A message for the room. (The #status element is the status LINE now — values, not messages.)
-function setStatus(msg) {
+function setStatus(msg, { error = false } = {}) {
   // Messages ("Reserved: …", "Queue cleared", errors) are the adjust toast now: the status line
-  // holds the values (Rae, 2026-11-24). Before the overlays exist, the console keeps them.
+  // holds the values (Rae, 2026-11-24). `error`: 6 s with a red edge (R34). Before the overlays
+  // exist, the console keeps them.
   if (msg == null || msg === "") return;
-  if (overlays) showAdjust(msg); else console.info(msg);
+  if (overlays) showAdjust(msg, { error }); else if (error) console.warn(msg); else console.info(msg);
 }
-// Reflects the *real* playback state. A MIDI song at its stalled end reports
-// paused===false (§5.14) while nothing is actually sounding, so treat `audio.ended`
-// as stopped too. Only writes on change so it's cheap to call every rAF frame.
+// Reflects the *real* playback state: a finished MIDI song counts as stopped whatever `paused`
+// says (`audio.ended`, §5.14). Cheap enough to call every rAF frame.
 function isPlaying() { return !media.paused && !(media === audio && audio.ended); }
 // Play counts (Rae, 2026-11-24 — recorded on the server, not shown yet): a song counts once after
-// 30 s of real playback or at its natural end (play-counts.js). isPlaying(), not `!paused`: a MIDI
-// song at its stalled end is not paused, and while the next song loads `media` is still the old one.
+// 30 s of real playback or at its natural end (play-counts.js). isPlaying(), not `!paused`: a
+// finished MIDI song is not playing whatever `paused` says, and while the next song loads `media`
+// is still the old one.
 const playCounter = createPlayCounter();
 function countPlayTick() {
   playCounter.tick(!!(current && media && !loadingSong && isPlaying()), performance.now() / 1000);
@@ -2996,6 +3028,5 @@ function setPlayIcon() {
   updateStatusLine();
 }
 function fmtKey(s) { return (s > 0 ? "+" : "") + s; }
-function fmt(s) { s = Math.max(0, s | 0); return `${(s / 60) | 0}:${String(s % 60).padStart(2, "0")}`; }
 
 boot();

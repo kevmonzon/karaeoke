@@ -1,8 +1,8 @@
 /*
  * overlay-stack.js — the one overlay stack (pure: no DOM, no history, no timers of its own).
  *
- * Every layer that sits above the stage (control bar, adjust toast, the right-hand panels,
- * the song sheet, dialogs) is opened and closed through here, so Back, the navigation scope
+ * Every layer that sits above the stage (the adjust toast, the right-hand panels, the song sheet,
+ * dialogs) is opened and closed through here, so Back, the navigation scope
  * and the DOM adapter all agree on what is showing. The adapter listens to `onChange` and
  * turns each change into `hidden` / `inert` / history work; this module only keeps the state.
  *
@@ -10,7 +10,8 @@
  *  - Groups: opening a `panel` closes any other open `panel` in the SAME change (a panel swap).
  *    A `sheet` stacks above a panel; a `dialog` stacks above everything.
  *  - Order: open ids are kept bottom → top by `z`, ties by the order they were opened.
- *  - Back closes the top MODAL overlay only; non-modal ones (bar, toast) are never its target.
+ *  - Back closes the top MODAL overlay only; non-modal ones (the toast; a "bar" kind is still
+ *    supported, the tests keep one) are never its target.
  *  - Auto-hide: each id has a period (ms, 0 = off). Opening or `touch()` starts a deadline;
  *    the caller drives `tick()` from its own timer, so tests can run on a fake clock.
  */

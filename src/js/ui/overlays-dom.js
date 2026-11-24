@@ -2,10 +2,11 @@
  * overlays-dom.js — the overlay stack's DOM adapter and its history sync (M3, §4.2 of the plan).
  *
  * overlay-stack.js keeps the state; this module turns each stack change into what the page shows:
- *   - visibility: the `hidden` attribute + `.open` class (or only `.open` for a "class" overlay,
- *     which is how the control bar stays rendered — its one owner is shell.js);
+ *   - visibility: the `hidden` attribute + `.open` class (or only `.open` for a "class" overlay — a
+ *     mode no overlay uses since the control bar went, 2026-11-24; the tests keep it);
  *   - `inert` on #stage and on every overlay below the top modal (aria-hidden + a focusin
- *     redirect where the browser has no `inert`); #status sits outside #stage and is never touched;
+ *     redirect where the browser has no `inert`); the stage footer (#status included) is inside
+ *     #stage, so it goes inert with it;
  *   - #scrim, body[data-ov] (top modal id) and body[data-panel] ("right" while a panel is open);
  *   - focus: into a modal when the user opened it, back to the opener when it closes, else #stage;
  *   - history: one entry per user-opened modal, a sentinel so Back never leaves the app after the

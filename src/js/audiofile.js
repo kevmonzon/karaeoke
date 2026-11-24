@@ -37,6 +37,7 @@ export class AudioFileEngine extends MediaEngineBase {
     this.chain = new KeyShiftChain(audioEngine); // WebAudio pitch/volume chain
     this._rate = 1;
     this._objUrl = null; // in-memory blob URL for the current file
+    this._loadSeq = 0;   // bumped by every load() and unload(): a superseded load must not touch the element
     this._live = false;  // true between load() and unload() — see _bindErrors
     this.onError = null; // set by app.js: (reason) => skip this song
 
@@ -69,13 +70,19 @@ export class AudioFileEngine extends MediaEngineBase {
    *  makes loading + seeking reliable regardless of the server's HTTP range/keep-alive
    *  behavior. Falls back to direct streaming if the fetch fails. */
   async load(url) {
+    const seq = ++this._loadSeq;
     this._revokeObjUrl();
     this._live = true;   // arm error reporting for this file
     try {
       const buf = await cachedArrayBuffer(url); // cache-first (Cache Storage), like MIDI + soundfont
+      // A newer load (or an unload) took the element while this file was on its way — a slow
+      // first song finishing after a quick second one. Leave the element (and its blob URL) to
+      // the newer one; no URL was made for this one, so nothing leaks (review R2, 2026-11-24).
+      if (seq !== this._loadSeq) return;
       this._objUrl = URL.createObjectURL(new Blob([buf], { type: mimeForUrl(url) }));
       this.el.src = this._objUrl;
     } catch (_) {
+      if (seq !== this._loadSeq) return;
       this.el.src = url; // fallback: let the element stream it directly
     }
     this.el.playbackRate = this._rate;
@@ -88,6 +95,7 @@ export class AudioFileEngine extends MediaEngineBase {
 
   /** Detach the source (switching away to another kind) — frees the decoder + blob. */
   unload() {
+    this._loadSeq++;     // a load still on its way must not point the element at its file
     this.stop();
     this._live = false;  // the src-removal below fires a spurious error — ignore it
     this.el.removeAttribute("src");

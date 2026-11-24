@@ -79,6 +79,31 @@ export function makeBeatAt(tempoMap, tickToSeconds) {
 }
 
 /**
+ * One line's syllables → the same syllables with their brackets removed and the backing-vocal ones
+ * flagged `paren` (drawn orange). A bracket left open is closed at the end of the line; a syllable
+ * that was only brackets is dropped. Shared by the stage engine and, since 2026-11-24 (Rae: the
+ * scroll style takes the stage look), the scroll engine (lyrics.js).
+ * @param {{time:number, text:string}[]} syllables
+ * @returns {{time:number, text:string, paren:boolean}[]} (other fields of each syllable are kept)
+ */
+export function splitParens(syllables) {
+  let inParen = false;
+  const out = [];
+  for (const s of syllables || []) {
+    const text = String((s && s.text) ?? "");
+    const opens = text.includes("(");
+    const closes = text.includes(")");
+    if (opens) inParen = true;
+    const paren = inParen;
+    if (closes) inParen = false;
+    const clean = text.replace(/[()]/g, "");
+    if (!clean) continue;
+    out.push({ ...s, text: clean, paren });
+  }
+  return out;
+}
+
+/**
  * Raw lines ([{start, end, singer?, syllables:[{time, text}]}]) → stage lines.
  * - Parentheses mark backing vocals: the brackets are removed and the syllables flagged
  *   `paren` (drawn orange). A bracket left open is closed at the end of its line.
@@ -91,19 +116,7 @@ export function makeBeatAt(tempoMap, tickToSeconds) {
 export function prepareStageLines(rawLines, beatAt = () => STAGE.DEFAULT_BEAT) {
   const out = [];
   for (const raw of rawLines || []) {
-    let inParen = false;
-    const syllables = [];
-    for (const s of raw.syllables || []) {
-      const text = String(s.text ?? "");
-      const opens = text.includes("(");
-      const closes = text.includes(")");
-      if (opens) inParen = true;
-      const paren = inParen;
-      if (closes) inParen = false;
-      const clean = text.replace(/[()]/g, "");
-      if (!clean) continue;
-      syllables.push({ time: s.time, end: s.time, text: clean, paren });
-    }
+    const syllables = splitParens(raw.syllables).map((s) => ({ time: s.time, end: s.time, text: s.text, paren: s.paren }));
     if (syllables.length) out.push({ start: syllables[0].time, end: syllables[0].time, singer: raw.singer || "", showSinger: false, syllables });
   }
   const flat = out.flatMap((l) => l.syllables);

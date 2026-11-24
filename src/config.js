@@ -49,7 +49,8 @@ export const DEFAULT_CONFIG = {
     // smooth-scrolling column (lineCount / mergeLines / lineWidthPct apply to it only).
     style: "stage",
 
-    // The stage style's look. Its defaults reproduce the commercial videoke app's.
+    // The stage style's options. color / randomColor / outline / shadow are the LOOK of both
+    // styles: the scroll column wears it too (Rae, 2026-11-24; ⚙ → Lyrics → Lyrics).
     stage: {
       rows: "auto",       // "auto" (2 rows; 4 when the screen is portrait) | "2" | "4"
       align: "center",    // "center" | "split" (top row left, bottom right) | "close" (split, pulled in)
@@ -215,7 +216,7 @@ export const DEFAULT_CONFIG = {
     sound: true, // play the applause burst for 👏 (the emoji still floats when off)
   },
 
-  // Remote control (phones). A QR code on the queue panel opens a mobile page (/remote)
+  // Remote control (phones). A QR code (home screen, ⚙ Remote) opens a mobile page (/remote)
   // where guests queue/search and control playback. serve.py relays it in memory (host stays
   // the authoritative player; see src/js/remote-host.js). ON by default. FREE-FOR-ALL: while
   // enabled, anyone who can reach the URL can control playback — keep it to a trusted LAN, or
@@ -227,8 +228,8 @@ export const DEFAULT_CONFIG = {
     // isn't localhost (covers LAN-IP / cloudflared), else the server-detected LAN IP. Set this
     // to your public/tunnel origin (e.g. "https://karaoke.example.com") if auto-detect is wrong.
     baseUrl: "",
-    // The QR on the stage itself (the queue panel always has one): "idle" = the large QR on the
-    // home screen only · "always" = also a small corner code while a song is loaded, for guests
+    // The QR on the stage itself (⚙ → Phones & party → Remote always shows one): "idle" = the
+    // large QR on the home screen only · "always" = also a small code beside the pitch guide while a song is loaded, for guests
     // who arrive mid-song · "never" = no QR on the stage at all.
     qrOnStage: "idle",
     // Instant updates: phones and the host hear each other over the relay's event stream (SSE)
@@ -249,7 +250,7 @@ export const DEFAULT_CONFIG = {
   guide: {
     enabled: true, // master toggle for the guide band
     windowSec: 5, // seconds of melody visible across the band
-    height: 100, // band height in px
+    height: 100, // band height, in 16ths of the stage's scale unit (≈ px at 1280×720; the slider starts at 90)
     channel: -1, // -1 = auto-detect the melody channel; 0–15 = manual override
     showMic: true, // overlay the singer's detected pitch (needs mic enabled)
     trail: true, // soft fading ribbon tracing where the voice has been
@@ -285,7 +286,7 @@ export const DEFAULT_CONFIG = {
     difficulty: "normal",
   },
 
-  // MIDI mode — a per-channel mixer band (between the lyrics and the transport)
+  // MIDI mode — a per-channel mixer (the Mixer panel, opened from the stage's panel buttons)
   // for the current MIDI song: all 16 channels with a volume slider, mute/solo,
   // and a live VU meter fed by the channel's real audio level. Off by default;
   // MIDI-only (hidden for video/YouTube). Per-channel slider positions are

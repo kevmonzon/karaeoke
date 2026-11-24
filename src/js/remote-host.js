@@ -142,6 +142,13 @@ export function nextApplied(lastApplied, lastRev, resp) {
  *   replaced it first. Called before the relay has accepted a host POST (remote just turned on,
  *   or the host is stopped), the document WAITS and goes out after the next accepted POST.
  */
+// A host request that never settles (a proxy holding the connection) would leave `syncing` set and
+// stop the loop for good — the room lapses silently (review R13, 2026-11-24). Every host POST and
+// song POST gives up after this long; the next tick tries again.
+export const REQUEST_TIMEOUT_MS = 5000;
+const defaultTimeoutSignal = (ms) => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+  ? AbortSignal.timeout(ms) : undefined);
+
 export function createRemoteHost({
   getSnapshot,
   applyCommand,
@@ -155,6 +162,8 @@ export function createRemoteHost({
   onPushStatus = () => {},
   makeCid = makeCidDefault,
   fetchImpl = (...args) => globalThis.fetch(...args),
+  requestTimeoutMs = REQUEST_TIMEOUT_MS,
+  timeoutSignal = defaultTimeoutSignal,   // (ms) → an AbortSignal (injected for tests)
   setIntervalImpl = (fn, ms) => setInterval(fn, ms),
   clearIntervalImpl = (id) => clearInterval(id),
 } = {}) {
@@ -260,6 +269,7 @@ export function createRemoteHost({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...snap, ackSeq: lastApplied }),
+        signal: timeoutSignal(requestTimeoutMs),
       });
       const data = await res.json();
       if (data && data.ok === true) {
@@ -302,7 +312,7 @@ export function createRemoteHost({
     songBusy = true;
     let outcome = "fail";
     try {
-      const res = await fetchImpl(songUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      const res = await fetchImpl(songUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body, signal: timeoutSignal(requestTimeoutMs) });
       let reply = null;
       try { reply = await res.json(); } catch (_) {}
       if (res.ok && reply && reply.ok === true) outcome = "ok";

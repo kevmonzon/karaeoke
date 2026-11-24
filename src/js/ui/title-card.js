@@ -116,7 +116,7 @@ export function createTitleCard({
   const block = make("div", "tcard-block");
   block.replaceChildren(titleEl, artistEl, metaEl);
   el.replaceChildren(block);
-  // The status line already says "Now playing: …"; the card is visual only.
+  // The status line already names the song (▶ Title — Artist); the card is visual only.
   el.setAttribute("aria-hidden", "true");
 
   let visible = false;

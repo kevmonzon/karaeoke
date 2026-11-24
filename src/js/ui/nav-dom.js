@@ -114,14 +114,15 @@ export function needsActivate(desc) {
  * @param {object}   o.stack           the overlay stack (top() → the top MODAL id or null)
  * @param {Document} [o.doc]
  * @param {(id:string)=>Element|null} o.getOverlayEl  the element registered for an overlay id
- * @param {()=>Element|null} o.getHomeRoot   #home-tiles
- * @param {()=>Element|null} o.getBarRoot    #ov-controls
+ * @param {()=>Element|null} o.getHomeRoot   a focusable home layer while idle (app.js: none since the home tiles
+ *                                          went, 2026-11-24 — it passes () => null)
+ * @param {()=>Element|null} o.getBarRoot    the bar the bare stage's D-pad reaches: #stage-foot (the stage footer)
  * @param {()=>Element[]}    [o.getExtraRoots] more roots on the bare stage (M11: the background layer while its
  *                                          "Tap to start camera" button shows) — added after home + bar
- * @param {()=>Element|null} [o.getBarEntry] #btn-play — the bar's entry point (else its first focusable)
+ * @param {()=>Element|null} [o.getBarEntry] the bar's entry point: #toggle-lib (Songs) (else its first focusable)
  * @param {()=>boolean} o.isIdle             body[data-idle="true"]
- * @param {()=>boolean} o.isBarVisible       !body.classList.contains("controls-hidden")
- * @param {()=>void}    o.showBar            shell.poke
+ * @param {()=>boolean} o.isBarVisible       app.js: always true (the footer is never out of the D-pad's reach)
+ * @param {()=>void}    o.showBar            app.js: a no-op (kept for the old control bar's "show it first")
  * @returns {{
  *   scopeRoots(): Element[],
  *   focusables(roots?: Element|Element[]): Element[],

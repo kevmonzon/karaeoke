@@ -1563,7 +1563,6 @@ function glueHarness(over = {}) {
     durations: { get: () => null },
     getNowPlaying: () => over.now || null,
     setStatus: record("status"),
-    positionFocusQr: () => {},
     storage: over.storage || fakeStorage(),
     actions: {
       enqueue: record("enqueue"), removeFromQueue: record("remove"), reorderQueue: record("reorder"),
@@ -1949,3 +1948,37 @@ test("animFrame: the six line-change animations", () => {
   });
 }
 
+
+// R14 (review, 2026-11-24): Remote on → off while the LAN address is still being fetched must not
+// leave the QR showing.
+test("remote glue: refreshQr does not draw the QR when Remote was turned off during its fetch", async () => {
+  const saved = { document: globalThis.document, fetch: globalThis.fetch, location: globalThis.location, window: globalThis.window };
+  const box = { cls: new Set(), classList: { add: (c) => box.cls.add(c), remove: (c) => box.cls.delete(c) } };
+  const room = { textContent: "" };
+  globalThis.document = { getElementById: (id) => (id === "remote-qr" ? box : id === "remote-room" ? room : null) };
+  globalThis.location = { origin: "http://127.0.0.1:8080" };
+  globalThis.window = {};
+  let release;
+  globalThis.fetch = () => new Promise((r) => { release = () => r({ json: async () => ({ lanUrl: "http://192.168.1.5:8080" }) }); });
+  try {
+    const settings = { "remote.enabled": true };
+    const { glue } = glueHarness({ settings });
+    const first = glue.refreshQr(true);      // fetching /api/remote/info…
+    settings["remote.enabled"] = false;
+    await glue.refreshQr(false);             // …the user turned Remote off
+    release();
+    await first;
+    assert.equal(box.cls.has("show"), false, "the QR block stays hidden");
+    assert.equal(room.textContent, "", "no room code drawn");
+    // Control: on, with the address now known, it does draw.
+    settings["remote.enabled"] = true;
+    await glue.refreshQr(true);
+    assert.equal(box.cls.has("show"), true);
+    assert.match(room.textContent, /^[A-Z0-9]{6}$/);
+  } finally {
+    Object.assign(globalThis, saved);
+    if (saved.document === undefined) delete globalThis.document;
+    if (saved.location === undefined) delete globalThis.location;
+    if (saved.window === undefined) delete globalThis.window;
+  }
+});
