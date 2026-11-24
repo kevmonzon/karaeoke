@@ -133,6 +133,28 @@ export const DEFAULT_CONFIG = {
   //   keyHints = show short key / remote-button hints (they appear only in keyboard / remote use).
   ui: { playback: false, autoHideSec: 3, fontSize: "medium", theme: "auto", overscanPct: 0, keyHints: true },
 
+  // The background behind the lyrics (plan §5.22): looping videos from data/bgv/, a photo
+  // slideshow from data/bgphoto/ (one level of sub-folders = a category), or the live camera.
+  // Shown for MIDI and audio songs and on the home screen; never behind a video or YouTube song.
+  //   mode = "auto" (videos if there are any, else photos, else nothing — never the camera) |
+  //          "off" | "video" | "photo" | "camera". With no media folders, "auto" shows nothing.
+  //   category = "all", or one sub-folder's name (the list comes from the server).
+  //   dim = how much the background is darkened under the lyrics, 0–0.8.
+  //   changeOnSong = move to the next clip / photo when a new song starts.
+  //   photo.intervalSec = seconds per photo (3–60); photo.animation = "none" | "fade" | "slide" | "zoom".
+  //   camera.facing = "environment" (back) | "user" (front); camera.mirror = "auto" (the front
+  //          camera only) | "on" | "off". The camera needs https or localhost and asks for
+  //          permission only when you pick it (or tap "Tap to start camera"); nothing is recorded
+  //          or sent.
+  bg: {
+    mode: "auto",
+    category: "all",
+    dim: 0.35,
+    changeOnSong: true,
+    photo: { intervalSec: 8, animation: "fade" },
+    camera: { facing: "environment", mirror: "auto" },
+  },
+
   // Song search. A result is one list of up to three tiers: a typed NUMBER (every songbook's
   // song with exactly that number, then numbers that start with it), the EXACT matches (every
   // word found, as always), then CLOSE matches — words a typo or two away, marked "≈". Close

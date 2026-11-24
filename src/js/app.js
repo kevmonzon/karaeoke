@@ -14,6 +14,7 @@
  * The big UI surfaces are delegated:
  *   - library-ui.js  : song list (songs and artists), search results, queue rendering
  *   - settings-ui.js : the ⚙ panel (control ↔ Settings wiring)
+ *   - backgrounds.js : the videos / photos / camera behind the lyrics (M11; app.js says when)
  * Everything else (audio, lyrics, melody/key, mic, settings store) lives in
  * its own module; this file wires them together.
  */
@@ -64,6 +65,7 @@ import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
 import { applyPadKey, digitsOnly, createNumpad } from "./ui/numpad.js";
+import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
 
 const $ = (id) => document.getElementById(id);
 // What an empty song list should SAY. A bare white panel is indistinguishable from a broken
@@ -120,6 +122,9 @@ let inputMode, nav, actions;     // keys and D-pad (created at boot — see buil
 // D-pad's scope is the top modal's element (nav.getOverlayEl).
 const overlayEls = new Map();
 let stageKind = "";              // the loaded song's kind as last told to the shell ("" = none)
+// M11: the background behind the lyrics (backgrounds.js on #bg-layer). Created at boot; null when
+// it could not be built — every caller checks, because a background must never break the player.
+let bg = null;
 
 let remoteHost;                  // host↔phone relay driver (created at boot)
 
@@ -183,6 +188,19 @@ async function boot() {
   youtube.onError = (code) => onYoutubeError(code);                  // embed-blocked/unavailable → skip + remember
   video.onError = (why) => onMediaError("video", why);               // missing/corrupt file → skip, don't hang
   audioFile.onError = (why) => onMediaError("audio", why);
+  // M11 (plan §5.22): videos, photos or the camera behind the lyrics. Its list is fetched once the
+  // catalogue has loaded (startBackgrounds); until then it shows nothing.
+  try {
+    bg = createBackgrounds({
+      el: $("bg-layer"),
+      settings,
+      fetchList: () => fetch("/api/backgrounds").then((r) => r.json()),
+      onStatus: (m) => setStatus(m),   // "camera blocked", …
+    });
+  } catch (e) {
+    bg = null;
+    console.error("Backgrounds unavailable:", e);
+  }
 
   lib = createLibraryUI({
     // The pre-M5 row path (double-click / Enter plays). With onActivate below no row calls it;
@@ -276,6 +294,7 @@ async function boot() {
   } finally {
     document.body.classList.remove("booting");
   }
+  startBackgrounds();    // M11: the background list, after the catalogue (never awaited)
   wireUI();
   settingsUI.wireSettings();
   settings.onChange(onSettingChanged);
@@ -561,13 +580,16 @@ function buildKeys() {
     getOverlayEl: (id) => overlayEls.get(id) || null,
     getHomeRoot: () => $("home-tiles"),
     getBarRoot: () => $("ov-controls"),
+    // M11: while the background layer shows its "Tap to start camera" button (data-tap), a D-pad reaches it.
+    getExtraRoots: () => { const l = $("bg-layer"); return l && l.hasAttribute("data-tap") ? [l] : []; },
     getBarEntry: () => $("btn-play"),
     isIdle: () => document.body.dataset.idle === "true",
     isBarVisible: () => !document.body.classList.contains("controls-hidden"),
     showBar: () => shell.poke(),
   });
   // A handler returns false for "not handled" (the key goes through); anything else = handled.
-  // `bgNext` (M11) has no handler yet, so its key is never swallowed.
+  // `bgNext` (M11) is handled only while a clip or a photo is on the stage, so otherwise the
+  // Yellow key is never swallowed.
   actions = createActions({
     back: () => goBack(),
     digit: (d) => digitKey(d),                       // M8: a digit opens Songs with it in the search
@@ -601,6 +623,11 @@ function buildKeys() {
     },
     toggleControls: () => shell.toggle(keyEvent),
     fullscreen: () => { toggleFullscreen(); return true; },
+    bgNext: () => {
+      if (!bgNext()) return false;
+      showAdjust("Next background");   // a key-driven change says what it did, as the others do
+      return true;
+    },
   });
   document.addEventListener("keydown", routeKey);
   wireTypeToSearch();
@@ -1034,15 +1061,121 @@ function toggleFullscreen() {
 // songs only: its button shows only for one (with MIDI mode on), and the panel closes when the
 // stage changes to anything else.
 function setStageKind(kind) {
+  const prev = stageKind;
   stageKind = kind || "";
   shell.setKind(stageKind);
   syncMixerButton();
   if (stageKind !== "midi") closeOverlay("mixer");
   announceMedia(stageKind ? current : null);   // every play* calls this once its song owns the stage
+  bgStageChanged(prev);
 }
 function syncMixerButton() {
   const b = $("btn-mixer");
   if (b) b.hidden = !(settings.get("midiMode.enabled") && stageKind === "midi");
+}
+
+// ---------------------------------------------------------------------------
+// Backgrounds (M11, plan §5.22). backgrounds.js owns #bg-layer — its elements, the shuffle, the
+// camera and the dim. What stays here is WHEN: the list after the catalogue, every song change,
+// the bg.* settings, the Yellow key / the phone's "bg" / #btn-bg. Every call is guarded: a
+// background that fails must never take a song, a key or a setting down with it.
+// ---------------------------------------------------------------------------
+/** The background's RESOLVED mode — what the layer is showing (or would show on a stage that shows
+ *  backgrounds): "video" | "photo" | "camera" | "off". backgrounds.js's own state is the truth (it
+ *  resolves against the category-filtered list, and a blocked camera reads "off"); resolveMode over
+ *  the whole list is only the fallback. */
+function bgMode() {
+  if (!bg) return "off";
+  try {
+    const m = bg.state && bg.state.mode;
+    return typeof m === "string" ? m : resolveMode(settings.get("bg.mode"), bg.list || {});
+  } catch { return "off"; }
+}
+/** A clip or a photo is on the stage now: video / photo mode, and a stage that shows backgrounds
+ *  (a MIDI or audio song, or the idle home layer — never a video or YouTube song). */
+function bgOnStage() {
+  const m = bgMode();
+  if (m !== "video" && m !== "photo") return false;
+  try { return !!shouldShow(stageKind, !stageKind); } catch { return false; }
+}
+
+// The list is fetched once the catalogue has loaded; a failure (an older server without
+// /api/backgrounds, a parse error) leaves an empty list. Either way the settings are applied:
+// a stored Camera mode needs no list.
+function startBackgrounds() {
+  if (!bg) return;
+  let p;
+  try { p = Promise.resolve(bg.init()); } catch (e) { p = Promise.reject(e); }
+  p.catch((e) => console.warn("Background list unavailable:", e)).then(() => {
+    if (!bg) return;
+    try {
+      bg.applySettings({ gesture: false });       // a stored Camera mode asks the permission first (R27)
+      bg.onSongChange(stageKind, !stageKind);     // whatever owns the stage by now (usually: idle)
+    } catch (e) {
+      console.error("Background failed to start:", e);
+    }
+    syncBgCategories();
+    syncBgButton();
+  }).catch((e) => console.error("Background failed to start:", e));
+}
+
+// setStageKind is the one funnel for both halves of the idle rule (§5.34): every play* calls it
+// once its song owns the stage (after its stale checks), and the three setIdle(true) callers call
+// it with "" — never clearStage(), which also runs between queued songs. So the background hears
+// each new song once (and advances when bg.changeOnSong), and idle → idle is not a change.
+function bgStageChanged(prev) {
+  if (bg && (stageKind || prev)) {
+    try { bg.onSongChange(stageKind, !stageKind); }
+    catch (e) { console.error("Background update failed:", e); }
+  }
+  syncBgButton();
+}
+
+// bg.* changed. Picking Camera in Settings is a user gesture, so that one change may call
+// getUserMedia at once; a stored mode, a reset or an import asks the permission first and
+// otherwise shows "Tap to start camera" (R27). A new Back / Front pick while on Camera is the
+// same kind of gesture. `bgPickGesture` is raised by the capture-phase listener in wireUI, which
+// runs before settings-ui's own change listener stores the value and lands here.
+let bgPickGesture = false;
+function applyBackgroundSettings(path) {
+  const gesture = bgPickGesture && settings.get("bg.mode") === "camera" && (path === "bg.mode" || path === "bg.camera.facing");
+  bgPickGesture = false;
+  if (!bg) return;
+  try { bg.applySettings({ gesture }); }
+  catch (e) { console.error("Background settings failed:", e); }
+  if (path === "*" || path === "bg.mode" || path === "bg.category") syncBgCategories();
+  syncBgButton();
+}
+
+// Settings → Background → Category: "All" + the folders of the kind on show (camera / off: none).
+function syncBgCategories() {
+  if (!settingsUI) return;
+  const m = bgMode();
+  const cats = (bg && bg.list && bg.list.categories) || {};
+  const names = m === "video" ? cats.videos : m === "photo" ? cats.photos : [];
+  settingsUI.setBgCategories(Array.isArray(names) ? names : []);
+}
+
+// #btn-bg ("Next background") shows only while a clip or a photo is on the stage. Hiding it while
+// it holds focus would drop focus to <body> (M4: never), so focus moves to Settings beside it.
+function syncBgButton() {
+  const b = $("btn-bg");
+  if (!b) return;
+  const show = bgOnStage();
+  if (!show && !b.hidden && document.activeElement === b) {
+    const s = $("btn-settings");
+    if (s) s.focus({ preventScroll: true });
+  }
+  b.hidden = !show;
+}
+
+/** The `bgNext` action (the Yellow key, the phone's "bg", #btn-bg): the next clip or photo.
+ *  Handled only while one is on the stage; otherwise false, so the key goes through. */
+function bgNext() {
+  if (!bgOnStage()) return false;
+  try { bg.next(); }
+  catch (e) { console.error("Next background failed:", e); }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1397,7 @@ function onSettingChanged(path) {
   if (path === "*" || path === "ui.theme") applyTheme();
   if (path === "*" || path === "ui.overscanPct") applyOverscan();
   if (path === "*" || path === "ui.keyHints") applyKeyHints();
+  if (path === "*" || path.startsWith("bg.")) applyBackgroundSettings(path);   // M11
   if (path === "*" || path.startsWith("keypad.")) {
     applyKeypad();
     // keypad.enabled is mirrored to the phones (their pad hides; live digits stop): tell them now.
@@ -1671,7 +1805,7 @@ const remoteGlue = createRemoteGlue({
       if (!current && !loadingSong) advanceQueue();   // enqueue's auto-start guard (§5.29 rule 4)
     },
     restart: () => restartSong(),
-    bgNext: () => {},                                 // the background picker arrives in M11
+    bgNext: () => { bgNext(); },                      // M11: the next clip / photo (a no-op otherwise)
     // M8: a guest's live digits drive this screen's search (remote-glue applied remote.liveDigits
     // and, for the commit, queue.maxPerGuest; playIfIdle = the host allows guest Play now).
     digit: (d, by) => remoteDigit(d, by),
@@ -2605,6 +2739,19 @@ function wireUI() {
   };
   $("btn-next").onclick = () => skipCurrent();
   $("queue-clear").onclick = () => { clearQueueAsk(); };   // the Queue panel's "Clear all"
+  // M11: "Next background" — the same action as the Yellow key and the phone's "bg".
+  const bgBtn = $("btn-bg");
+  if (bgBtn) bgBtn.onclick = () => { bgNext(); };
+  // M11: a Background pick in Settings (Camera, or Back / Front while on Camera) is a user
+  // gesture. Document + capture phase, so it runs before settings-ui's own change listener on the
+  // select (which stores the value → onSettingChanged → applyBackgroundSettings reads the flag),
+  // whatever order the two were registered in. The flag lives for this one event only.
+  document.addEventListener("change", (e) => {
+    const id = e.target && e.target.id;
+    if (id !== "set-bg-mode" && id !== "set-bg-facing") return;
+    bgPickGesture = true;
+    setTimeout(() => { bgPickGesture = false; }, 0);
+  }, true);
 
   // Hidden-tab watchdog. requestAnimationFrame is throttled to a crawl (or stopped) in a
   // background tab while the AudioContext keeps playing — so a song that ended while the host

@@ -72,6 +72,7 @@
       <symbol id="i-playnext" viewBox="0 0 24 24"><path d="M4 5.5v7l5.5-3.5z" fill="currentColor" stroke-linejoin="round"/><path d="M13 9h7M4 16h16M4 20h11"/></symbol>
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
       <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.8z"/></symbol>
+      <symbol id="i-bg" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17.5 10 12l4 4 2.5-2.5 3 3"/></symbol>
     </defs>
   </svg>
 
@@ -225,6 +226,8 @@
           <button id="toggle-lib" class="gear" title="Songs" aria-label="Songs"><svg class="icon" aria-hidden="true"><use href="#i-search"></use></svg></button>
           <button id="toggle-queue" class="gear" title="Queue" aria-label="Queue"><svg class="icon" aria-hidden="true"><use href="#i-queue"></use></svg></button>
           <button id="btn-mixer" class="gear" title="Channel mixer" aria-label="Channel mixer" hidden><svg class="icon" aria-hidden="true"><use href="#i-mixer"></use></svg></button>
+          <!-- M11: shown only while a video or photo background is on the stage (app.js syncBgButton) -->
+          <button id="btn-bg" class="gear" title="Next background (Yellow key)" aria-label="Next background" hidden><svg class="icon" aria-hidden="true"><use href="#i-bg"></use></svg></button>
           <button id="btn-settings" class="gear" title="Settings" aria-label="Settings"><svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg></button>
           <button id="btn-fullscreen" class="gear" title="Full screen" aria-label="Full screen"><svg class="icon" aria-hidden="true"><use href="#i-fullscreen"></use></svg></button>
         </div>
@@ -445,6 +448,67 @@
           <input id="set-stage-interlude" type="checkbox" />
         </label>
         <div class="hint sub">Two rows take turns: the line being sung, and the one just sung until you reach the new line's second syllable, then a preview of the next. A count-in runs before the first line and after any break longer than 8 s. <strong>(Backing vocals)</strong> show in orange.</div>
+      </section>
+      <section>
+        <h4>Background</h4>
+        <label class="row">
+          <span>Background</span>
+          <select id="set-bg-mode" aria-describedby="set-bg-why">
+            <option value="auto">Auto</option>
+            <option value="off">Off</option>
+            <option value="video">Videos</option>
+            <option value="photo">Photos</option>
+            <option value="camera">Camera</option>
+          </select>
+        </label>
+        <!-- The Camera option's "why not" (an insecure page) — filled by settings-ui.js -->
+        <div id="set-bg-why" class="hint" hidden></div>
+        <label class="row">
+          <span>Category</span>
+          <!-- "All" first, then the server's folders for the videos or photos on show (app.js) -->
+          <select id="set-bg-category">
+            <option value="all">All</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Dim <em id="set-bg-dim-val">35%</em></span>
+          <input id="set-bg-dim" type="range" min="0" max="0.8" step="0.05" value="0.35" />
+        </label>
+        <label class="row toggle">
+          <span>Next background on each song</span>
+          <input id="set-bg-change" type="checkbox" />
+        </label>
+        <div class="sub-h">Photos</div>
+        <label class="row">
+          <span>Each photo <em id="set-bg-interval-val">8 s</em></span>
+          <input id="set-bg-interval" type="range" min="3" max="60" step="1" value="8" />
+        </label>
+        <label class="row">
+          <span>Photo animation</span>
+          <select id="set-bg-anim">
+            <option value="none">None</option>
+            <option value="fade">Fade</option>
+            <option value="slide">Slide</option>
+            <option value="zoom">Zoom</option>
+          </select>
+        </label>
+        <div class="sub-h">Camera</div>
+        <label class="row">
+          <span>Which camera</span>
+          <select id="set-bg-facing">
+            <option value="environment">Back</option>
+            <option value="user">Front</option>
+          </select>
+        </label>
+        <label class="row">
+          <span>Mirror</span>
+          <select id="set-bg-mirror">
+            <option value="auto">Auto (front camera)</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
+        <div class="hint sub">Put videos in <code>data/bgv/</code> and photos in <code>data/bgphoto/</code>; one level of sub-folders = a category. <strong>Auto</strong> shows videos if there are any, else photos. The background shows behind MIDI and audio songs and the home screen, never behind a video or YouTube song; the Yellow key or <strong>Next background</strong> changes it. The camera needs https or localhost, asks for permission only when you pick it, and records nothing.</div>
       </section>
 
       </details>

@@ -62,6 +62,16 @@ const SETTINGS_SCHEMA = [
   { id: "set-stage-shadow", path: "lyrics.stage.shadow", type: "check" },
   { id: "set-stage-countdown", path: "lyrics.stage.countdown", type: "check" },
   { id: "set-stage-interlude", path: "lyrics.stage.interlude", type: "check" },
+  // M11 the background behind the lyrics (plan §5.22). The category's options are the server's
+  // folders (setBgCategories, from app.js); the Camera option is disabled on an insecure page.
+  { id: "set-bg-mode", path: "bg.mode", type: "select" },
+  { id: "set-bg-category", path: "bg.category", type: "select" },
+  { id: "set-bg-dim", path: "bg.dim", type: "range", fmt: pct },
+  { id: "set-bg-change", path: "bg.changeOnSong", type: "check" },
+  { id: "set-bg-interval", path: "bg.photo.intervalSec", type: "range", fmt: (v) => `${+v} s` },
+  { id: "set-bg-anim", path: "bg.photo.animation", type: "select" },
+  { id: "set-bg-facing", path: "bg.camera.facing", type: "select" },
+  { id: "set-bg-mirror", path: "bg.camera.mirror", type: "select" },
   // midi mode (channel mixer band)
   { id: "set-midimode", path: "midiMode.enabled", type: "check" },
   // M10 music sound (plan §5.18–§5.20): drums and the key, the synth's reverb / chorus, the music
@@ -181,6 +191,14 @@ const SEARCH_KEYWORDS = {
   "set-stage-outline": "stroke border thickness",
   "set-stage-countdown": "count in countdown 4 3 2 1 go dots intro",
   "set-stage-interlude": "instrumental break interlude gap",
+  "set-bg-mode": "background backdrop wallpaper video videos clip loop photo photos picture pictures slideshow camera webcam bgv bgphoto stage behind lyrics",
+  "set-bg-category": "background folder category video photo slideshow",
+  "set-bg-dim": "background dim darken dark brightness opacity contrast readability",
+  "set-bg-change": "background next change shuffle new song clip photo",
+  "set-bg-interval": "background photo slideshow interval seconds timer duration",
+  "set-bg-anim": "background photo slideshow animation transition fade slide zoom pan",
+  "set-bg-facing": "background camera webcam front back rear selfie facing",
+  "set-bg-mirror": "background camera webcam mirror flip selfie",
   "set-midimode": "midi mode channel mixer volume mute solo vu levels",
   "set-transpose-drums": "drums drum kit percussion transpose key change pitch old behaviour behavior midi",
   "set-music-reverb": "music reverb hall room echo space ambience effect midi synth",
@@ -239,6 +257,32 @@ export function cleanPlayerName(v) {
   return [...String(v ?? "").replace(/\s+/g, " ").trim()].slice(0, 24).join("").trim();
 }
 
+/** Why the Camera background cannot be picked on this page (Q6: getUserMedia needs a secure context). */
+export const BG_CAMERA_INSECURE = "Open the app on https or localhost to use the camera";
+
+/**
+ * Pure: the Background → Category options. "All" first, then each folder name once (the server
+ * sends them sorted). A stored category the list does not have (its folder is gone, or it belongs
+ * to the other kind) stays selectable as "<name> (not found)", so the control shows what is
+ * really stored instead of a blank. A folder literally named "all" is covered by "All".
+ * @param {string[]} names  the folders of the kind on show (bg.list.categories.videos | photos)
+ * @param {string} stored   bg.category
+ * @returns {{value:string, label:string}[]}
+ */
+export function bgCategoryOptions(names, stored) {
+  const out = [{ value: "all", label: "All" }];
+  const seen = new Set(["all", ""]);
+  for (const n of Array.isArray(names) ? names : []) {
+    const v = String(n ?? "");
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push({ value: v, label: v });
+  }
+  const s = stored == null || stored === "" ? "all" : String(stored);
+  if (!seen.has(s)) out.push({ value: s, label: `${s} (not found)` });
+  return out;
+}
+
 /**
  * Pure token-AND substring match: every whitespace-separated token in `query`
  * must appear in `text` (case-insensitive). Empty query matches everything.
@@ -258,8 +302,9 @@ export function matchesQuery(text, query) {
  * @param {()=>Promise<{ok:boolean, records?:number, error?:string}>} deps.onRebuild
  * @param {()=>Promise<void>} [deps.onToggleMic]  app-owned mic enable/disable (shared BT guard)
  * @param {()=>void} [deps.onCalibrate]  app-owned: open the calibration dialog (M9)
- * @returns {{ wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen }}
- *   onOpen: the overlay's open hook · updateCalibrateBtn(note?): re-evaluate "Calibrate…"
+ * @returns {{ wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen, setBgCategories }}
+ *   onOpen: the overlay's open hook · updateCalibrateBtn(note?): re-evaluate "Calibrate…" ·
+ *   setBgCategories(names): the Background → Category folders for the kind on show (M11)
  */
 export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCalibrate, onEraseAll, onExportData, onImportData, onShowRecap }) {
   const label = (c, v) => {
@@ -447,6 +492,51 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     if (wrap) wrap.hidden = settings.get("audio.eq.preset") !== "custom";
   }
 
+  // M11 Background → Category: app.js hands over the folder names of the kind on show (videos or
+  // photos — the resolved bg.mode) whenever the list or the mode changes; every sync re-applies
+  // them, because autoSync sets the select's value before the options it names may exist. The
+  // options are rebuilt only when they change (a rebuild under an open select would close it).
+  let bgCatNames = [];
+  function setBgCategories(names) {
+    bgCatNames = Array.isArray(names) ? names.slice() : [];
+    updateBgCategories();
+  }
+  function updateBgCategories() {
+    const sel = $("set-bg-category");
+    if (!sel) return;
+    const stored = settings.get("bg.category");
+    const opts = bgCategoryOptions(bgCatNames, stored);
+    const key = JSON.stringify(opts);
+    if (sel.dataset.opts !== key) {
+      sel.replaceChildren(...opts.map(({ value, label }) => {
+        const o = document.createElement("option");
+        o.value = value;
+        o.textContent = label;   // folder names are text, never markup
+        return o;
+      }));
+      sel.dataset.opts = key;
+    }
+    sel.value = stored == null || stored === "" ? "all" : String(stored);
+  }
+
+  // M11 (Q6): the Camera background needs a secure context, as the microphone does. On an insecure
+  // page (a TV box on http://<LAN-IP>) the option is disabled, with the reason as its title and on
+  // the line under the select. A stored "camera" still shows as selected (backgrounds.js reports
+  // "insecure" and calls nothing).
+  function updateBgCamera() {
+    const insecure = !window.isSecureContext;
+    const opt = $("set-bg-mode")?.querySelector('option[value="camera"]');
+    if (opt) {
+      opt.disabled = insecure;
+      opt.title = insecure ? BG_CAMERA_INSECURE : "";
+    }
+    const why = $("set-bg-why");
+    if (why) {
+      why.textContent = insecure ? BG_CAMERA_INSECURE : "";
+      why.hidden = !insecure;
+    }
+  }
+
   function wireSettings() {
     autoBind();
     wireSearch();
@@ -564,6 +654,8 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
   function syncSettingsUI() {
     autoSync();
     updateEqCustom();
+    updateBgCategories();   // after autoSync: it puts back the stored category's option and value
+    updateBgCamera();
     updateMicBtn();
     updateCalibrateBtn();
     updateCacheStatus();
@@ -577,5 +669,5 @@ export function createSettingsUI({ settings, mic, onRebuild, onToggleMic, onCali
     }
   }
 
-  return { wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen };
+  return { wireSettings, syncSettingsUI, updateMicBtn, updateCalibrateBtn, onOpen, setBgCategories };
 }
