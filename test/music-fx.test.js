@@ -497,3 +497,14 @@ test("an engine without musicIn still gets a chain wired to the destination", as
   assert.equal(await chain.ensure({}), true);
   assert.ok(chain.gain.outs.has(ctx.destination));
 });
+
+// M13: an insecure page (a TV box on http://<LAN-IP>) has no AudioWorklet — init must say why, not crash on undefined.
+test("init on a context without AudioWorklet rejects with the secure-page reason", async () => {
+  const { MIDI_INSECURE_TEXT } = await import("../src/js/audio.js");
+  class NoWorkletContext extends FakeContext { constructor() { super(); this.audioWorklet = undefined; } }
+  globalThis.AudioContext = NoWorkletContext;
+  const e = new AudioEngine();
+  await assert.rejects(e.init(() => {}, "/soundfont.sf2"), (err) => err.message === MIDI_INSECURE_TEXT);
+  assert.equal(e.ready, false);
+  assert.match(MIDI_INSECURE_TEXT, /localhost or https/);
+});

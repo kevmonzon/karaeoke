@@ -36,6 +36,16 @@ export function digitsOnly(text) {
 }
 
 /**
+ * Pure: the value a pad key edits. A DIGIT on a field holding words (a name search left in it) starts a new
+ * number from "" — as a digit key on the stage does and as the phone's pad does; ⌫ and ⏎ keep the field.
+ * (M13: the host pad used to append, so "tahan" + 1 2 3 searched "tahan123" and found nothing.)
+ */
+export function padBase(value, key) {
+  const v = value == null ? "" : String(value);
+  return /^[0-9]$/.test(String(key)) && v.trim() !== "" && !digitsOnly(v) ? "" : v;
+}
+
+/**
  * @param {object} o
  * @param {HTMLElement} o.el   the pad's container (#numpad on the host; the phone's own container)
  * @param {(key: string) => void} o.onKey   one of NUMPAD_KEYS, on a click / tap / native Enter/Space

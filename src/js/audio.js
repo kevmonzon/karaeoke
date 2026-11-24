@@ -43,6 +43,10 @@ const SOUNDFONT_URL = "/soundfont.sf2";  // served from DATA_DIR (see tools/serv
 const NUM_CHANNELS = 16;
 
 /** The limiter after the loudness gain: a brick-wall-ish DynamicsCompressor (plan §5.20). */
+/** Why MIDI cannot play on this page: AudioWorklet (and SharedArrayBuffer) exist only in a secure context, so a
+ *  TV box that opens http://<LAN-IP> has no synth at all (M13; Q6). Shown to the user as the reason a song is skipped. */
+export const MIDI_INSECURE_TEXT = "MIDI songs need a secure page — open the app on localhost or https";
+
 export const LIMITER = Object.freeze({ thresholdDb: -1, kneeDb: 0, ratio: 20, attackSec: 0.003, releaseSec: 0.25 });
 const METER_FFT = 4096;          // ≈ 85 ms at 48 kHz per readMusicMeanSquare (app.js reads every ≥ 100 ms)
 const EQ_SMOOTH_SEC = 0.03;      // time constant for a gain change while the EQ is already in the path
@@ -241,6 +245,7 @@ export class AudioEngine extends MediaEngineBase {
   async _doInit(onProgress, soundfontUrl) {
     onProgress("Starting audio engine…");
     await this.ensureContext();
+    if (!this.ctx.audioWorklet) throw new Error(MIDI_INSECURE_TEXT);   // an insecure page has no AudioWorklet
     await this.ctx.audioWorklet.addModule(PROCESSOR_URL);
 
     this.synth = new WorkletSynthesizer(this.ctx);

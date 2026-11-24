@@ -436,6 +436,8 @@ input[type=range] { width: calc(160 / 16 * var(--u)); accent-color: var(--accent
 .overlay-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s; }
 .spinner { width: calc(34 / 16 * var(--u)); height: calc(34 / 16 * var(--u)); border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto calc(16 / 16 * var(--u)); animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Reduced motion (M13): the loader stops turning; the progress bar under it still shows progress. */
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; border-color: var(--accent); opacity: .6; } }
 
 /* Title card — song title/artist/key over the LYRICS AREA, then fades to the lyrics */
 .lyrics-wrap { position: relative; flex: 1; display: flex; min-height: 0; }

@@ -167,3 +167,16 @@
   #numpad button:active { transform: scale(.96); }
   html[data-input="keys"] #numpad button:focus-visible { transform: scale(1.04); }
 }
+
+/* ---- numpad on a short Songs panel (M13) -----------------------------------------------------
+   The panel is ~30 units wide at every size, so its aspect ratio says how many units TALL it is: at
+   3:4 or wider it is under ~40 units (a landscape phone: 420 × 390 px), too short for the search row,
+   the browse rows, a few results AND a 3×4 pad (the pad ran off the bottom). There, while the pad is
+   open, the tabs and chips step aside (number entry does not browse) and the pad goes 6 × 2. A size
+   container, not a viewport breakpoint; a TV / desktop / 4K panel (≈ 0.6–0.7) keeps the 3 × 4 pad. */
+#ov-search { container: songs-panel / size; }
+@container songs-panel (min-aspect-ratio: 3 / 4) {
+  #ov-search.pad-open .browse-tabs,
+  #ov-search.pad-open .filter-chips { display: none; }
+  #ov-search.pad-open #numpad { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+}

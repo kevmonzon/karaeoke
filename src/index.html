@@ -23,9 +23,9 @@
        them client-side before handing bytes to the synth. Exposes window.pako. -->
   <script src="./vendor/pako.min.js"></script>
 
-  <!-- QR generator (UMD, MIT) — renders the phone-remote QR on the queue panel. Fetched
-       by serve.py setup into ./vendor/ if missing. Exposes window.qrcode. Optional: the
-       remote is off by default and the app degrades gracefully if this 404s. -->
+  <!-- QR generator (UMD, MIT) — renders the phone-remote QR (home screen, Queue panel, stage). Fetched
+       by serve.py setup into ./vendor/ if missing. Exposes window.qrcode. Optional: the remote is ON
+       by default, but the app degrades gracefully (the URL as text) if this 404s. -->
   <script src="./vendor/qrcode.min.js"></script>
 
   <!-- SpessaSynth is vendored under ./vendor/. The lib imports the core via the

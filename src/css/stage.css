@@ -158,6 +158,13 @@ body.video-mode .queue-bar, body.youtube-mode .queue-bar {
   opacity: 0; visibility: hidden;
   transition: opacity var(--dur-base) var(--ease), visibility 0s linear var(--dur-base), padding var(--dur-base) var(--ease);
 }
+/* M13: the tiles never draw under the bar. The bottom padding reserves the bar's height, but grid content
+   overflows into padding — on a short landscape phone with a panel open the wrapped tiles ran under the
+   play / key / tempo controls. Clip at the content box; it changes nothing while they fit. */
+.home { overflow: clip; overflow-clip-margin: content-box; }
+/* With a panel open the home screen behind it is inert: its tiles step aside (on a narrow remainder they
+   would wrap into the bar's space; the brand, prompt and QR stay). */
+body[data-panel="right"] .home-tiles { visibility: hidden; }
 body[data-idle="true"] .home {
   opacity: 1; visibility: visible;
   transition: opacity var(--dur-base) var(--ease), visibility 0s, padding var(--dur-base) var(--ease);

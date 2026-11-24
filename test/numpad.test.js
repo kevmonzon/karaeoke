@@ -351,3 +351,16 @@ test("the phone and the host carry the pad", () => {
   assert.match(block, /#numpad button \{[^}]*min-height: var\(--hit\)/);
   assert.doesNotMatch(block, /@media[^{]*(width|height)/, "no width breakpoints");
 });
+
+// M13: a pad digit on a field holding words starts a new number (the host pad used to append to the name).
+test("padBase: a digit on words starts a new number; digits, ⌫ and ⏎ keep the field", async () => {
+  const { padBase, applyPadKey } = await import("../src/js/ui/numpad.js");
+  assert.equal(padBase("tahan bryan chong", "1"), "", "a name search left in the field");
+  assert.equal(applyPadKey(padBase("tahan", "1"), "1").value, "1");
+  assert.equal(padBase("12", "3"), "12", "a number keeps growing");
+  assert.equal(padBase(" 12 ", "3"), " 12 ", "digits with spaces are still a number");
+  assert.equal(padBase("", "5"), "");
+  assert.equal(padBase(null, "5"), "");
+  assert.equal(padBase("tahan", "del"), "tahan", "⌫ edits the words");
+  assert.equal(padBase("tahan", "enter"), "tahan", "⏎ takes the top hit of what is there");
+});

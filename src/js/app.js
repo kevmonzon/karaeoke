@@ -64,7 +64,7 @@ import { keyToAction } from "./ui/keymap.js";
 import { createInputMode } from "./ui/input-mode.js";
 import { createNav } from "./ui/nav-dom.js";
 import { createActions } from "./ui/actions.js";
-import { applyPadKey, digitsOnly, createNumpad } from "./ui/numpad.js";
+import { applyPadKey, digitsOnly, padBase, createNumpad } from "./ui/numpad.js";
 import { createBackgrounds, resolveMode, shouldShow } from "./backgrounds.js";
 
 const $ = (id) => document.getElementById(id);
@@ -960,6 +960,7 @@ function syncNumpadButton() {
   const on = !!numpad && numpad.visible;
   btn.setAttribute("aria-pressed", on ? "true" : "false");
   btn.classList.toggle("active", on);
+  $("ov-search")?.classList.toggle("pad-open", on);   // a short panel trades the browse rows for the pad (sheet.css, M13)
 }
 
 /** A pad key: digits and ⌫ edit the field (focus stays on the pad key pressed); ⏎ = Enter. */
@@ -968,7 +969,7 @@ function onPadKey(key) {
   if (!field) return;
   lastSearchInput = Date.now();
   takeOverDigits();
-  const { value, enter } = applyPadKey(field.value, key);
+  const { value, enter } = applyPadKey(padBase(field.value, key), key);   // a digit on words starts a new number
   if (enter) { takeTopHit(); return; }
   if (value !== field.value) typeIntoSearch(value);
 }
@@ -1993,11 +1994,14 @@ async function ensureEngine() {
     overlay.classList.add("hidden");
     return true;
   } catch (e) {
-    $("overlay-msg").textContent = "Engine failed to start: " + e.message;
+    // The spinner must not stay up: the song is skipped with the reason on the status line (playMidi throws).
+    overlay.classList.add("hidden");
+    engineError = e && e.message ? e.message : "the MIDI engine did not start";
     console.error(e);
     return false;
   }
 }
+let engineError = "";
 
 // Every play* function awaits a fetch (and, on the first song, the ~32 MB soundfont) BEFORE
 // it writes the shared player state. Without a generation token the chain that resolves LAST
@@ -2033,7 +2037,9 @@ async function playNow(song, by = "") {
     // A play* that throws (corrupt file, engine refusal) must not strand the stage.
     console.error("Playback failed:", e);
     if (!stalePlay(gen)) {
-      setStatus(`Could not play "${song.name || song.code || "that song"}" — skipping.`);
+      setStatus(e && e.userMessage
+        ? `Could not play "${song.name || song.code || "that song"}": ${e.userMessage}.`
+        : `Could not play "${song.name || song.code || "that song"}" — skipping.`);
       onSongFailed();
     }
   } finally {
@@ -2238,7 +2244,9 @@ async function playYoutube(song, gen = playGen) {
 
 // MIDI song: the original SpessaSynth path.
 async function playMidi(song, gen = playGen) {
-  if (!(await ensureEngine())) return;
+  // A synth that cannot start (an insecure page has no AudioWorklet — M13) fails the song like any other refusal,
+  // so playNow skips it with the reason instead of leaving a spinner and a stalled queue.
+  if (!(await ensureEngine())) { const e = new Error(engineError); e.userMessage = engineError; throw e; }
   if (stalePlay(gen)) return;  // engine start is slow (32 MB soundfont) — a newer pick wins
   video.unload();          // stop any video that was playing
   youtube.unload();        // …and any YouTube video
