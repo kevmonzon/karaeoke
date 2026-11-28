@@ -230,8 +230,10 @@ body.booting .boot-bar { opacity: 1; }
    so a dialog or a panel makes it inert with the stage; beside an open panel it gives up
    --panel-pad like the flow. app.js publishes its height as --foot-h. Only its controls take
    taps — the stage under the empty middle stays the stage. */
+/* The seek line's thickness: the footer reserves it under the status line, and the seek bar (its
+   sibling since 2026-11-28) draws it. */
+#stage { --seek-h: max(3px, calc(4 / 16 * var(--u))); }
 .stage-foot {
-  --seek-h: max(3px, calc(4 / 16 * var(--u)));
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
   display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: var(--s-2);
   padding: 0 var(--edge-r) calc(var(--seek-h) + var(--s-2) + var(--safe-b) + var(--overscan)) var(--edge-l);
@@ -298,9 +300,11 @@ body.audio-mode .st-step:has(#st-melody) { opacity: .45; }
 
 /* The seek bar: a thin line on the bottom edge (above any TV overscan), full width; a taller
    invisible strip above it takes the press, and it thickens while hovered or dragged. Nothing
-   to seek while idle. */
+   to seek while idle. It is the footer's SIBLING (Rae, 2026-11-28: "the seekbar should always be
+   visible"): it stays when the footer auto-hides, display-only then — a tap there wakes the
+   footer like any tap (shell.js), instead of seeking by accident. Same layer as the footer (z 4). */
 .seek-track {
-  position: absolute; left: 0; right: 0; bottom: var(--overscan); height: var(--seek-h);
+  position: absolute; left: 0; right: 0; bottom: var(--overscan); height: var(--seek-h); z-index: 4;
   background: color-mix(in srgb, var(--text) 14%, transparent); cursor: pointer; touch-action: none;
   transition: height var(--dur-fast) var(--ease);
 }
@@ -308,6 +312,7 @@ body.audio-mode .st-step:has(#st-melody) { opacity: .45; }
 @media (hover: hover) { .seek-track:hover { height: calc(var(--seek-h) * 2); } }
 .seekbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 body[data-idle="true"] .seek-track { visibility: hidden; }
+body.foot-hidden .seek-track { pointer-events: none; }
 
 /* ---- Landscape, any size: the panel buttons in the bottom-right corner (Rae, 2026-11-24) -------
    The status line on the left, the panel buttons at the bottom right, level with the − + line.

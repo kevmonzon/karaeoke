@@ -191,8 +191,11 @@
           <span class="st-item st-step"><span class="st-lbl">Offset</span><button id="st-offset-down" class="st-btn" aria-label="Lyrics offset down 10 ms"><svg class="icon" aria-hidden="true"><use href="#i-minus"></use></svg></button><span id="st-offset" class="st-val">0</span><button id="st-offset-up" class="st-btn" aria-label="Lyrics offset up 10 ms"><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></button></span>
         </div>
       </div>
-      <div id="seek-track" class="seek-track" aria-label="Song position"><div id="seekbar" class="seekbar"></div></div>
     </footer>
+    <!-- The seek bar stays on screen while a song is loaded, even when the footer auto-hides (Rae,
+         2026-11-28: "the seekbar should always be visible") — so it is the footer's sibling, not its
+         child: the footer's fade would take a child with it whatever the child's own opacity. -->
+    <div id="seek-track" class="seek-track" aria-label="Song position"><div id="seekbar" class="seekbar"></div></div>
   </main>
 
   <div id="scrim" class="scrim" hidden></div>

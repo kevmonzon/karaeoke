@@ -145,8 +145,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .l-foot .frow { padding: 6px 0; }
 
 /* --- Tab 3: Search --- */
-/* The search row sticks at the top while the results scroll under it. */
-.search-bar { display: flex; gap: 8px; position: sticky; top: 0; z-index: 1; padding-bottom: 10px; background: var(--bg); }
+/* The search row and the All · Artists tabs stick at the top while the results scroll under them. */
+.search-head { position: sticky; top: 0; z-index: 1; padding-bottom: 10px; background: var(--bg); }
+.search-bar { display: flex; gap: 8px; }
+/* All · Artists (Rae, 2026-11-28): two equal pills, a 44 px touch target each. */
+.stabs { display: flex; gap: 6px; margin-top: 8px; }
+.stab {
+  flex: 1; min-height: 44px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); font-weight: 600;
+}
+.stab.active { color: var(--ink); border-color: var(--accent); }
+.stab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.yt-toggle[hidden] { display: none; }
 #r-search { flex: 1; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); outline: none; }
 #r-search:focus { border-color: var(--accent); }
 .yt-toggle { width: 46px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); font-size: 18px; opacity: .5; }
@@ -172,6 +182,9 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .song .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .a { color: var(--muted); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .song .close-mark { color: var(--muted); font-size: 18px; font-weight: 700; line-height: 1; padding: 0 4px; }
+/* Artist rows share the song row's box (one measured height for the virtual list); the
+   "← Artists" row that heads one artist's songs is marked in the accent. */
+.song.back-row .t { color: var(--accent); }
 
 /* --- Tab 4: Queue --- */
 .q-now-card { background: var(--panel); border: 1px solid var(--accent); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -248,13 +261,15 @@ body.connected #name-gate:not([hidden]) { display: flex; }
 .now-mix .mrow > span:first-child { flex: 0 0 auto; }
 .now-mix .mrow input[type="range"] { flex: 1; max-width: 55%; }
 .now-mix em { color: var(--accent-2); font-style: normal; font-size: 13px; }
-/* − value + (Rae, 2026-11-25): the value sits between its buttons, fixed width so they don't jump. */
-.now-mix .stepper { display: flex; gap: 8px; align-items: center; }
-.now-mix .stepper .sval { min-width: 4.2em; text-align: center; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* − value + (Rae, 2026-11-25): the value sits between its buttons, fixed width so they don't jump.
+   The Lyrics tab's Sync nudge uses the same stepper (Rae, 2026-11-28). */
+.now-mix .stepper, .l-foot .stepper { display: flex; gap: 8px; align-items: center; }
+.now-mix .stepper .sval, .l-foot .stepper .sval { min-width: 4.2em; text-align: center; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .now-mix .mlbl { display: flex; flex-direction: column; min-width: 0; }
 .now-mix .keyname { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.now-mix .stepper button { width: 42px; height: 42px; border-radius: 10px; border: 1px solid var(--line);
+.now-mix .stepper button, .l-foot .stepper button { width: 42px; height: 42px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--ink); font-size: 20px; cursor: pointer; }
+.now-mix .stepper button:disabled, .l-foot .stepper button:disabled { opacity: .4; cursor: default; }
 /* Guide-vocal mute pill: lit (On) by default, dimmed when muted */
 .gv-toggle { min-width: 76px; height: 42px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--accent-2);
   background: var(--panel-2); color: var(--ink); font-size: 15px; cursor: pointer; }

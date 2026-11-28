@@ -104,9 +104,11 @@
       </div>
       <div id="l-lyrics" class="l-lyrics"></div>
       <div class="l-foot">
-        <label class="frow"><span>Sync nudge <em id="l-nudge-val">0 ms</em></span>
-          <input id="l-nudge" type="range" min="-1000" max="1000" step="25" value="0"
-                 aria-label="Lyric sync nudge for this phone" /></label>
+        <!-- − value + like the Now tab (Rae, 2026-11-28): 25 ms steps, ±1000 ms, this phone only. -->
+        <div class="frow nudge-row"><span>Sync nudge</span>
+          <span class="stepper"><button id="l-nudge-down" type="button" aria-label="Sync nudge down">–</button>
+          <em id="l-nudge-val" class="sval" aria-live="polite">0 ms</em>
+          <button id="l-nudge-up" type="button" aria-label="Sync nudge up">+</button></span></div>
         <div class="hint">Shifts lyrics on <strong>this phone only</strong> — the room's
           offset (You tab) moves everyone's.</div>
       </div>
@@ -115,13 +117,24 @@
     <!-- Tab 3: Search. No number pad (M8's 123 pad is gone): a number typed in the field still
          finds its songs, but the rows show no song numbers. -->
     <section id="tab-search" class="panel">
-      <div class="search-bar">
-        <input id="r-search" type="search" inputmode="search" autocomplete="off"
-               placeholder="Search songs · number · artist" aria-label="Search" />
-        <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
+      <!-- The field, then All · Artists (Rae, 2026-11-28: "this should also have All / Artists
+           tab", as on the TV's Songs panel). Both stay at the top while the list scrolls. -->
+      <div class="search-head">
+        <div class="search-bar">
+          <input id="r-search" type="search" inputmode="search" autocomplete="off"
+                 placeholder="Search songs · number · artist" aria-label="Search" />
+          <button id="r-yt" class="yt-toggle" title="Include YouTube results" aria-label="Toggle YouTube">🌐</button>
+        </div>
+        <div id="r-stabs" class="stabs" role="tablist" aria-label="Browse">
+          <button id="r-stab-all" class="stab active" type="button" role="tab" aria-selected="true"
+                  aria-controls="r-results" tabindex="0" data-stab="all">All</button>
+          <button id="r-stab-artists" class="stab" type="button" role="tab" aria-selected="false"
+                  aria-controls="r-results" tabindex="-1" data-stab="artists">Artists</button>
+        </div>
       </div>
-      <!-- Every song while the field is empty (Rae, 2026-11-25: "list all songs like in main
-           screen"), the matches while typing. Virtual: only the rows on screen exist. -->
+      <!-- All: every song while the field is empty (Rae, 2026-11-25: "list all songs like in main
+           screen"), the matches while typing. Artists: every artist (the field filters names), then
+           one artist's songs under "← Artists". Virtual: only the rows on screen exist. -->
       <ul id="r-results" class="song-list vlist" role="list"></ul>
       <p id="r-search-hint" class="empty">Loading the songbook…</p>
     </section>
@@ -157,8 +170,8 @@
           <select id="s-text"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
         <label class="frow"><span>Lyric style</span>
           <select id="s-lyricstyle"><option value="stage">Stage</option><option value="scroll">Scroll</option></select></label>
-        <label class="frow"><span>Lyric lines <em id="s-lines-val">4</em></span>
-          <input id="s-lines" type="range" min="2" max="8" step="1" value="4"
+        <label class="frow"><span>Lyric lines <em id="s-lines-val">6</em></span>
+          <input id="s-lines" type="range" min="2" max="8" step="1" value="6"
                  aria-label="Lyric lines shown on this phone (Scroll style)" /></label>
         <label class="frow"><span>Lyrics size <em id="s-lyricsize-val">100%</em></span>
           <input id="s-lyricsize" type="range" min="70" max="180" step="5" value="100"

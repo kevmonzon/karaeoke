@@ -21,6 +21,8 @@
  * with the host's three tiers: the number tier, Catalog.search, and close matches (typos) from the
  * search worker. A song is named to the host as ref { i, code } — row i of the compact list is the
  * host's catalog.songs[i]; the host checks the code and falls back to a code lookup.
+ * The Search tab has the TV's All · Artists sub-tabs (2026-11-28): Artists groups the same songbook
+ * with the TV's own library-browse.js (via remote-browse.js) and the field filters artist names.
  *
  * NUMBERS: the phone has no number pad and never types onto the karaoke screen (M8's `123` pad and
  * guests' live digits are gone), and it prints no song number — no dial code, no songbook chip.
@@ -43,8 +45,10 @@ import { parseLyricsDoc } from "./lyrics-doc.js";
 import { syncClock, clockTime } from "./sync-clock.js";
 import { queueEta, formatEta } from "./queue-order.js";
 import { REACTIONS } from "./reactions.js";
-import { stepVolume, stepMelody, adjustLabel, keyText, fmtSemis } from "./remote-adjust.js";
+import { stepVolume, stepMelody, adjustLabel, keyText, fmtSemis, stepNudge, fmtMs, nudgeLabel, NUDGE_MAX_MS } from "./remote-adjust.js";
+import { defaultPrefs, readPrefs } from "./remote-prefs.js";
 import { melodyLevel, melodyLevelLabel } from "./music-fx.js";
+import { createArtistBrowse, searchTabOf, songCountLabel, artistRowIndex } from "./remote-browse.js";
 
 const $ = (id) => document.getElementById(id);
 const KIND_ICON = { midi: "🎤", audio: "🎵", video: "🎞️", youtube: "🌐" };
@@ -53,14 +57,8 @@ const SEARCH_LIMIT = 150;   // exact-tier rows of a typed search (the empty fiel
 const NAMED_ROOMS_MAX = 20; // rooms this phone has already been asked its name for (most recent kept)
 const FUZZY_BELOW = 20;     // close matches only while the exact tier is shorter (host: search.fuzzyBelow)
 
-// --- device-local state (persisted on the phone) ---------------------------
-let prefs = {
-  nickname: "", theme: "dark", text: "m", room: "", lyricNudgeMs: 0,
-  lyricLines: 4,       // visible lyric lines on THIS phone, scroll style (the host keeps its own)
-  lyricScale: 1,       // lyric text multiplier on THIS phone (0.7–1.8)
-  lyricStyle: "stage", // "stage" (the videoke rows, as on the TV) | "scroll" (the column)
-  namedRooms: [],      // room codes whose name prompt this phone has answered (Rae, 2026-11-25)
-};
+// --- device-local state (persisted on the phone; defaults + reading back in remote-prefs.js) ------
+let prefs = defaultPrefs();
 // --- songbook ----------------------------------------------------------------
 const catalog = new Catalog();
 let songbook = "loading";  // "loading" | "ready" | "off" (no compact catalogue: control-only)
@@ -74,7 +72,11 @@ let lastOk = 0;          // last time the relay answered (a poll, or any push ev
 let lastEventAt = -Infinity; // performance.now()/1000 of the last FRESH host view (hostIsLive)
 let lastPushAt = 0;      // performance.now() of the last push event: a poll sent before it is stale
 let lastNotice = "";     // the host notice already toasted
-let ytOn = false;        // include YouTube results in search
+let ytOn = false;        // include YouTube results in search (All only)
+// Search sub-tabs (Rae, 2026-11-28): view state, never persisted — as on the TV (§5.37).
+let searchTab = "all";   // "all" | "artists"
+let artistShown = null;  // Artists: the artist key whose songs are showing, else null (the artist list)
+const artistBrowse = createArtistBrowse();
 let pollTimer = null;    // the fallback poll — runs only while push is not healthy
 let uiTimer = null;      // smooth-progress ticker (cleared on leave)
 let activeTab = "now";
@@ -166,8 +168,10 @@ async function loadSongbook() {
     searchClient = createSearchClient();
     const songs = catalog.songs;
     // A query typed before the index was ready gets its close tier once it is.
+    // The close-match index only changes All's results: on Artists a redraw would just throw the
+    // guest back to the top (switching to All runs the search again anyway).
     searchClient.build(songs.map((s) => s.name), songs.map((s) => s.artistName))
-      .then(() => { if (catalog.songs === songs) refreshSearch(); });
+      .then(() => { if (catalog.songs === songs && searchTab === "all") refreshSearch(); });
   } catch (e) {
     console.warn("Close-match search unavailable:", e);
     searchClient = null;
@@ -289,11 +293,12 @@ function releaseWakeLock() {
 // Prefs (nickname + device-local look + last room)
 // ---------------------------------------------------------------------------
 function loadPrefs() {
-  try {
-    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null");
-    if (p && typeof p === "object") prefs = { ...prefs, ...p };
-  } catch (_) {}
-  prefs.lyricStyle = prefs.lyricStyle === "scroll" ? "scroll" : "stage";
+  let saved = null;
+  try { saved = localStorage.getItem(PREFS_KEY); } catch (_) {}
+  const r = readPrefs(saved);
+  prefs = r.prefs;
+  // A phone saved before 2026-11-28 is moved to Scroll + 6 lines once; save it so it stays moved.
+  if (r.migrated) savePrefs();
 }
 function savePrefs() {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
@@ -718,12 +723,27 @@ function uiTick() {
 // phone, and the only error left is one-way network latency, which the per-device nudge absorbs.
 
 function wireLyrics() {
-  const n = $("l-nudge");
-  n.value = prefs.lyricNudgeMs || 0;
-  $("l-nudge-val").textContent = `${prefs.lyricNudgeMs || 0} ms`;
-  // Apply live while dragging (you're nudging against what you see), persist on release.
-  n.oninput = () => { prefs.lyricNudgeMs = +n.value || 0; $("l-nudge-val").textContent = `${prefs.lyricNudgeMs} ms`; };
-  n.onchange = () => savePrefs();
+  // − value + like the Now tab (Rae, 2026-11-28). Each step applies at once (the lyric clock reads
+  // prefs.lyricNudgeMs every frame), is saved, and toasts on THIS phone only — the nudge is private.
+  $("l-nudge-down").onclick = () => stepLyricNudge(-1);
+  $("l-nudge-up").onclick = () => stepLyricNudge(1);
+  renderNudge();
+}
+
+function stepLyricNudge(dir) {
+  const next = stepNudge(prefs.lyricNudgeMs, dir);
+  if (next === prefs.lyricNudgeMs) return;   // at an end (the button is disabled there anyway)
+  prefs.lyricNudgeMs = next;
+  savePrefs();
+  renderNudge();
+  showToast(nudgeLabel(next), 1500);
+}
+
+function renderNudge() {
+  const ms = Number(prefs.lyricNudgeMs) || 0;
+  $("l-nudge-val").textContent = fmtMs(ms);
+  $("l-nudge-down").disabled = ms <= -NUDGE_MAX_MS;
+  $("l-nudge-up").disabled = ms >= NUDGE_MAX_MS;
 }
 
 // Fold the newest host view into the local clock (called on every fresh view AND right after an
@@ -934,15 +954,37 @@ function setLyricHead(now, note) {
 // Tab 3 — Search  (the compact songbook in the host's three tiers + optional YouTube)
 // ---------------------------------------------------------------------------
 let searchGen = 0;
-let results = { q: "", rows: [], close: [], yt: [], looking: false };
+// kind: "songs" (All: exact, then close "≈", then YouTube) | "artists" (the artist list) |
+// "artist" (one artist's songs, the "← Artists" row first). q = the field's text it was drawn for.
+let results = { q: "", kind: "songs", rows: [], close: [], yt: [], looking: false };
 
 function wireSearch() {
   const input = $("r-search");
   let deb;
   input.oninput = () => { clearTimeout(deb); deb = setTimeout(() => runSearch(input.value), 150); };
-  // Enter: search now and drop the keyboard so the results are visible.
-  input.onkeydown = (e) => { if (e.key === "Enter") { clearTimeout(deb); runSearch(input.value); input.blur(); } };
+  // Enter: search now and drop the keyboard so the results are visible. On Artists it never opens
+  // the top artist (the TV's Enter does): on a phone a tap is cheap and a wrong open is not, and an
+  // unchanged field keeps the artist being browsed.
+  input.onkeydown = (e) => {
+    if (e.key !== "Enter") return;
+    clearTimeout(deb);
+    if (searchTab === "all" || input.value.trim() !== results.q) runSearch(input.value);
+    input.blur();
+  };
   $("r-yt").onclick = () => { ytOn = !ytOn; $("r-yt").classList.toggle("on", ytOn); runSearch(input.value); };
+  // All · Artists. A pending keystroke's search is dropped: the tab runs the field's text itself.
+  for (const b of document.querySelectorAll("#r-stabs .stab")) {
+    b.onclick = () => { clearTimeout(deb); setSearchTab(b.dataset.stab); };
+  }
+  // ARIA tabs: ←/→ select the other tab (two tabs, so either arrow means the other one).
+  $("r-stabs").addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const next = searchTab === "all" ? "artists" : "all";
+    clearTimeout(deb);
+    setSearchTab(next);
+    $(`r-stab-${next}`).focus();
+  });
   // The list is virtual: draw the rows that scroll into view (one frame at a time).
   let raf = 0;
   const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; renderVirtual(false); }); };
@@ -951,6 +993,95 @@ function wireSearch() {
 }
 
 function refreshSearch() { runSearch($("r-search").value); }
+
+/**
+ * Show the All or the Artists sub-tab. The field keeps its text and the new tab applies it — a
+ * song search on All, an artist filter on Artists (the TV's rule, §5.37). Tapping Artists again
+ * while one artist's songs show goes back to the artist list, as "← Artists" does.
+ */
+function setSearchTab(tab) {
+  const t = searchTabOf(tab);
+  if (t === searchTab) {
+    if (t === "artists" && artistShown != null) backToArtists();
+    return;
+  }
+  searchTab = t;
+  artistShown = null;
+  for (const b of document.querySelectorAll("#r-stabs .stab")) {
+    const on = b.dataset.stab === t;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+    b.tabIndex = on ? 0 : -1;   // one tab stop for the tablist
+  }
+  const input = $("r-search");
+  input.placeholder = t === "artists" ? "Filter artists" : "Search songs · number · artist";
+  input.setAttribute("aria-label", t === "artists" ? "Filter artists" : "Search");
+  $("r-yt").hidden = t === "artists";   // no YouTube on Artists, as on the TV
+  runSearch(input.value);
+}
+
+/** Artists: every artist A→Z with "(Unknown artist)" last, narrowed by the field's words. The
+ *  index is built here on the first visit (remote-browse.js), never before. */
+function showArtists(q, fromKey = null) {
+  artistShown = null;
+  if (songbook === "ready" && !artistBrowse.ready(catalog.songs)) {
+    // First visit: grouping ~123k songs into ~20k artists blocks for a moment (measured 1.5 s at
+    // 4× CPU). Say so and let the selected tab paint first, then build; a tab switch or a keystroke
+    // meanwhile (a newer searchGen) cancels, and the next visit builds instead.
+    results = { q, kind: "artists", rows: [], close: [], yt: [], looking: true };
+    renderResults();
+    const gen = searchGen;
+    requestAnimationFrame(() => setTimeout(() => {
+      if (gen !== searchGen || searchTab !== "artists") return;
+      artistBrowse.index(catalog.songs);
+      showArtists(q, fromKey);
+    }, 0));
+    return;
+  }
+  const rows = songbook === "ready" ? artistBrowse.artists(catalog.songs, q) : [];
+  results = { q, kind: "artists", rows, close: [], yt: [], looking: false };
+  renderResults();
+  if (fromKey != null) scrollToRow(artistRowIndex(rows, fromKey));
+}
+
+/** One artist's songs by title, under "← Artists". `opener` = the tapped row's button. */
+function openArtist(key, opener) {
+  const hadFocus = !!opener && document.activeElement === opener;
+  ++searchGen;   // a late close-match or YouTube reply must not draw over this list
+  const { rows } = artistBrowse.artistSongs(catalog.songs, key);
+  artistShown = key;
+  results = { q: results.q, kind: "artist", rows, close: [], yt: [], looking: false };
+  renderResults();
+  if (hadFocus) focusRow(0);   // the render removed the tapped row: focus "← Artists", not <body>
+}
+
+/** "← Artists": the artist list for the field's text, scrolled back to the artist we came from. */
+function backToArtists() {
+  const from = artistShown;
+  const hadFocus = $("r-results").contains(document.activeElement);
+  ++searchGen;
+  showArtists($("r-search").value.trim(), from);
+  if (hadFocus) focusRow(Math.max(0, artistRowIndex(results.rows, from)));
+}
+
+/** Put row i just under the sticky search head (and draw it, so it can take focus). The head sticks
+ *  BELOW the scroller's top padding (a sticky box keeps inside its container's padding), so both count. */
+function scrollToRow(i) {
+  if (!(i > 0) || !vRowH || activeTab !== "search") return;
+  const scroller = document.querySelector(".rmain");
+  const ul = $("r-results");
+  const head = document.querySelector("#tab-search .search-head");
+  const listTop = ul.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  const covered = (parseFloat(getComputedStyle(scroller).paddingTop) || 0) + (head ? head.offsetHeight : 0);
+  scroller.scrollTop = Math.max(0, listTop + i * vRowH - covered);
+  renderVirtual(false);
+}
+
+function focusRow(i) {
+  const li = vDrawn.get(i);
+  const b = li && li.querySelector("button");
+  if (b) b.focus({ preventScroll: true });
+}
 
 // Tiers 1 and 2, as library-view.js searchTiers computes them on the host (mirrored here so the
 // phone does not import the host's list UI): a digits-only query lists every song numbered
@@ -967,10 +1098,12 @@ function phoneTiers(q) {
 function runSearch(raw) {
   const q = String(raw || "").trim();
   const gen = ++searchGen;
+  // Artists: the field filters artist names — no song search, no YouTube (the TV's rule).
+  if (searchTab === "artists") { showArtists(q); return; }
   // An empty field lists every song, in the TV's order (Rae, 2026-11-25: "list all songs like in
   // main screen" — the host's All tab with no query is catalog.songs itself, §5.37).
   if (!q) {
-    results = { q, rows: songbook === "ready" ? catalog.songs : [], close: [], yt: [], looking: false };
+    results = { q, kind: "songs", rows: songbook === "ready" ? catalog.songs : [], close: [], yt: [], looking: false };
     renderResults();
     return;
   }
@@ -979,7 +1112,7 @@ function runSearch(raw) {
   // Tier 3 — close matches (typos), only for a short exact tier and a word of 4+ letters.
   const wantClose = !tiers.numeric && tiers.rows.length < FUZZY_BELOW && !!searchClient && searchClient.ready
     && tokenize(q).some((t) => t.length >= 4);
-  results = { q, rows, close: [], yt: [], looking: wantClose && !rows.length };
+  results = { q, kind: "songs", rows, close: [], yt: [], looking: wantClose && !rows.length };
   renderResults();
   if (wantClose) {
     const songs = catalog.songs;
@@ -1014,11 +1147,13 @@ function setSearchHint(text) {
 
 // Exact rows, then the close rows ("≈"), then YouTube — appended rows never move the ones above.
 function renderResults() {
-  const { q, rows, close, yt, looking } = results;
+  const { q, kind, rows, close, yt, looking } = results;
   const n = rows.length + close.length + yt.length;
   if (n) setSearchHint("");
-  else if (songbook === "off") setSearchHint(ytOn && q ? "No matches." : "The songbook isn't available — the controls still work.");
+  else if (songbook === "off") setSearchHint(kind === "songs" && ytOn && q ? "No matches." : "The songbook isn't available — the controls still work.");
   else if (songbook === "loading") setSearchHint("Loading the songbook…");
+  else if (kind === "artists" && looking) setSearchHint("Gathering artists…");
+  else if (kind === "artists" && q) setSearchHint(`No artists match "${q}".`);
   else if (!q) setSearchHint("The songbook is empty.");
   else setSearchHint(looking ? "Looking for close spellings…" : "No matches.");
   const scroller = document.querySelector(".rmain");
@@ -1035,13 +1170,18 @@ let vRowH = 0;
 let vDrawn = new Map();    // index → <li> currently in the DOM
 
 function vCount() { return results.rows.length + results.close.length + results.yt.length; }
-/** Row i of the list: [song, isCloseMatch]. */
+/** Row i of the list: [item, how it is drawn] — "song" | "close" | "artist" | "back". */
 function vItem(i) {
-  const { rows, close, yt } = results;
-  if (i < rows.length) return [rows[i], false];
+  const { kind, rows, close, yt } = results;
+  if (kind === "artists") return [rows[i], "artist"];
+  if (kind === "artist") return [rows[i], i === 0 ? "back" : "song"];
+  if (i < rows.length) return [rows[i], "song"];
   i -= rows.length;
-  if (i < close.length) return [close[i], true];
-  return [yt[i - close.length], false];
+  if (i < close.length) return [close[i], "close"];
+  return [yt[i - close.length], "song"];
+}
+function makeRow(item, how) {
+  return how === "artist" || how === "back" ? artistRow(item, how === "back") : songRow(item, how === "close");
 }
 
 /** The window of rows [first, last] that is on screen, for n rows of height h. Pure. */
@@ -1059,7 +1199,7 @@ function renderVirtual(reset) {
   if (activeTab !== "search" || !n) { if (!n) ul.style.height = "0px"; return; }   // hidden: showTab redraws
   if (reset || !vRowH) {
     // Measure one real row (the Text-size choice changes it) before placing any.
-    const probe = songRow(...vItem(0));
+    const probe = makeRow(...vItem(0));
     ul.appendChild(probe);
     vRowH = probe.getBoundingClientRect().height || 57;
     probe.remove();
@@ -1071,12 +1211,35 @@ function renderVirtual(reset) {
   for (const [i, li] of vDrawn) if (i < first || i > last) { li.remove(); vDrawn.delete(i); }
   for (let i = first; i <= last; i++) {
     if (vDrawn.has(i)) continue;
-    const li = songRow(...vItem(i));
+    const li = makeRow(...vItem(i));
     li.style.top = `${i * vRowH}px`;
     li.style.height = `${vRowH}px`;
     ul.appendChild(li);
     vDrawn.set(i, li);
   }
+}
+
+// An artist row (Rae, 2026-11-28): the song row's box, so one measured height places every row —
+// 👤 · the name over its song count, as on the TV. The "← Artists" row heading one artist's songs
+// says whose songs they are. A tap opens the artist (or goes back) — never the song sheet.
+function artistRow(a, back) {
+  const li = document.createElement("li");
+  li.className = "song artist-row" + (back ? " back-row" : "");
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "song-btn";
+  const icon = el("span", "kind", back ? "←" : "👤");
+  icon.setAttribute("aria-hidden", "true");
+  const count = songCountLabel(a.count);
+  const meta = el("span", "meta");
+  meta.append(
+    el("span", "t", back ? "← Artists" : (a.name || "")),
+    el("span", "a", back ? [a.name, count].filter(Boolean).join(" · ") : count),
+  );
+  b.append(icon, meta);
+  b.onclick = () => (back ? backToArtists() : openArtist(a.key, b));
+  li.appendChild(b);
+  return li;
 }
 
 // A row: kind icon · title / artist · [≈]. No number column: the phone shows no song numbers

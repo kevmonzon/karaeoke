@@ -28,6 +28,32 @@ export function stepMelody(volume, mute, dir) {
   return { level, settings: melodyLevelSettings(level) };
 }
 
+/**
+ * The Lyrics tab's sync nudge (Rae, 2026-11-28: "make the sync nudge be (+)/(-) buttons similar to
+ * design in now tab"). It shifts THIS phone's lyrics only, in the slider's old 25 ms steps and range.
+ */
+export const NUDGE_STEP_MS = 25;
+export const NUDGE_MAX_MS = 1000;
+
+/** The next nudge after one − (dir < 0) or + step, snapped to the 25 ms grid and kept in ±1000 ms. */
+export function stepNudge(ms, dir) {
+  const v = Number(ms);
+  const steps = Math.round((Number.isFinite(v) ? v : 0) / NUDGE_STEP_MS) + (dir < 0 ? -1 : 1);
+  const max = NUDGE_MAX_MS / NUDGE_STEP_MS;
+  return Math.max(-max, Math.min(max, steps)) * NUDGE_STEP_MS;
+}
+
+/** Milliseconds as the offsets read: "+50 ms", "0 ms", "-25 ms". */
+export function fmtMs(ms) {
+  const n = Math.round(Number(ms) || 0);
+  return `${n > 0 ? "+" : ""}${n} ms`;
+}
+
+/** The phone's own toast for a nudge step (never sent to the TV: the nudge is this phone's). */
+export function nudgeLabel(ms) {
+  return `Sync nudge ${fmtMs(ms)}`;
+}
+
 /** Semitones as the TV writes them: "+2", "0", "-3". */
 export function fmtSemis(k) {
   const n = Math.round(Number(k) || 0);
@@ -67,10 +93,7 @@ export function adjustLabel(path, value, { get = () => undefined, key = null } =
     case "guide.vocal.volume":
     case "guide.vocal.mute":
       return `Melody ${melodyLevelLabel(melodyLevel(get("guide.vocal.volume"), get("guide.vocal.mute")))}`;
-    case "lyrics.offsetMs": {
-      const ms = Math.round(Number(value) || 0);
-      return `Lyric offset ${ms > 0 ? "+" : ""}${ms} ms`;
-    }
+    case "lyrics.offsetMs": return `Lyric offset ${fmtMs(value)}`;
     default: return null;
   }
 }

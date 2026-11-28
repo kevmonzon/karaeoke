@@ -2,7 +2,8 @@
  * shell.js — the stage shell (M3, §4.2 rule 8 of the plan).
  *
  * Since 2026-11-24 (Rae) there is no control bar: the playback dock is gone and the stage footer
- * (#stage-foot: the panel buttons, the status line, the seek bar) replaces it. What the shell owns:
+ * (#stage-foot: the panel buttons, the status line) replaces it — the seek bar is its sibling since
+ * 2026-11-28 and stays on screen while the footer hides (stage.css). What the shell owns:
  *   - the footer's AUTO-HIDE (Rae, same day): while a song PLAYS, with ui.footer.autoHide on, it
  *     hides after ui.footer.hideSec idle seconds (body.foot-hidden — the cursor hides with it); a
  *     tap, a mouse move or any key but Back shows it again. Never while idle, paused or under a

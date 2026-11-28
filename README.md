@@ -271,9 +271,9 @@ with the lyrics, and everything else on top of it.
 - **The bottom of the screen** holds the two-line **status line** at the left, the small **panel
   buttons** — in the **bottom-right corner** whenever the screen is wider than tall (a TV, a laptop,
   a phone on its side), just above the status line when it is held upright — and the **seek bar**
-  along the very bottom edge (see *The status line* below). While a song plays it fades away after a few idle seconds and
-  comes back on a tap, a mouse move or a key (Back excepted); it never hides while paused or idle
-  (⚙ → Display → **Footer**).
+  along the very bottom edge (see *The status line* below). While a song plays the status line and the buttons fade
+  away after a few idle seconds and come back on a tap, a mouse move or a key (Back excepted); they never hide while
+  paused or idle (⚙ → Display → **Footer**). The seek bar stays on screen the whole song.
 - **Panels slide in from the right:** **Songs** (with the queue as its **Queue** tab), **Mixer**
   (MIDI songs, when the channel mixer is on) and **Settings** (⚙). One is open at a time; on a wide screen the lyrics move over and
   stay uncovered beside it, on a phone held upright the panel fills the screen. **Back** (Esc, the
@@ -377,7 +377,8 @@ keys), a TV remote, or a phone; **next** has those too (**N**) plus a button on 
   the width, and the five values stand side by side like a mixing desk — the name, **+** above, the
   value, **−** below. With touch, every button there is at least 44 px; on a landscape phone or a
   tablet each value sits with its name above it between its **−** and **+**, so all five fit on one line.
-- **The seek bar** is the thin line on the bottom edge: press or drag along it to move in the song.
+- **The seek bar** is the thin line on the bottom edge, there for the whole song: press or drag along it to move in
+  the song. While the rest of the footer is hidden the first tap only brings it back, so a stray tap never jumps the song.
 
 A change made from the keyboard or a TV remote flashes a short note on the stage ("Key +1", "Tempo
 1.05×", "Melody 50%"), as do messages such as "Reserved: …". A note stays 2.5 s; an **error** — a
@@ -556,23 +557,27 @@ tab (with the room code) and ⚙ → Phones & party → Remote show the state (*
   just the number), **Tempo**, and **🎵 Melody** Off · 25 · 50 · 75 · 100 %. Every change shows as a
   message on the phone **and on the TV, with the guest's name** ("Kai: Volume 80%"). Plus the live
   score and reactions (👏 🎉 🔥 ❤️ 😂 🙌).
-- **🎤 Lyrics** — the current song's lyrics **on your own phone**, in time with the room, in the
-  same **Stage** layout as the TV (or **Scroll** — pick it on the You tab). Both draw the TV's look —
+- **🎤 Lyrics** — the current song's lyrics **on your own phone**, in time with the room, as a
+  **Scroll** column of 6 lines (or the TV's **Stage** layout — pick it on the You tab). Both draw the TV's look —
   white outlined text, the wipe to the sung colour, singer colours and orange backing vocals — in the
   phone's own default colour (the TV's Sung colour setting does not reach the phone). Handy when you're away from
   the TV, or reading ahead. Works for MIDI and audio+lyrics songs; video / YouTube songs have their
   lyrics baked into the picture, so the tab says so. If your phone reads a touch early or late, nudge
-  it with the **Sync nudge** slider at the bottom — it only moves *your* screen (the **You** tab's
-  lyric offset moves everyone's).
-- **Search** — with the field empty, **every song**, in the same order as the TV's Songs panel
-  (scroll the whole songbook); type for the TV's own search: numbers across every songbook, exact
-  matches, then **≈** close matches; plus optional 🌐 YouTube. **Tap a song** for **Reserve**, **Play next** and **Play now** —
-  the last two only when the host allows them (see below). Typing a number finds that song number.
+  it with the **Sync nudge − ＋** at the bottom (25 ms a tap, up to ±1 s) — it only moves *your* screen
+  (the **You** tab's lyric offset moves everyone's).
+- **Search** — two tabs under the field, like the TV's Songs panel. **All**: with the field empty,
+  **every song**, in the same order as the TV (scroll the whole songbook); type for the TV's own search:
+  numbers across every songbook, exact matches, then **≈** close matches; plus optional 🌐 YouTube.
+  **Artists**: every artist A→Z with their song count (the same list as the TV's Artists tab), and the
+  field filters the names; tap an artist for their songs, **← Artists** to go back to where you were.
+  **Tap a song** for **Reserve**, **Play next** and **Play now** — the last two only when the host
+  allows them (see below). Typing a number finds that song number.
 - **Queue** — the live queue with an "added by" name and a rough **"~7 min"** wait for each song,
   plus move up / down, remove, and **⤒ Play next** (when the host allows jumping the queue).
 - **You** — your nickname (shown on songs you add), the lyric offset, device theme & text size,
-  **how the lyrics look on your phone** (lyric style, lyric lines 2–8 for Scroll, lyrics size
-  70–180% — yours alone; the karaoke screen keeps its own layout), and the connection status + room code.
+  **how the lyrics look on your phone** (lyric style — Scroll by default, or Stage; lyric lines 2–8
+  for Scroll, 6 by default; lyrics size 70–180% — yours alone; the karaoke screen keeps its own
+  layout), and the connection status + room code.
 
 **What guests may do** — ⚙ → Phones & party → Remote:
 

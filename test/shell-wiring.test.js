@@ -136,3 +136,24 @@ test("library-ui: the probe is an invisible, aria-hidden song row", () => {
     assert.equal(seen.parent, null, "and taken out again");
   });
 });
+
+// The seek bar stays on screen while the footer auto-hides (Rae, 2026-11-28: "the seekbar should
+// always be visible"). The footer fades as a whole (opacity on #stage-foot), and a parent's opacity
+// takes every child with it, so the bar must be the footer's sibling — and stay inside #stage (the
+// layer a modal makes inert).
+test("the seek bar is the footer's sibling inside #stage, not its child", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const html = read("../src/index.html");
+  const css = read("../src/css/stage.css");
+  const foot = html.slice(html.indexOf('<footer id="stage-foot"'), html.indexOf("</footer>"));
+  assert.ok(foot.length > 0, "the footer is found");
+  assert.doesNotMatch(foot, /id="seek-track"/, "not inside the footer");
+  const stage = html.slice(html.indexOf('<main id="stage"'), html.indexOf("</main>"));
+  const at = stage.indexOf('id="seek-track"');
+  assert.ok(at > stage.indexOf("</footer>"), "inside #stage, after the footer");
+  // The footer's auto-hide must not reach it; while hidden it is display-only.
+  assert.doesNotMatch(css, /body\.foot-hidden[^{]*\.seek-track\s*\{[^}]*(opacity|visibility|display)/, "nothing hides it with the footer");
+  assert.match(css, /body\.foot-hidden \.seek-track \{ pointer-events: none; \}/);
+  assert.match(css, /#stage \{ --seek-h:/, "its thickness is defined where both the footer and the bar can read it");
+});

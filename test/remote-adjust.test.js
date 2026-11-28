@@ -8,7 +8,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { stepVolume, stepMelody, fmtSemis, keyText, adjustLabel, VOLUME_STEP } from "../src/js/remote-adjust.js";
+import {
+  stepVolume, stepMelody, fmtSemis, keyText, adjustLabel, VOLUME_STEP,
+  stepNudge, fmtMs, nudgeLabel, NUDGE_STEP_MS, NUDGE_MAX_MS,
+} from "../src/js/remote-adjust.js";
+import { readFileSync } from "node:fs";
 
 test("stepVolume: tenths, snapped, clamped to 0..100 %", () => {
   assert.equal(VOLUME_STEP, 0.1);
@@ -57,4 +61,46 @@ test("adjustLabel: one line per setting, the same on the phone and the TV", () =
   assert.equal(adjustLabel("guide.vocal.mute", true, { get: (p) => (p === "guide.vocal.mute" ? true : 0.5) }), "Melody Off");
   assert.equal(adjustLabel("lyrics.offsetMs", 50), "Lyric offset +50 ms");
   assert.equal(adjustLabel("mic.volume", 1), null, "a path nobody toasts");
+});
+
+// --- the Lyrics tab's sync nudge (Rae, 2026-11-28: − value + like the Now tab) ---------------------
+test("stepNudge: 25 ms steps, snapped to the grid, held at ±1000 ms", () => {
+  assert.equal(NUDGE_STEP_MS, 25);
+  assert.equal(NUDGE_MAX_MS, 1000);
+  assert.equal(stepNudge(0, 1), 25);
+  assert.equal(stepNudge(0, -1), -25);
+  assert.equal(stepNudge(25, -1), 0);
+  assert.equal(stepNudge(-25, 1), 0);
+  assert.equal(stepNudge(990, 1), 1000, "never past +1000");
+  assert.equal(stepNudge(1000, 1), 1000);
+  assert.equal(stepNudge(-1000, -1), -1000, "never past -1000");
+  assert.equal(stepNudge(5000, -1), 1000, "an out-of-range saved value is pulled back to the end (as stepVolume does)");
+  assert.equal(stepNudge(37, 1), 50, "an off-grid value snaps to the grid first");
+  assert.equal(stepNudge(-12, -1), -25);
+  for (const junk of [undefined, null, NaN, "x", Infinity]) assert.equal(stepNudge(junk, 1), 25, String(junk));
+  // A whole walk stays on the grid and inside the range.
+  let v = 0;
+  for (let i = 0; i < 60; i++) { v = stepNudge(v, 1); assert.equal(v % 25, 0); }
+  assert.equal(v, 1000);
+});
+
+test("fmtMs / nudgeLabel: signed milliseconds, the phone's toast", () => {
+  assert.equal(fmtMs(50), "+50 ms");
+  assert.equal(fmtMs(0), "0 ms");
+  assert.equal(fmtMs(-25), "-25 ms");
+  assert.equal(fmtMs(undefined), "0 ms");
+  assert.equal(nudgeLabel(75), "Sync nudge +75 ms");
+  assert.equal(nudgeLabel(-1000), "Sync nudge -1000 ms");
+  assert.equal(adjustLabel("lyrics.offsetMs", -50), "Lyric offset -50 ms", "the room offset reads the same way");
+});
+
+test("the Lyrics tab's nudge is a stepper, not a slider (structure: remote.js boots a DOM on import)", () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const html = read("../src/remote.html");
+  const js = read("../src/js/remote.js");
+  assert.doesNotMatch(html, /id="l-nudge"/, "the range is gone");
+  assert.match(html, /<span class="stepper"><button id="l-nudge-down"[^>]*>–<\/button>\s*<em id="l-nudge-val" class="sval"[^>]*>0 ms<\/em>\s*<button id="l-nudge-up"[^>]*>\+<\/button><\/span>/);
+  assert.match(js, /\$\("l-nudge-down"\)\.onclick = \(\) => stepLyricNudge\(-1\)/);
+  assert.match(js, /\$\("l-nudge-up"\)\.onclick = \(\) => stepLyricNudge\(1\)/);
+  assert.doesNotMatch(js, /cmd\(\{[^}]*lyricNudgeMs/, "the nudge is never sent to the TV");
 });
